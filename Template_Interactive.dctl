@@ -1,0 +1,27 @@
+
+DEFINE_UI_PARAMS(slider_float, Float Slider, DCTLUI_SLIDER_FLOAT, 1.0, 0.0, 10.0, 0.1)
+DEFINE_UI_PARAMS(slider_int, Int Slider, DCTLUI_SLIDER_INT, 1, 0, 10, 1)
+DEFINE_UI_PARAMS(gain, Numerical Field, DCTLUI_VALUE_BOX, 2.0)
+DEFINE_UI_PARAMS(checkbox, Checkbox, DCTLUI_CHECK_BOX, 1)
+DEFINE_UI_PARAMS(dropdown, Dropdown Menu, DCTLUI_COMBO_BOX, 0, { opt_one, opt_two, opt_three }, { Option One, Option Two, Option Three })
+
+
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p_R, float p_G, float p_B)
+{
+    
+    float3 in = {p_R, p_G, p_B};
+    float3 out = in;
+
+
+    return out;
+}
+
+
+
+
+
+
+
+
+
+
