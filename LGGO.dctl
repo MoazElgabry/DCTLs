@@ -9,8 +9,8 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
     float3 rgb = {p_R, p_G, p_B};
 	
 
-	rgb.y = _powf(rgb.y, 1 / gamma);
 	rgb.x = _powf(rgb.x, 1 / gamma);
+	rgb.y = _powf(rgb.y, 1 / gamma);
 	rgb.z = _powf(rgb.z, 1 / gamma);
 
 	rgb.x = rgb.x + offset;
