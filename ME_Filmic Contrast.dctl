@@ -1,0 +1,89 @@
+__DEVICE__ float apply_linear_contrast(float in, float contrast, float pivot) {
+	
+	float out;
+    //offsetting the user slider to set stratingpoints at zero
+    contrast = contrast+1.f;
+    //limit user input to zero
+    if (contrast <0.f) {contrast = _fmaxf(contrast, 0.0f);}
+	out = (in - pivot) * contrast + pivot;
+
+	return out;
+}
+
+__DEVICE__ float apply_rolling_contrast(float in, float contrast, float pivot) {
+    
+    float out;
+    float zerocheck = 1.f;
+    //offsetting the user slider to set stratingpoints at zero
+    contrast = contrast+1.f;
+
+
+    if (in <= pivot) {
+    out = _powf(_fabs((in / pivot)), contrast) * pivot;
+    }
+    
+    else {
+    in = 1 - in;
+    pivot = 1 - pivot;
+    
+
+    if (in < 0.f) { 
+    zerocheck = -1.f;
+    }
+
+    //out = _copysignf((_powf(_fabs((in / pivot)) , contrast) * pivot),(in / pivot));
+    out = (_powf(_fabs((in / pivot)) , contrast) * pivot)*zerocheck;
+    out = 1 - out;
+    }
+    
+    return out;
+}
+
+
+
+
+DEFINE_UI_PARAMS(contrast, Contrast 🌓, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 2.0, 0.1)
+DEFINE_UI_PARAMS(pivot, Contrast Pivot 📌, DCTLUI_SLIDER_FLOAT, 0.435, 0.0, 1.0, 0.1)
+DEFINE_UI_PARAMS(contrast_type, Contrast Type, DCTLUI_COMBO_BOX, 0, { linear, S_curve }, { Linear, S-Curve })
+DEFINE_UI_PARAMS(bypass, 🚫 Bypass, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_PARAMS(limiter, 🔧 Limit input to 0-1, DCTLUI_CHECK_BOX, 0)
+
+
+
+
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p_R, float p_G, float p_B)
+{
+    
+    float3 in = {p_R, p_G, p_B};
+
+    //clamp check box functionality
+    if(limiter == 1) {
+    in.x = _clampf(in.x, 0.f, 1.f);
+    in.y = _clampf(in.y, 0.f, 1.f);
+    in.z = _clampf(in.z, 0.f, 1.f);    
+    }
+
+    float3 out;
+
+    if (bypass ==1) {
+        float3 out = {p_R, p_G, p_B};
+
+    return out;
+    }
+
+    if (contrast_type == linear) {
+
+    out.x = apply_linear_contrast(in.x, contrast, pivot);
+    out.y = apply_linear_contrast(in.y, contrast, pivot);
+    out.z = apply_linear_contrast(in.z, contrast, pivot);
+    }
+
+    if(contrast_type == S_curve) {
+    out.x = apply_rolling_contrast(in.x, contrast, pivot);
+    out.y = apply_rolling_contrast(in.y, contrast, pivot);
+    out.z = apply_rolling_contrast(in.z, contrast, pivot);
+    
+    }
+
+    return out;
+}
