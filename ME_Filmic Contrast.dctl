@@ -40,12 +40,48 @@ __DEVICE__ float apply_rolling_contrast(float in, float contrast, float pivot) {
 }
 
 
+<<<<<<< Updated upstream
+=======
+  out.x = in.x * red_strength;
+  out.y = in.y * green_strength;
+  out.z = in.z;
+  out /= (_fmaxf(red_strength, green_strength));
+
+  return out;
+  }
+
+__DEVICE__ float3 apply_shadow_split(float3 in, float strength, float color_mix) {
+
+  float3 out = in;
+
+  in.x = (1 - in.x);
+  in.y = (1 - in.y);
+  in.z = (1 - in.z);
+  
+  float green_strength = (color_mix * strength) + 1.f;
+  float blue_strength = ((1 - color_mix) * strength) + 1.f;
+  
+  out.x = in.x;
+  out.y = in.y / green_strength;
+  out.z = in.z / blue_strength;
+  out *= (_fminf(green_strength, blue_strength));
+
+  out.x = (1 - out.x);
+  out.y = (1 - out.y);
+  out.z = (1 - out.z);
+  
+  
+
+  return out;
+  }
+>>>>>>> Stashed changes
 
 
 DEFINE_UI_PARAMS(contrast, Contrast 🌓, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 2.0, 0.1)
 DEFINE_UI_PARAMS(pivot, Contrast Pivot 📌, DCTLUI_SLIDER_FLOAT, 0.435, 0.0, 1.0, 0.1)
 DEFINE_UI_PARAMS(contrast_type, Contrast Type, DCTLUI_COMBO_BOX, 0, { linear, S_curve }, { Linear, S-Curve })
 DEFINE_UI_PARAMS(bypass, 🚫 Bypass, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_PARAMS(opt_showcurve, 📈 Show Curve, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(limiter, 🔧 Limit input to 0-1, DCTLUI_CHECK_BOX, 0)
 
 
@@ -55,6 +91,20 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
 {
     
     float3 in = {p_R, p_G, p_B};
+<<<<<<< Updated upstream
+=======
+
+    float width = (float)p_Width;
+    float height = (float)p_Height;
+    float X = (float)p_X;
+    float Y = height - (float)p_Y;
+    float3 ramp = {X / width, X / width, X / width};
+
+    //scales down the strength slider to limit the effective range to a range that produces pleasing results
+    split_strength = split_strength * .2f;
+    split_shadow_color_mix = (split_shadow_color_mix * .3f) + .18f;
+    split_highlight_color_mix = (split_highlight_color_mix * .3f) + .25f;
+>>>>>>> Stashed changes
 
     //clamp check box functionality
     if(limiter == 1) {
@@ -76,14 +126,39 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
     out.x = apply_linear_contrast(in.x, contrast, pivot);
     out.y = apply_linear_contrast(in.y, contrast, pivot);
     out.z = apply_linear_contrast(in.z, contrast, pivot);
+    ramp.x = apply_linear_contrast(ramp.x, contrast, pivot);
+    ramp.y = apply_linear_contrast(ramp.y, contrast, pivot);
+    ramp.z = apply_linear_contrast(ramp.z, contrast, pivot);
     }
 
     if(contrast_type == S_curve) {
     out.x = apply_rolling_contrast(in.x, contrast, pivot);
     out.y = apply_rolling_contrast(in.y, contrast, pivot);
     out.z = apply_rolling_contrast(in.z, contrast, pivot);
+    ramp.x = apply_rolling_contrast(ramp.x, contrast, pivot);
+    ramp.y = apply_rolling_contrast(ramp.y, contrast, pivot);
+    ramp.z = apply_rolling_contrast(ramp.z, contrast, pivot);
     
     }
 
+<<<<<<< Updated upstream
+=======
+    out = apply_shadow_split(out, split_strength, split_shadow_color_mix);
+    out = apply_highlight_split(out, split_strength, split_highlight_color_mix);
+    ramp = apply_shadow_split(ramp, split_strength, split_shadow_color_mix);
+    ramp = apply_highlight_split(ramp, split_strength, split_highlight_color_mix);
+
+    if (opt_showcurve == 1) {
+    
+    float overlayR = ramp.x >= (Y - 5.0f) / height && ramp.x <= (Y + 5.0f) / height ? 1.0f : 0.0f;
+    float overlayG = ramp.y >= (Y - 5.0f) / height && ramp.y <= (Y + 5.0f) / height ? 1.0f : 0.0f;
+    float overlayB = ramp.z >= (Y - 5.0f) / height && ramp.z <= (Y + 5.0f) / height ? 1.0f : 0.0f;
+    out.x = overlayR == 0.0f ? out.x : overlayR;
+    out.y = overlayG == 0.0f ? out.y : overlayG;
+    out.z = overlayB == 0.0f ? out.z : overlayB;
+    
+    }
+
+>>>>>>> Stashed changes
     return out;
 }
