@@ -1,3 +1,4 @@
+//Flimic Contrast
 __DEVICE__ float apply_linear_contrast(float in, float contrast, float pivot) {
 	
 	float out;
@@ -40,10 +41,46 @@ __DEVICE__ float apply_rolling_contrast(float in, float contrast, float pivot) {
 }
 
 
+__DEVICE__ float3 apply_highlight_split(float3 in, float strength, float color_mix) {
+  float3 out = in;
+  float red_strength = ((1 - color_mix) * strength) + 1.f;
+  float green_strength = (color_mix * strength) + 1.f;
+
+  out.x = in.x * red_strength;
+  out.y = in.y * green_strength;
+  out.z = in.z;
+
+  return out;
+  }
+
+__DEVICE__ float3 apply_shadow_split(float3 in, float strength, float color_mix) {
+
+  float3 out = in;
+
+  in.x = (1 - in.x);
+  in.y = (1 - in.y);
+  in.z = (1 - in.z);
+  
+  float green_strength = (color_mix * strength) + 1.f;
+  float blue_strength = ((1 - color_mix) * strength) + 1.f;
+  
+  out.x = in.x;
+  out.y = in.y / green_strength;
+  out.z = in.z / blue_strength;
+  
+  out.x = (1 - out.x);
+  out.y = (1 - out.y);
+  out.z = (1 - out.z);
+  
+  return out;
+  }
 
 
 DEFINE_UI_PARAMS(contrast, Contrast 🌓, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 2.0, 0.1)
 DEFINE_UI_PARAMS(pivot, Contrast Pivot 📌, DCTLUI_SLIDER_FLOAT, 0.435, 0.0, 1.0, 0.1)
+DEFINE_UI_PARAMS(split_strength, Split Tone Strength💪, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 1.0, 0.1)
+DEFINE_UI_PARAMS(split_shadow_color_mix, 🔵/🟢 Shadows, DCTLUI_SLIDER_FLOAT, 0.5, 0.0, 1.0, 0.1)
+DEFINE_UI_PARAMS(split_highlight_color_mix, 🔴/🟢 Highlights, DCTLUI_SLIDER_FLOAT, 0.5, 0.0, 1.0, 0.1)
 DEFINE_UI_PARAMS(contrast_type, Contrast Type, DCTLUI_COMBO_BOX, 0, { linear, S_curve }, { Linear, S-Curve })
 DEFINE_UI_PARAMS(bypass, 🚫 Bypass, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(limiter, 🔧 Limit input to 0-1, DCTLUI_CHECK_BOX, 0)
@@ -58,9 +95,9 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
 
     //clamp check box functionality
     if(limiter == 1) {
-    in.x = _clampf(in.x, 0.f, 1.f);
-    in.y = _clampf(in.y, 0.f, 1.f);
-    in.z = _clampf(in.z, 0.f, 1.f);    
+    in.x = _clampf(in.x, 0.f, 1.5f);
+    in.y = _clampf(in.y, 0.f, 1.5f);
+    in.z = _clampf(in.z, 0.f, 1.5f);    
     }
 
     float3 out;
@@ -78,12 +115,15 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
     out.z = apply_linear_contrast(in.z, contrast, pivot);
     }
 
-    if(contrast_type == S_curve) {
+    if (contrast_type == S_curve) {
     out.x = apply_rolling_contrast(in.x, contrast, pivot);
     out.y = apply_rolling_contrast(in.y, contrast, pivot);
     out.z = apply_rolling_contrast(in.z, contrast, pivot);
     
     }
+
+    out = apply_shadow_split(out, split_strength, split_shadow_color_mix);
+    out = apply_highlight_split(out, split_strength, split_highlight_color_mix);
 
     return out;
 }
