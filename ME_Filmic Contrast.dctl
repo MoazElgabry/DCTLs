@@ -8,8 +8,7 @@ __DEVICE__ float apply_linear_contrast(float in, float contrast, float pivot) {
     if (contrast <0.f) {contrast = _fmaxf(contrast, 0.0f);}
 	out = (in - pivot) * contrast + pivot;
 
-	return out;
-}
+	return out;}
 
 __DEVICE__ float apply_rolling_contrast(float in, float contrast, float pivot) {
     
@@ -37,9 +36,7 @@ __DEVICE__ float apply_rolling_contrast(float in, float contrast, float pivot) {
     out = 1 - out;
     }
     
-    return out;
-}
-
+    return out;}
 
 __DEVICE__ float3 apply_highlight_split(float3 in, float strength, float color_mix) {
   float3 out = in;
@@ -49,6 +46,7 @@ __DEVICE__ float3 apply_highlight_split(float3 in, float strength, float color_m
   out.x = in.x * red_strength;
   out.y = in.y * green_strength;
   out.z = in.z;
+  out /= (_fmaxf(red_strength, green_strength));
 
   return out;
   }
@@ -67,11 +65,14 @@ __DEVICE__ float3 apply_shadow_split(float3 in, float strength, float color_mix)
   out.x = in.x;
   out.y = in.y / green_strength;
   out.z = in.z / blue_strength;
+  out *= (_fminf(green_strength, blue_strength));
   
   out.x = (1 - out.x);
   out.y = (1 - out.y);
   out.z = (1 - out.z);
   
+  
+
   return out;
   }
 
@@ -88,10 +89,13 @@ DEFINE_UI_PARAMS(limiter, 🔧 Limit input to 0-1, DCTLUI_CHECK_BOX, 0)
 
 
 
-__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p_R, float p_G, float p_B)
-{
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p_R, float p_G, float p_B) {
     
     float3 in = {p_R, p_G, p_B};
+    //scales down the strength slider to limit the effective range to a range that produces pleasing results
+    split_strength = split_strength * .2f;
+    split_shadow_color_mix = (split_shadow_color_mix * .3f) + .18f;
+    split_highlight_color_mix = (split_highlight_color_mix * .3f) + .25f;
 
     //clamp check box functionality
     if(limiter == 1) {
