@@ -16,8 +16,12 @@ __DEVICE__ float apply_rolling_contrast(float in, float contrast, float pivot) {
     float zerocheck = 1.f;
     //offsetting the user slider to set stratingpoints at zero
     contrast = contrast+1.f;
+    //limitng max user input to a pleasing result
+    if (contrast>=1)   {contrast *= .85f;}
+    else {contrast = _fmaxf(contrast*.85f,0.05f);}
 
-
+    //---------------------------------------------------------
+    // apply rolling contrast
     if (in <= pivot) {
     out = _powf(_fabs((in / pivot)), contrast) * pivot;
     }
@@ -88,6 +92,7 @@ DEFINE_UI_PARAMS(bypass, 🚫 Bypass, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(bypass_contrast,    ⤷ Contrast 🌓, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(bypass_splittone,    ⤷ Split toning 🔰, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(opt_showcurve, 📈 Show Curve, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_PARAMS(opt_ramp, 📏 Show Ramp, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(limiter, 🔧 Limit input to 0-1, DCTLUI_CHECK_BOX, 0)
 
 
@@ -97,28 +102,34 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
     
     float3 in = {p_R, p_G, p_B};
     float3 clean = {p_R, p_G, p_B};
-    //create a linear ramp
+
+
+    //create a linear ramp to enable the view graph control
     float width = (float)p_Width;
     float height = (float)p_Height;
     float X = (float)p_X;
     float Y = height - (float)p_Y;
+    float rY = Y / height;
     float3 ramp = {X / width, X / width, X / width};
+
 
     //scales down the strength slider to limit the effective range to a range that produces pleasing results
     split_strength = split_strength * .2f;
     split_shadow_color_mix = (split_shadow_color_mix * .3f) + .5f;
     split_highlight_color_mix = (split_highlight_color_mix * .3f) + .25f;
+    //not allowing pivot to reach true zero as this caused an issue
+    if( pivot < 0.05f ){ pivot = _fmaxf(pivot,.001f);}
 
-   
-   
+    
+    
     
 
 
     //clamp check box functionality
     if(limiter == 1) {
-    in.x = _clampf(in.x, 0.f, 1.5f);
-    in.y = _clampf(in.y, 0.f, 1.5f);
-    in.z = _clampf(in.z, 0.f, 1.5f);    
+    in.x = _clampf(in.x, 0.f, 1.0f);
+    in.y = _clampf(in.y, 0.f, 1.0f);
+    in.z = _clampf(in.z, 0.f, 1.0f);    
     }
 
     float3 out;
@@ -144,12 +155,14 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
     }
 
         if (contrast_type == S_curve) {
+
     out.x = apply_rolling_contrast(in.x, contrast, pivot);
     out.y = apply_rolling_contrast(in.y, contrast, pivot);
     out.z = apply_rolling_contrast(in.z, contrast, pivot);
     ramp.x = apply_rolling_contrast(ramp.x, contrast, pivot);
     ramp.y = apply_rolling_contrast(ramp.y, contrast, pivot);
     ramp.z = apply_rolling_contrast(ramp.z, contrast, pivot);
+
     }
 
 
@@ -163,7 +176,12 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
         ramp = apply_highlight_split(ramp, split_strength, split_highlight_color_mix);
     }
     
+    //option to view a grayscale ramp
+    if (opt_ramp) {
 
+        if( rY < 0.1f) {out = ramp;}
+    
+    }
 
 
     //Optional show curve functionality
@@ -177,6 +195,8 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
         out.z = overlayB == 0.0f ? out.z : overlayB;
     
     }
+
+
 
     return out;
 }
