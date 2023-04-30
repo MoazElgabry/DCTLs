@@ -60,8 +60,8 @@ __DEVICE__ float3 apply_shadow_split(float3 in, float strength, float color_mix)
   in.y = (1 - in.y);
   in.z = (1 - in.z);
   
-  float green_strength = (color_mix * strength) + 1.f;
-  float blue_strength = ((1 - color_mix) * strength) + 1.f;
+  float green_strength = ((1 - color_mix) * strength) + 1.f;
+  float blue_strength = (color_mix * strength) + 1.f;
   
   out.x = in.x;
   out.y = in.y / green_strength;
@@ -80,10 +80,10 @@ __DEVICE__ float3 apply_shadow_split(float3 in, float strength, float color_mix)
 DEFINE_UI_PARAMS(contrast, Contrast 🌓, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 2.0, 0.1)
 DEFINE_UI_PARAMS(pivot, Contrast Pivot 📌, DCTLUI_SLIDER_FLOAT, 0.435, 0.0, 1.0, 0.1)
 DEFINE_UI_PARAMS(split_strength, Split Tone Strength💪, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 1.0, 0.1)
-DEFINE_UI_PARAMS(split_shadow_color_mix, 🔵/🟢 Shadows, DCTLUI_SLIDER_FLOAT, 0.5, 0.0, 1.0, 0.1)
-DEFINE_UI_PARAMS(split_highlight_color_mix, 🔴/🟢 Highlights, DCTLUI_SLIDER_FLOAT, 0.5, 0.0, 1.0, 0.1)
-DEFINE_UI_PARAMS(split_rolloff, Split rolloff, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 1.0, 0.1)
-DEFINE_UI_PARAMS(contrast_type, Contrast Type, DCTLUI_COMBO_BOX, 0, { linear, S_curve }, { Linear, S-Curve })
+DEFINE_UI_PARAMS(split_highlight_color_mix, Hi 🔴<--->🟢, DCTLUI_SLIDER_FLOAT, 0.5, 0.0, 1.0, 0.1)
+DEFINE_UI_PARAMS(split_shadow_color_mix, Lo 🟢<--->🔵, DCTLUI_SLIDER_FLOAT, 0.5, 0.0, 1.0, 0.1)
+//DEFINE_UI_PARAMS(split_rolloff, Split rolloff, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 1.0, 0.1)
+DEFINE_UI_PARAMS(contrast_type, Contrast Type, DCTLUI_COMBO_BOX, 1, { linear, S_curve }, { Linear, S-Curve })
 DEFINE_UI_PARAMS(bypass, 🚫 Bypass, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(bypass_contrast,    ⤷ Contrast 🌓, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(bypass_splittone,    ⤷ Split toning 🔰, DCTLUI_CHECK_BOX, 0)
@@ -106,7 +106,7 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
 
     //scales down the strength slider to limit the effective range to a range that produces pleasing results
     split_strength = split_strength * .2f;
-    split_shadow_color_mix = (split_shadow_color_mix * .3f) + .18f;
+    split_shadow_color_mix = (split_shadow_color_mix * .3f) + .5f;
     split_highlight_color_mix = (split_highlight_color_mix * .3f) + .25f;
 
    
