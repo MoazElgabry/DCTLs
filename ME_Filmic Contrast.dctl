@@ -109,6 +109,8 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
     split_shadow_color_mix = (split_shadow_color_mix * .3f) + .18f;
     split_highlight_color_mix = (split_highlight_color_mix * .3f) + .25f;
 
+   
+   
     
 
 
