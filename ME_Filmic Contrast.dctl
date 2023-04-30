@@ -17,7 +17,7 @@ __DEVICE__ float apply_rolling_contrast(float in, float contrast, float pivot) {
     //offsetting the user slider to set stratingpoints at zero
     contrast = contrast+1.f;
     //limitng max user input to a pleasing result
-    if (contrast>=1)   {contrast *= .85f;}
+    if (contrast>1f)   {contrast *= .85f;}
     else {contrast = _fmaxf(contrast*.85f,0.05f);}
 
     //---------------------------------------------------------
@@ -99,9 +99,9 @@ DEFINE_UI_PARAMS(limiter, 🔧 Limit input to 0-1, DCTLUI_CHECK_BOX, 0)
 
 
 __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p_R, float p_G, float p_B) {
-    
-    float3 in = {p_R, p_G, p_B};
     float3 clean = {p_R, p_G, p_B};
+    float3 in = {p_R, p_G, p_B};
+
 
 
     //create a linear ramp to enable the view graph control
