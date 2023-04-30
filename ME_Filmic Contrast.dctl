@@ -1,3 +1,4 @@
+//Flimic Contrast
 __DEVICE__ float apply_linear_contrast(float in, float contrast, float pivot) {
 	
 	float out;
@@ -7,8 +8,7 @@ __DEVICE__ float apply_linear_contrast(float in, float contrast, float pivot) {
     if (contrast <0.f) {contrast = _fmaxf(contrast, 0.0f);}
 	out = (in - pivot) * contrast + pivot;
 
-	return out;
-}
+	return out;}
 
 __DEVICE__ float apply_rolling_contrast(float in, float contrast, float pivot) {
     
@@ -34,14 +34,16 @@ __DEVICE__ float apply_rolling_contrast(float in, float contrast, float pivot) {
     //out = _copysignf((_powf(_fabs((in / pivot)) , contrast) * pivot),(in / pivot));
     out = (_powf(_fabs((in / pivot)) , contrast) * pivot)*zerocheck;
     out = 1 - out;
+
     }
     
-    return out;
-}
+    return out;}
 
+__DEVICE__ float3 apply_highlight_split(float3 in, float strength, float color_mix) {
+  float3 out = in;
+  float red_strength = ((1 - color_mix) * strength) + 1.f;
+  float green_strength = (color_mix * strength) + 1.f;
 
-<<<<<<< Updated upstream
-=======
   out.x = in.x * red_strength;
   out.y = in.y * green_strength;
   out.z = in.z;
@@ -70,30 +72,32 @@ __DEVICE__ float3 apply_shadow_split(float3 in, float strength, float color_mix)
   out.y = (1 - out.y);
   out.z = (1 - out.z);
   
-  
 
   return out;
   }
->>>>>>> Stashed changes
 
 
 DEFINE_UI_PARAMS(contrast, Contrast 🌓, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 2.0, 0.1)
 DEFINE_UI_PARAMS(pivot, Contrast Pivot 📌, DCTLUI_SLIDER_FLOAT, 0.435, 0.0, 1.0, 0.1)
+DEFINE_UI_PARAMS(split_strength, Split Tone Strength💪, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 1.0, 0.1)
+DEFINE_UI_PARAMS(split_shadow_color_mix, 🔵/🟢 Shadows, DCTLUI_SLIDER_FLOAT, 0.5, 0.0, 1.0, 0.1)
+DEFINE_UI_PARAMS(split_highlight_color_mix, 🔴/🟢 Highlights, DCTLUI_SLIDER_FLOAT, 0.5, 0.0, 1.0, 0.1)
+DEFINE_UI_PARAMS(split_rolloff, Split rolloff, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 1.0, 0.1)
 DEFINE_UI_PARAMS(contrast_type, Contrast Type, DCTLUI_COMBO_BOX, 0, { linear, S_curve }, { Linear, S-Curve })
 DEFINE_UI_PARAMS(bypass, 🚫 Bypass, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_PARAMS(bypass_contrast,    ⤷ Contrast 🌓, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_PARAMS(bypass_splittone,    ⤷ Split toning 🔰, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(opt_showcurve, 📈 Show Curve, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(limiter, 🔧 Limit input to 0-1, DCTLUI_CHECK_BOX, 0)
 
 
 
 
-__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p_R, float p_G, float p_B)
-{
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p_R, float p_G, float p_B) {
     
     float3 in = {p_R, p_G, p_B};
-<<<<<<< Updated upstream
-=======
-
+    float3 clean = {p_R, p_G, p_B};
+    //create a linear ramp
     float width = (float)p_Width;
     float height = (float)p_Height;
     float X = (float)p_X;
@@ -104,24 +108,30 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
     split_strength = split_strength * .2f;
     split_shadow_color_mix = (split_shadow_color_mix * .3f) + .18f;
     split_highlight_color_mix = (split_highlight_color_mix * .3f) + .25f;
->>>>>>> Stashed changes
+
+    
+
 
     //clamp check box functionality
     if(limiter == 1) {
-    in.x = _clampf(in.x, 0.f, 1.f);
-    in.y = _clampf(in.y, 0.f, 1.f);
-    in.z = _clampf(in.z, 0.f, 1.f);    
+    in.x = _clampf(in.x, 0.f, 1.5f);
+    in.y = _clampf(in.y, 0.f, 1.5f);
+    in.z = _clampf(in.z, 0.f, 1.5f);    
     }
 
     float3 out;
+    //bypass option that does nothing to the image when activated
+    if (bypass ==1 && bypass_contrast == 1 && bypass_splittone == 1 || bypass ==1 && bypass_contrast == 0 && bypass_splittone == 0) {
+        float3 clean = {p_R, p_G, p_B};
 
-    if (bypass ==1) {
-        float3 out = {p_R, p_G, p_B};
-
-    return out;
+    return clean;
     }
 
-    if (contrast_type == linear) {
+
+    //bypass option limited to the contrast operations
+    if (bypass ==1 && bypass_contrast == 0 || bypass == 0 && bypass_contrast == 1 || bypass == 0 && bypass_contrast == 0) {
+
+        if (contrast_type == linear) {
 
     out.x = apply_linear_contrast(in.x, contrast, pivot);
     out.y = apply_linear_contrast(in.y, contrast, pivot);
@@ -131,34 +141,40 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
     ramp.z = apply_linear_contrast(ramp.z, contrast, pivot);
     }
 
-    if(contrast_type == S_curve) {
+        if (contrast_type == S_curve) {
     out.x = apply_rolling_contrast(in.x, contrast, pivot);
     out.y = apply_rolling_contrast(in.y, contrast, pivot);
     out.z = apply_rolling_contrast(in.z, contrast, pivot);
     ramp.x = apply_rolling_contrast(ramp.x, contrast, pivot);
     ramp.y = apply_rolling_contrast(ramp.y, contrast, pivot);
     ramp.z = apply_rolling_contrast(ramp.z, contrast, pivot);
-    
     }
 
-<<<<<<< Updated upstream
-=======
-    out = apply_shadow_split(out, split_strength, split_shadow_color_mix);
-    out = apply_highlight_split(out, split_strength, split_highlight_color_mix);
-    ramp = apply_shadow_split(ramp, split_strength, split_shadow_color_mix);
-    ramp = apply_highlight_split(ramp, split_strength, split_highlight_color_mix);
 
+    }
+
+    //the part that applies the split toning inclusindg the bypass functionality
+    if (bypass ==1 && bypass_splittone == 0 || bypass == 0 && bypass_splittone == 1 || bypass == 0 && bypass_splittone == 0) {
+        out = apply_shadow_split(out, split_strength, split_shadow_color_mix);
+        out = apply_highlight_split(out, split_strength, split_highlight_color_mix);
+        ramp = apply_shadow_split(ramp, split_strength, split_shadow_color_mix);
+        ramp = apply_highlight_split(ramp, split_strength, split_highlight_color_mix);
+    }
+    
+
+
+
+    //Optional show curve functionality
     if (opt_showcurve == 1) {
     
-    float overlayR = ramp.x >= (Y - 5.0f) / height && ramp.x <= (Y + 5.0f) / height ? 1.0f : 0.0f;
-    float overlayG = ramp.y >= (Y - 5.0f) / height && ramp.y <= (Y + 5.0f) / height ? 1.0f : 0.0f;
-    float overlayB = ramp.z >= (Y - 5.0f) / height && ramp.z <= (Y + 5.0f) / height ? 1.0f : 0.0f;
-    out.x = overlayR == 0.0f ? out.x : overlayR;
-    out.y = overlayG == 0.0f ? out.y : overlayG;
-    out.z = overlayB == 0.0f ? out.z : overlayB;
+        float overlayR = ramp.x >= (Y - 5.0f) / height && ramp.x <= (Y + 5.0f) / height ? 1.0f : 0.0f;
+        float overlayG = ramp.y >= (Y - 5.0f) / height && ramp.y <= (Y + 5.0f) / height ? 1.0f : 0.0f;
+        float overlayB = ramp.z >= (Y - 5.0f) / height && ramp.z <= (Y + 5.0f) / height ? 1.0f : 0.0f;
+        out.x = overlayR == 0.0f ? out.x : overlayR;
+        out.y = overlayG == 0.0f ? out.y : overlayG;
+        out.z = overlayB == 0.0f ? out.z : overlayB;
     
     }
 
->>>>>>> Stashed changes
     return out;
 }
