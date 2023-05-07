@@ -15,9 +15,9 @@ __DEVICE__ float apply_rolling_contrast(float in, float contrast, float pivot) {
     float out;
     float zerocheck = 1.f;
     //offsetting the user slider to set stratingpoints at zero
-    contrast = contrast+1.f;
+    contrast = contrast + 1.f;
     //limitng max user input to a pleasing result
-    if (contrast>1f)   {contrast *= .85f;}
+    if (contrast>1.f)   {contrast *= .85f;}
     else {contrast = _fmaxf(contrast*.85f,0.05f);}
 
     //---------------------------------------------------------
@@ -99,7 +99,7 @@ DEFINE_UI_PARAMS(limiter, 🔧 Limit input to 0-1, DCTLUI_CHECK_BOX, 0)
 
 
 __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p_R, float p_G, float p_B) {
-    float3 clean = {p_R, p_G, p_B};
+    //float3 clean = {p_R, p_G, p_B};
     float3 in = {p_R, p_G, p_B};
 
 
@@ -117,14 +117,11 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
     split_strength = split_strength * .2f;
     split_shadow_color_mix = (split_shadow_color_mix * .3f) + .5f;
     split_highlight_color_mix = (split_highlight_color_mix * .3f) + .25f;
-    //not allowing pivot to reach true zero as this caused an issue
+    //not allowing pivot to reach true zero as this caused an artifact
     if( pivot < 0.05f ){ pivot = _fmaxf(pivot,.001f);}
+    //if( pivot == 0.0f ) { pivot = .001f;}
 
     
-    
-    
-
-
     //clamp check box functionality
     if(limiter == 1) {
     in.x = _clampf(in.x, 0.f, 1.0f);
@@ -133,7 +130,7 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
     }
 
     float3 out;
-    //bypass option that does nothing to the image when activated
+    //bypass option that outputs untouched image when activated
     if (bypass ==1 && bypass_contrast == 1 && bypass_splittone == 1 || bypass ==1 && bypass_contrast == 0 && bypass_splittone == 0) {
         float3 clean = {p_R, p_G, p_B};
 
@@ -143,7 +140,8 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
 
     //bypass option limited to the contrast operations
     if (bypass ==1 && bypass_contrast == 0 || bypass == 0 && bypass_contrast == 1 || bypass == 0 && bypass_contrast == 0) {
-
+        //apply contrast operations
+        //calling linear contrast functions
         if (contrast_type == linear) {
 
     out.x = apply_linear_contrast(in.x, contrast, pivot);
@@ -153,7 +151,7 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
     ramp.y = apply_linear_contrast(ramp.y, contrast, pivot);
     ramp.z = apply_linear_contrast(ramp.z, contrast, pivot);
     }
-
+        //callling rolling contrast functions
         if (contrast_type == S_curve) {
 
     out.x = apply_rolling_contrast(in.x, contrast, pivot);
@@ -168,7 +166,7 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
 
     }
 
-    //the part that applies the split toning inclusindg the bypass functionality
+    //applies the split toning inclusindg the bypass functionality
     if (bypass ==1 && bypass_splittone == 0 || bypass == 0 && bypass_splittone == 1 || bypass == 0 && bypass_splittone == 0) {
         out = apply_shadow_split(out, split_strength, split_shadow_color_mix);
         out = apply_highlight_split(out, split_strength, split_highlight_color_mix);
@@ -176,7 +174,7 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
         ramp = apply_highlight_split(ramp, split_strength, split_highlight_color_mix);
     }
     
-    //option to view a grayscale ramp
+    //option to overlay a grayscale ramp on the bottom edge of the frame
     if (opt_ramp) {
 
         if( rY < 0.1f) {out = ramp;}
