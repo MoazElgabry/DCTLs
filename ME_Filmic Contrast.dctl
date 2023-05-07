@@ -1,47 +1,67 @@
 //Flimic Contrast
-__DEVICE__ float apply_linear_contrast(float in, float contrast, float pivot) {
-	
-	float out;
+
+__DEVICE__ float3 apply_linear_contrastf3(float3 in, float contrast, float pivot) {
+    
+    float3 out = in;
     //offsetting the user slider to set stratingpoints at zero
     contrast = contrast+1.f;
     //limit user input to zero
     if (contrast <0.f) {contrast = _fmaxf(contrast, 0.0f);}
-	out = (in - pivot) * contrast + pivot;
 
-	return out;}
-
-__DEVICE__ float apply_rolling_contrast(float in, float contrast, float pivot) {
     
-    float out;
-    float zerocheck = 1.f;
+    out.x = (in.x - pivot) * contrast + pivot;
+    out.y = (in.y - pivot) * contrast + pivot;
+    out.z = (in.z - pivot) * contrast + pivot;
+    
+
+    return out;
+    }
+
+
+__DEVICE__ float3 apply_rolling_contrastf3(float3 in, float contrast, float pivot) {
+    
+    float3 out = in;
+    float zerocheck = 1.0f;
     //offsetting the user slider to set stratingpoints at zero
     contrast = contrast + 1.f;
     //limitng max user input to a pleasing result
     if (contrast>1.f)   {contrast *= .85f;}
     else {contrast = _fmaxf(contrast*.85f,0.05f);}
 
-    //---------------------------------------------------------
     // apply rolling contrast
-    if (in <= pivot) {
-    out = _powf(_fabs((in / pivot)), contrast) * pivot;
+    if (in.x <= pivot && in.y <= pivot && in.z <= pivot) {
+    out.x= _powf(_fabs((in.x / pivot)), contrast) * pivot;
+    out.y= _powf(_fabs((in.y / pivot)), contrast) * pivot;
+    out.z= _powf(_fabs((in.z / pivot)), contrast) * pivot;
     }
     
     else {
-    in = 1 - in;
+      if (in.x < 0.f && in.y < 0.0f && in.z < 0.0f) { zerocheck = -1.f;}
+    in.x = 1 - in.x;
+    in.y = 1 - in.y;
+    in.z = 1 - in.z;
     pivot = 1 - pivot;
-    
+    //out.x = isnan(_copysignf((_powf(_fabs((in.x / pivot)) , contrast) * pivot),zerocheck));
+    //out.y = isnan(_copysignf((_powf(_fabs((in.y / pivot)) , contrast) * pivot),zerocheck));
+    //out.z = isnan(_copysignf((_powf(_fabs((in.z / pivot)) , contrast) * pivot),zerocheck));
 
-    if (in < 0.f) { 
-    zerocheck = -1.f;
+    out.x = _copysignf((_powf(_fabs((in.x / pivot)) , contrast) * pivot),zerocheck);
+    out.y = _copysignf((_powf(_fabs((in.y / pivot)) , contrast) * pivot),zerocheck);
+    out.z = _copysignf((_powf(_fabs((in.z / pivot)) , contrast) * pivot),zerocheck);
+
+    //out.x = isnan((_powf(_fabs((in.x / pivot)) , contrast) * pivot)*zerocheck);
+    //out.y = isnan((_powf(_fabs((in.y / pivot)) , contrast) * pivot)*zerocheck);
+    //out.z = isnan((_powf(_fabs((in.z / pivot)) , contrast) * pivot)*zerocheck);
+
+    out.x = 1 - out.x;
+    out.y = 1 - out.y;
+    out.z = 1 - out.z;
+
     }
-
-    //out = _copysignf((_powf(_fabs((in / pivot)) , contrast) * pivot),(in / pivot));
-    out = (_powf(_fabs((in / pivot)) , contrast) * pivot)*zerocheck;
-    out = 1 - out;
+    
+    return out;
 
     }
-    
-    return out;}
 
 __DEVICE__ float3 apply_highlight_split(float3 in, float strength, float color_mix) {
   float3 out = in;
@@ -87,7 +107,7 @@ DEFINE_UI_PARAMS(split_strength, Split Tone Strength💪, DCTLUI_SLIDER_FLOAT, 0
 DEFINE_UI_PARAMS(split_highlight_color_mix, Hi 🔴<--->🟢, DCTLUI_SLIDER_FLOAT, 0.5, 0.0, 1.0, 0.1)
 DEFINE_UI_PARAMS(split_shadow_color_mix, Lo 🟢<--->🔵, DCTLUI_SLIDER_FLOAT, 0.5, 0.0, 1.0, 0.1)
 //DEFINE_UI_PARAMS(split_rolloff, Split rolloff, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 1.0, 0.1)
-DEFINE_UI_PARAMS(contrast_type, Contrast Type, DCTLUI_COMBO_BOX, 1, { linear, S_curve }, { Linear, S-Curve })
+DEFINE_UI_PARAMS(p_mix_contrast, Linear / S curve: , DCTLUI_SLIDER_FLOAT, 1.0f, 0.0f, 1.0f, 0.1f)
 DEFINE_UI_PARAMS(bypass, 🚫 Bypass, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(bypass_contrast,    ⤷ Contrast 🌓, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(bypass_splittone,    ⤷ Split toning 🔰, DCTLUI_CHECK_BOX, 0)
@@ -100,7 +120,7 @@ DEFINE_UI_PARAMS(limiter, 🔧 Limit input to 0-1, DCTLUI_CHECK_BOX, 0)
 
 __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p_R, float p_G, float p_B) {
     //float3 clean = {p_R, p_G, p_B};
-    float3 in = {p_R, p_G, p_B};
+    float3 in_RGB = make_float3(p_R, p_G, p_B);
 
 
 
@@ -124,9 +144,9 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
     
     //clamp check box functionality
     if(limiter == 1) {
-    in.x = _clampf(in.x, 0.f, 1.0f);
-    in.y = _clampf(in.y, 0.f, 1.0f);
-    in.z = _clampf(in.z, 0.f, 1.0f);    
+    in_RGB.x = _clampf(in_RGB.x, 0.f, 1.0f);
+    in_RGB.y = _clampf(in_RGB.y, 0.f, 1.0f);
+    in_RGB.z = _clampf(in_RGB.z, 0.f, 1.0f);    
     }
 
     float3 out;
@@ -141,27 +161,17 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
     //bypass option limited to the contrast operations
     if (bypass ==1 && bypass_contrast == 0 || bypass == 0 && bypass_contrast == 1 || bypass == 0 && bypass_contrast == 0) {
         //apply contrast operations
-        //calling linear contrast functions
-        if (contrast_type == linear) {
+    
+    float3 lin_contrast = apply_linear_contrastf3 (in_RGB, contrast, pivot);
+    float3 ramp_linear = apply_linear_contrastf3 (ramp, contrast, pivot);
 
-    out.x = apply_linear_contrast(in.x, contrast, pivot);
-    out.y = apply_linear_contrast(in.y, contrast, pivot);
-    out.z = apply_linear_contrast(in.z, contrast, pivot);
-    ramp.x = apply_linear_contrast(ramp.x, contrast, pivot);
-    ramp.y = apply_linear_contrast(ramp.y, contrast, pivot);
-    ramp.z = apply_linear_contrast(ramp.z, contrast, pivot);
-    }
-        //callling rolling contrast functions
-        if (contrast_type == S_curve) {
+    float3 roll_contrast = apply_rolling_contrastf3 (in_RGB, contrast, pivot);
+    float3 ramp_rolling = apply_rolling_contrastf3 (ramp, contrast, pivot);
 
-    out.x = apply_rolling_contrast(in.x, contrast, pivot);
-    out.y = apply_rolling_contrast(in.y, contrast, pivot);
-    out.z = apply_rolling_contrast(in.z, contrast, pivot);
-    ramp.x = apply_rolling_contrast(ramp.x, contrast, pivot);
-    ramp.y = apply_rolling_contrast(ramp.y, contrast, pivot);
-    ramp.z = apply_rolling_contrast(ramp.z, contrast, pivot);
-
-    }
+    float3 mix_con = _mix(lin_contrast, roll_contrast, p_mix_contrast);
+    float3 mix_ramp = _mix(ramp_linear, ramp_rolling, p_mix_contrast);
+   out = mix_con;
+   ramp = mix_ramp;
 
 
     }
