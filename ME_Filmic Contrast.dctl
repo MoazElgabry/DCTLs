@@ -20,40 +20,42 @@ __DEVICE__ float3 apply_linear_contrastf3(float3 in, float contrast, float pivot
 __DEVICE__ float3 apply_rolling_contrastf3(float3 in, float contrast, float pivot) {
     
     float3 out = in;
-    //offsetting the user slider to set stratingpoints at zero
+    //offsett the user slider to set the starting point at zero instead of 1
     contrast = contrast + 1.f;
-    //limitng max user input to a pleasing result
-    //if (contrast>1.f)   {contrast *= .85f;}
-    //else {contrast = _fmaxf(contrast*.85f,0.05f);}
 
     // apply rolling contrast
-    if (in.x <= pivot && in.y <= pivot && in.z <= pivot) {
+    if (in.x <= pivot) {out.x = _copysignf((_powf(_fabs((in.x / pivot)) , contrast) * pivot),(in.x / pivot));} 
+        if (in.x > pivot) {
+            in.x = 1 - in.x; 
+            pivot = 1 - pivot;
+            out.x = _copysignf((_powf(_fabs((in.x / pivot)) , contrast) * pivot),(in.x / pivot));
+            out.x = 1 - out.x;
+            pivot = 1 - pivot;
+        }
 
-    out.x = _copysignf((_powf(_fabs((in.x / pivot)) , contrast) * pivot),(in.x / pivot));
-    out.y = _copysignf((_powf(_fabs((in.y / pivot)) , contrast) * pivot),(in.y / pivot));
-    out.z = _copysignf((_powf(_fabs((in.z / pivot)) , contrast) * pivot),(in.z / pivot));
+    if (in.y <= pivot ) {out.y = _copysignf((_powf(_fabs((in.y / pivot)) , contrast) * pivot),(in.y / pivot));}
+        if (in.y > pivot) {
+            in.y = 1 - in.y; 
+            pivot = 1 - pivot;
+            out.y = _copysignf((_powf(_fabs((in.y / pivot)) , contrast) * pivot),(in.y / pivot));
+            out.y = 1 - out.y;
+            pivot = 1 - pivot;
+        }
 
-    }
+    if (in.z <= pivot) {out.z = _copysignf((_powf(_fabs((in.z / pivot)) , contrast) * pivot),(in.z / pivot));}
     
-    else {
-    in.x = 1 - in.x;
-    in.y = 1 - in.y;
-    in.z = 1 - in.z;
-    pivot = 1 - pivot;
-
-    out.x = _copysignf((_powf(_fabs((in.x / pivot)) , contrast) * pivot),(in.x / pivot));
-    out.y = _copysignf((_powf(_fabs((in.y / pivot)) , contrast) * pivot),(in.y / pivot));
-    out.z = _copysignf((_powf(_fabs((in.z / pivot)) , contrast) * pivot),(in.z / pivot));
-
-    out.x = 1 - out.x;
-    out.y = 1 - out.y;
-    out.z = 1 - out.z;
-
-    }
+        if (in.z > pivot) {
+            in.z = 1 - in.z; 
+            pivot = 1 - pivot;
+            out.z = _copysignf((_powf(_fabs((in.z / pivot)) , contrast) * pivot),(in.z / pivot));
+            out.z = 1 - out.z;
+        }
     
     return out;
 
     }
+
+
 
 __DEVICE__ float3 apply_highlight_split(float3 in, float strength, float color_mix) {
   float3 out = in;
@@ -93,11 +95,11 @@ __DEVICE__ float3 apply_shadow_split(float3 in, float strength, float color_mix)
   }
 
 
-DEFINE_UI_PARAMS(contrast, Contrast 🌓, DCTLUI_SLIDER_FLOAT, 0.0, -0.5, 1.5, 0.001)
-DEFINE_UI_PARAMS(pivot, Contrast Pivot 📌, DCTLUI_SLIDER_FLOAT, 0.435, 0.0, 1.0, 0.1)
-DEFINE_UI_PARAMS(split_strength, Split Tone Strength💪, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 1.0, 0.1)
-DEFINE_UI_PARAMS(split_highlight_color_mix, Hi 🔴<--->🟢, DCTLUI_SLIDER_FLOAT, 0.5, 0.0, 1.0, 0.1)
-DEFINE_UI_PARAMS(split_shadow_color_mix, Lo 🟢<--->🔵, DCTLUI_SLIDER_FLOAT, 0.5, 0.0, 1.0, 0.1)
+DEFINE_UI_PARAMS(contrast, Contrast 🌓, DCTLUI_SLIDER_FLOAT, 0.0, -0.5, 2, 0.001)
+DEFINE_UI_PARAMS(pivot, Contrast Pivot 📌, DCTLUI_SLIDER_FLOAT, 0.435, 0.0, 1.0, 0.001)
+DEFINE_UI_PARAMS(split_strength, Split Tone Strength💪, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 1.0, 0.001)
+DEFINE_UI_PARAMS(split_highlight_color_mix, Hi 🔴<--->🟢, DCTLUI_SLIDER_FLOAT, 0.5, 0.0, 1.0, 0.001)
+DEFINE_UI_PARAMS(split_shadow_color_mix, Lo 🟢<--->🔵, DCTLUI_SLIDER_FLOAT, 0.5, 0.0, 1.0, 0.001)
 DEFINE_UI_PARAMS(p_mix_contrast, Linear / S curve: , DCTLUI_SLIDER_FLOAT, 1.0f, 0.0f, 1.0f, 0.1f)
 DEFINE_UI_PARAMS(bypass, 🚫 Bypass, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(bypass_contrast,    ⤷ Contrast 🌓, DCTLUI_CHECK_BOX, 0)
@@ -119,6 +121,7 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
     float height = (float)p_Height;
     float X = (float)p_X;
     float Y = height - (float)p_Y;
+    //Relative X,Y 
     float rY = Y / height;
     float rX = X / width;
     float3 ramp = {rX, rX, rX};
@@ -126,10 +129,10 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
 
     //scales down the strength slider to limit the effective range to a range that produces pleasing results
     split_strength = split_strength * .2f;
-    split_shadow_color_mix = (split_shadow_color_mix * .3f) + .4f;
+    split_shadow_color_mix = (split_shadow_color_mix * .3f) + .5f;
     split_highlight_color_mix = (split_highlight_color_mix * .3f) + .1f;
-    //not allowing pivot to reach true zero as this caused an artifact
-    if( pivot < 0.05f ){ pivot = _fmaxf(pivot,.001f);}
+    //Limit pivot to above zero value as this caused artifacts
+    if( pivot < 0.05f ){ pivot = _fmaxf(pivot,.02f);}
     //if( pivot == 0.0f ) { pivot = .001f;}
 
     
@@ -194,13 +197,12 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
         out.y = overlayG == 0.0f ? out.y : overlayG;
         out.z = overlayB == 0.0f ? out.z : overlayB;
         if (rX < pivot+0.002f && rX > pivot- 0.002f) {
-            out.x = 1.0f;
-            out.y = 1.0f;
-            out.z = 1.0f;
+            out.x = .6f;
+            out.y = .6f;
+            out.z = .6f;
         }
     
     }
-
 
 
     return out;
