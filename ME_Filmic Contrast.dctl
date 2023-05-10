@@ -1,6 +1,97 @@
 //Flimic Contrast
 
-__DEVICE__ float3 apply_linear_contrastf3(float3 in, float contrast, float pivot) {
+__DEVICE__ float3 LinToLogC3 (float3 in) {
+    float3 out;
+
+    float cut = 0.010591;
+    float a = 5.555556;
+    float b = 0.052272;
+    float c = 0.247190;
+    float d = 0.385537;
+    float e = 5.367655;
+    float f = 0.092809;
+
+    out.x = (in.x > cut) ? c * log10(a * in.x + b) + d: e * in.x + f;
+    out.y = (in.y > cut) ? c * log10(a * in.y + b) + d: e * in.y + f;
+    out.z = (in.z > cut) ? c * log10(a * in.z + b) + d: e * in.z + f;
+
+    return out;
+    }
+
+__DEVICE__ float3 LogC3ToLin (float3 in) {
+    float3 out;
+
+    float cut = 0.010591;
+    float a = 5.555556;
+    float b = 0.052272;
+    float c = 0.247190;
+    float d = 0.385537;
+    float e = 5.367655;
+    float f = 0.092809;
+
+    out.x = (in.x > e * cut + f) ? (_powf(10, (in.x - d) / c) - b) / a : (in.x - f) / e;
+    out.y = (in.y > e * cut + f) ? (_powf(10, (in.y - d) / c) - b) / a : (in.y - f) / e;
+    out.z = (in.z > e * cut + f) ? (_powf(10, (in.z - d) / c) - b) / a : (in.z - f) / e;
+
+    return out;
+    }
+
+__DEVICE__ float3 LinToDI(float3 in) {
+    float3 out;
+
+    float a = 0.0075;
+    float b = 7.0;
+    float c = 0.07329248;
+    float m = 10.44426855;
+    float lin_cut = 0.00262409;
+
+    out.x = in.x > lin_cut ? (_log2f(in.x + a) + b) * c : out.x = in.x * m;
+    out.y = in.y > lin_cut ? (_log2f(in.y + a) + b) * c : out.y = in.y * m;
+    out.z = in.z > lin_cut ? (_log2f(in.z + a) + b) * c : out.z = in.z * m;
+
+    return out;
+    }
+
+__DEVICE__ float3 DItoLin (float3 in) {
+    float3 out;
+
+    float a = 0.0075;
+    float b = 7.0;
+    float c = 0.07329248;
+    float m = 10.44426855;
+    float log_cut = 0.02740668;
+
+    out.x = in.x > log_cut ? _powf(2.f, (in.x / c) - b) - a : in.x / m;
+    out.y = in.y > log_cut ? _powf(2.f, (in.y / c) - b) - a : in.y / m;
+    out.z = in.z > log_cut ? _powf(2.f, (in.z / c) - b) - a : in.z / m;
+
+    return out;
+    }
+
+__DEVICE__ float3 GammaToLin (float3 in, int gamma) {
+
+    if (gamma ==  0) return LogC3ToLin(in);
+    if (gamma ==  1) return DItoLin(in);
+    return make_float3(0, 0, 1); // Blue on error
+    }
+
+__DEVICE__ float3 LinToGamma (float3 in, int gamma) {
+    if (gamma ==  0) return LinToLogC3(in);
+    if (gamma ==  1) return LinToDI(in);
+    return make_float3(0, 1, 0); // Green on error
+    }
+
+__DEVICE__ float set_pivot (float pivot, int gamma) {
+    float out = pivot;
+    float logc3_gray = 0.391f;
+    float DI_gray = 0.336f;
+
+    if (gamma ==  0) { pivot = logc3_gray;}
+    if (gamma ==  1) { pivot = DI_gray;}
+    return out;
+    }
+
+__DEVICE__ float3 apply_linear_contrastf3 (float3 in, float contrast, float pivot) {
     
     float3 out = in;
     //offsetting the user slider to set stratingpoints at zero
@@ -17,7 +108,7 @@ __DEVICE__ float3 apply_linear_contrastf3(float3 in, float contrast, float pivot
     return out;
     }
 
-__DEVICE__ float3 apply_rolling_contrastf3(float3 in, float contrast, float pivot) {
+__DEVICE__ float3 apply_rolling_contrastf3 (float3 in, float contrast, float pivot) {
     
     float3 out = in;
     //offsett the user slider to set the starting point at zero instead of 1
@@ -160,7 +251,7 @@ return out;
 
     }
 
-__DEVICE__ float3 apply_highlight_split(float3 in, float strength, float color_mix) {
+__DEVICE__ float3 apply_highlight_split (float3 in, float strength, float color_mix) {
   float3 out = in;
   float red_strength = ((1 - color_mix) * strength) + 1.f;
   float green_strength = (color_mix * strength) + 1.f;
@@ -173,7 +264,7 @@ __DEVICE__ float3 apply_highlight_split(float3 in, float strength, float color_m
   return out;
   }
 
-__DEVICE__ float3 apply_shadow_split(float3 in, float strength, float color_mix) {
+__DEVICE__ float3 apply_shadow_split (float3 in, float strength, float color_mix) {
 
   float3 out = in;
 
@@ -198,17 +289,18 @@ __DEVICE__ float3 apply_shadow_split(float3 in, float strength, float color_mix)
   }
 
 
+
 DEFINE_UI_PARAMS(contrast, Contrast 🌓, DCTLUI_SLIDER_FLOAT, 0.0, -0.5, 2, 0.001)
-DEFINE_UI_PARAMS(pivot, Contrast Pivot 📌, DCTLUI_SLIDER_FLOAT, 0.435, 0.0, 1.0, 0.001)
+DEFINE_UI_PARAMS(pivot, Contrast Pivot 📌, DCTLUI_SLIDER_FLOAT, 0.0, -1, 1, 0.001)
+DEFINE_UI_PARAMS(P_exposure, 🌞 Exposure, DCTLUI_SLIDER_FLOAT, 0.0f, -0.7f, 2.0f, 0.001f)
 
-
-DEFINE_UI_PARAMS(p_white_point, ⚪White Point ⚪ :, DCTLUI_SLIDER_FLOAT, 0.999, 0.0, 0.999, 0.1)
-DEFINE_UI_PARAMS(p_w_p_pivot, ├ Shoulder  ╭, DCTLUI_SLIDER_FLOAT, 0.8, 0.4, 1, 0.1)
-DEFINE_UI_PARAMS(p_shoulder_str, └ Roll off ╭   , DCTLUI_SLIDER_FLOAT, 2.0, 0.05, 5.0, 0.001)
+DEFINE_UI_PARAMS(p_white_point, ⚪White Point ⚪ :, DCTLUI_SLIDER_FLOAT, 0.999, 0.0, 0.999, 0.0001)
+DEFINE_UI_PARAMS(p_w_p_pivot, ├ Shoulder  ╭, DCTLUI_SLIDER_FLOAT, 0.8, 0.41, 1, 0.1)
+DEFINE_UI_PARAMS(p_shoulder_str, └ Roll off ╭   , DCTLUI_SLIDER_FLOAT, 2.0, 0.1, 5.0, 0.001)
 
 DEFINE_UI_PARAMS(p_black_point, ⚫Black Point ⚫ :, DCTLUI_SLIDER_FLOAT, 0.0001, 0.0001, .25, 0.0001)
-DEFINE_UI_PARAMS(p_b_p_pivot, ├ Toe     ⌣  , DCTLUI_SLIDER_FLOAT, 0.2, 0.0, 0.5, 0.001)
-DEFINE_UI_PARAMS(p_toe_str, └ Roll off   ⌣   , DCTLUI_SLIDER_FLOAT, 2.0, 0.08, 5.0, 0.001)
+DEFINE_UI_PARAMS(p_b_p_pivot, ├ Toe     ⌣  , DCTLUI_SLIDER_FLOAT, 0.2, 0.0, 0.4, 0.001)
+DEFINE_UI_PARAMS(p_toe_str, └ Roll off   ⌣   , DCTLUI_SLIDER_FLOAT, 2.0, 0.135, 8.0, 0.001)
 
 DEFINE_UI_PARAMS(p_mix_contrast, Linear / S curve: , DCTLUI_SLIDER_FLOAT, 1.0f, 0.0f, 1.0f, 0.1f)
 
@@ -216,10 +308,12 @@ DEFINE_UI_PARAMS(split_strength, Split Tone Strength💪, DCTLUI_SLIDER_FLOAT, 0
 DEFINE_UI_PARAMS(split_highlight_color_mix, Hi 🔴<--->🟢, DCTLUI_SLIDER_FLOAT, 0.5, 0.0, 1.0, 0.001)
 DEFINE_UI_PARAMS(split_shadow_color_mix, Lo 🟢<--->🔵, DCTLUI_SLIDER_FLOAT, 0.5, 0.0, 1.0, 0.001)
 DEFINE_UI_PARAMS(bypass, 🚫 Bypass, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_PARAMS(bypass_exp,    ⤷ Exposure 🌞, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(bypass_contrast,    ⤷ Contrast 🌓, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(bypass_splittone,    ⤷ Split toning 🔰, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(opt_showcurve, 📈 Show Curve, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(opt_ramp, 📏 Show Ramp, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_PARAMS(p_transfer_f, Transfer function, DCTLUI_COMBO_BOX, 1, {logc3,  di}, {ARRI LogC3,  DaVinci Intermediate})
 //DEFINE_UI_PARAMS(limiter, 🔧 Limit input to 0-1, DCTLUI_CHECK_BOX, 0)
 
 
@@ -227,6 +321,15 @@ DEFINE_UI_PARAMS(opt_ramp, 📏 Show Ramp, DCTLUI_CHECK_BOX, 0)
 __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p_R, float p_G, float p_B) {
 
     float3 in_RGB = make_float3(p_R, p_G, p_B);
+    //float TF_pivot = set_pivot(pivot, p_transfer_f);
+    //pivot = pivot + TF_pivot;
+    //pivot *= set_pivot(pivot, p_transfer_f);
+
+    float logc3_gray = 0.391f;
+    float DI_gray = 0.336f;
+
+    if (p_transfer_f ==  0) { pivot = _clampf(( pivot + logc3_gray), 0.0f, 1.0f);}
+    if (p_transfer_f ==  1) { pivot = _clampf(( pivot + DI_gray), 0.0f, 1.0f);}
 
 
 
@@ -245,8 +348,9 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
     split_strength = split_strength * .2f;
     split_shadow_color_mix = (split_shadow_color_mix * .3f) + .5f;
     split_highlight_color_mix = (split_highlight_color_mix * .3f) + .1f;
+
     //Limit pivot to above zero value as this caused artifacts
-    if( pivot < 0.05f ){ pivot = _fmaxf(pivot,.02f);}
+    //if( pivot < 0.05f ){ pivot = _fmaxf(pivot,.02f);}
 
     
     //sanitize black and white points
@@ -258,20 +362,34 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
     p_black_point = _fmaxf(p_black_point , 0.8f);
     
     //clamp check box functionality
-    if(limiter == 1) {
-    in_RGB.x = _clampf(in_RGB.x, 0.f, 1.0f);
-    in_RGB.y = _clampf(in_RGB.y, 0.f, 1.0f);
-    in_RGB.z = _clampf(in_RGB.z, 0.f, 1.0f);    
-    }
+    //if(limiter == 1) {
+    //in_RGB.x = _clampf(in_RGB.x, 0.f, 1.0f);
+    //in_RGB.y = _clampf(in_RGB.y, 0.f, 1.0f);
+    //in_RGB.z = _clampf(in_RGB.z, 0.f, 1.0f);    
+    //}
 
     float3 out;
+
     //bypass option that outputs untouched image when activated
-    if (bypass ==1 && bypass_contrast == 1 && bypass_splittone == 1 || bypass ==1 && bypass_contrast == 0 && bypass_splittone == 0) {
+    if (bypass ==1 && bypass_contrast == 1 && bypass_splittone == 1 && bypass_exp == 1 || bypass ==1 && bypass_contrast == 0 && bypass_splittone == 0 && bypass_exp == 0) {
         float3 clean = {p_R, p_G, p_B};
 
     return clean;
     }
 
+    // exposure slider and bypass option
+    if (bypass ==1 && bypass_exp == 0 || bypass == 0 && bypass_exp == 1 || bypass == 0 && bypass_exp == 0 ) {
+        P_exposure = P_exposure + 1.0f;
+        in_RGB = GammaToLin(in_RGB, p_transfer_f);
+        ramp = GammaToLin(ramp, p_transfer_f);
+
+        // Apply linear gain
+        in_RGB = in_RGB * P_exposure;
+        ramp = ramp * P_exposure;
+    
+        in_RGB = LinToGamma(in_RGB, p_transfer_f);
+        ramp = LinToGamma(ramp, p_transfer_f);
+    }
 
     //bypass option limited to the contrast operations
     if (bypass ==1 && bypass_contrast == 0 || bypass == 0 && bypass_contrast == 1 || bypass == 0 && bypass_contrast == 0) {
