@@ -1,5 +1,9 @@
 //Flimic Contrast
+// Created by Moaz Elgabry on 11 May 2023
+//
 
+
+//functions for Transfer function conversion
 __DEVICE__ float3 LinToLogC3 (float3 in) {
     float3 out;
 
@@ -36,7 +40,7 @@ __DEVICE__ float3 LogC3ToLin (float3 in) {
     return out;
     }
 
-__DEVICE__ float3 LinToDI(float3 in) {
+__DEVICE__ float3 LinToDI (float3 in) {
     float3 out;
 
     float a = 0.0075;
@@ -68,28 +72,168 @@ __DEVICE__ float3 DItoLin (float3 in) {
     return out;
     }
 
+__DEVICE__ float3 LinToACEScct (float3 in) {
+    float3 out;
+
+    float a = 10.5402377416545;
+    float b = 0.0729055341958355;
+    float c = 9.72;
+    float d = 17.52;
+    float e = 0.0078125;
+
+    out.x = in.x <= e ? a * in.x + b : (_log2f(in.x) + c) / d;
+    out.y = in.y <= e ? a * in.y + b : (_log2f(in.y) + c) / d;
+    out.z = in.z <= e ? a * in.z + b : (_log2f(in.z) + c) / d;
+
+    return out;
+    }
+
+__DEVICE__ float3 ACEScctToLin (float3 in) {
+    float3 out;
+
+    float a = 10.5402377416545;
+    float b = 0.0729055341958355;
+    float c = 9.72;
+    float d = 17.52;
+    float e = _log2f(65504);
+    float lin_cut = 0.155251141552511;
+
+    out.x = in.x <= lin_cut ? (in.x - b) / a : in.x < (e + c) / d ? _powf(2, in.x*d-c) : 65504;
+    out.y = in.y <= lin_cut ? (in.y - b) / a : in.y < (e + c) / d ? _powf(2, in.y*d-c) : 65504;
+    out.z = in.z <= lin_cut ? (in.z - b) / a : in.z < (e + c) / d ? _powf(2, in.z*d-c) : 65504;
+
+    return out;
+    }
+
+__DEVICE__ float3 LinToLogC4 (float3 in) {
+    float3 out;
+
+    float a = (_powf(2.0, 18.0) - 16.0) / 117.45;
+    float b = (1023.0 - 95.0) / 1023.0;
+    float c = 95.0 / 1023.0;
+    float s = (7 * _logf(2) * _powf(2.0, 7 - 14 * c / b)) / (a * b);
+    float t = (_powf(2.0, 14.0 * (-c / b) + 6.0) - 64.0) / a;
+
+    out.x = in.x < t ? (in.x - t) / s : (_log2f( a * in.x + 64.0) - 6.0) / 14.0 * b + c;
+    out.y = in.y < t ? (in.y - t) / s : (_log2f( a * in.y + 64.0) - 6.0) / 14.0 * b + c;
+    out.z = in.z < t ? (in.z - t) / s : (_log2f( a * in.z + 64.0) - 6.0) / 14.0 * b + c;
+
+    return out;
+    }
+
+__DEVICE__ float3 LogC4ToLin (float3 in) {
+    float3 out;
+
+    float a = (_powf(2.0, 18.0) - 16.0) / 117.45;
+    float b = (1023.0 - 95.0) / 1023.0;
+    float c = 95.0 / 1023.0;
+    float s = (7 * _logf(2) * _powf(2.0, 7 - 14 * c / b)) / (a * b);
+    float t = (_powf(2.0, 14.0 * (-c / b) + 6.0) - 64.0) / a;
+
+    out.x = in.x < 0.0 ? in.x * s + t : (_powf(2.0, 14.0 * (in.x - c) / b + 6.0) - 64.0) / a;
+    out.y = in.y < 0.0 ? in.y * s + t : (_powf(2.0, 14.0 * (in.y - c) / b + 6.0) - 64.0) / a;
+    out.z = in.z < 0.0 ? in.z * s + t : (_powf(2.0, 14.0 * (in.z - c) / b + 6.0) - 64.0) / a;
+
+    return out;
+    }
+
+__DEVICE__ float3 RGB_to_HSV(float3 RGB) {
+    float3 HSV;
+    float min = _fminf(_fminf(RGB.x, RGB.y), RGB.z);
+    float max = _fmaxf(_fmaxf(RGB.x, RGB.y), RGB.z);
+    HSV.z = max;
+    float delta = max - min;
+    if (max != 0.0f) {
+    HSV.y = delta / max;
+    } else {
+    HSV.y = 0.0f;
+    HSV.x = 0.0f;
+    return HSV;
+    }
+    if (delta == 0.0f) {
+    HSV.x = 0.0f;
+    } else if (RGB.x == max) {
+    HSV.x = (RGB.y - RGB.z) / delta;
+    } else if (RGB.y == max) {
+    HSV.x = 2.0f + (RGB.z - RGB.x) / delta;
+    } else {
+    HSV.x = 4.0f + (RGB.x - RGB.y) / delta;
+    }
+    HSV.x *= 1.0f / 6.0f;
+    if (HSV.x < 0.0f)
+    HSV.x += 1.0f;
+    return HSV;
+    } //Convert to HSV
+
+__DEVICE__ float3 HSV_to_RGB(float3 HSV) {
+    float3 RGB;
+    if (HSV.y == 0.0f) {
+    RGB.x = RGB.y = RGB.z = HSV.z;
+    } else {
+    HSV.x *= 6.0f;
+    int i = floor(HSV.x);
+    float f = HSV.x - i;
+    i = (i >= 0) ? (i % 6) : (i % 6) + 6;
+    float p = HSV.z * (1.0f - HSV.y);
+    float q = HSV.z * (1.0f - HSV.y * f);
+    float t = HSV.z * (1.0f - HSV.y * (1.0f - f));
+    RGB.x = i == 0 ? HSV.z : i == 1 ? q : i == 2 ? p : i == 3 ? p : i == 4 ? t : HSV.z;
+    RGB.y = i == 0 ? t : i == 1 ? HSV.z : i == 2 ? HSV.z : i == 3 ? q : i == 4 ? p : p;
+    RGB.z = i == 0 ? p : i == 1 ? p : i == 2 ? t : i == 3 ? HSV.z : i == 4 ? HSV.z : q;
+    }
+    return RGB;
+    } //Convert from HSV to RGB
+
+__DEVICE__ float HSV_sat_mixed (float3 in_1, float3 in_2, float mix_sat) {
+    //float3 out = in;
+    float3 HSV_1 = in_1;
+    float3 HSV_2 = in_2;
+
+
+    HSV_1 = RGB_to_HSV(in_1);
+    HSV_2 = RGB_to_HSV(in_2);
+    float clean_sat = HSV_1.y;
+    float new_sat = HSV_2.y;
+    float saturation = _mix(clean_sat, new_sat, mix_sat);
+
+    return saturation;
+    }
+
+//functions to apply transfer function conversions
+
 __DEVICE__ float3 GammaToLin (float3 in, int gamma) {
 
     if (gamma ==  0) return LogC3ToLin(in);
-    if (gamma ==  1) return DItoLin(in);
+    if (gamma ==  1) return LogC4ToLin(in);
+    if (gamma ==  2) return DItoLin(in);
+    if (gamma ==  3) return ACEScctToLin (in);
     return make_float3(0, 0, 1); // Blue on error
     }
 
 __DEVICE__ float3 LinToGamma (float3 in, int gamma) {
     if (gamma ==  0) return LinToLogC3(in);
-    if (gamma ==  1) return LinToDI(in);
+    if (gamma ==  1) return LinToLogC4(in);
+    if (gamma ==  2) return LinToDI(in);
+    if (gamma ==  3) return LinToACEScct(in);
     return make_float3(0, 1, 0); // Green on error
     }
 
 __DEVICE__ float set_pivot (float pivot, int gamma) {
-    float out = pivot;
-    float logc3_gray = 0.391f;
-    float DI_gray = 0.336f;
+    float p_transfer_f = gamma;
+    const float logc3_gray = 0.391f;
+    const float logc4_gray = 0.278f;
+    const float DI_gray = 0.336f;
+    const float ACEScct_gray = 0.414f;
 
-    if (gamma ==  0) { pivot = logc3_gray;}
-    if (gamma ==  1) { pivot = DI_gray;}
-    return out;
+    if (p_transfer_f ==  0) { pivot = _clampf(( pivot + logc3_gray), 0.02f, 1.0f);}
+    if (p_transfer_f ==  1) { pivot = _clampf(( pivot + logc4_gray), 0.02f, 1.0f);}
+    if (p_transfer_f ==  2) { pivot = _clampf(( pivot + DI_gray), 0.02f, 1.0f);}
+    if (p_transfer_f ==  3) { pivot = _clampf(( pivot + ACEScct_gray), 0.02f, 1.0f);}
+    //else { pivot;}
+    return pivot;
     }
+
+//functions for the main functionality of contrast and split toning
 
 __DEVICE__ float3 apply_linear_contrastf3 (float3 in, float contrast, float pivot) {
     
@@ -291,29 +435,32 @@ __DEVICE__ float3 apply_shadow_split (float3 in, float strength, float color_mix
 
 
 DEFINE_UI_PARAMS(contrast, Contrast 🌓, DCTLUI_SLIDER_FLOAT, 0.0, -0.5, 2, 0.001)
-DEFINE_UI_PARAMS(pivot, Contrast Pivot 📌, DCTLUI_SLIDER_FLOAT, 0.0, -1, 1, 0.001)
-DEFINE_UI_PARAMS(P_exposure, 🌞 Exposure, DCTLUI_SLIDER_FLOAT, 0.0f, -0.7f, 2.0f, 0.001f)
+DEFINE_UI_PARAMS(pivot, Relative Pivot 📌, DCTLUI_SLIDER_FLOAT, 0.0, -1, 1, 0.001)
+DEFINE_UI_PARAMS(P_exposure,  Exposure 🌞, DCTLUI_SLIDER_FLOAT, 0.0f, -0.7f, 2.0f, 0.001f)
+DEFINE_UI_PARAMS(p_mix_sat, Saturation mix:🖍️ , DCTLUI_SLIDER_FLOAT, 0.5f, 0.0f, 1.0f, 0.01f)
 
 DEFINE_UI_PARAMS(p_white_point, ⚪White Point ⚪ :, DCTLUI_SLIDER_FLOAT, 0.999, 0.0, 0.999, 0.0001)
-DEFINE_UI_PARAMS(p_w_p_pivot, ├ Shoulder  ╭, DCTLUI_SLIDER_FLOAT, 0.8, 0.41, 1, 0.1)
-DEFINE_UI_PARAMS(p_shoulder_str, └ Roll off ╭   , DCTLUI_SLIDER_FLOAT, 2.0, 0.1, 5.0, 0.001)
+DEFINE_UI_PARAMS(p_w_p_pivot, ├ Shoulder  ╭, DCTLUI_SLIDER_FLOAT, 0.6, 0.41, 1, 0.1)
+DEFINE_UI_PARAMS(p_shoulder_str, └ Fall off ╭   , DCTLUI_SLIDER_FLOAT, 2.0, 0.1, 5.0, 0.001)
 
 DEFINE_UI_PARAMS(p_black_point, ⚫Black Point ⚫ :, DCTLUI_SLIDER_FLOAT, 0.0001, 0.0001, .25, 0.0001)
 DEFINE_UI_PARAMS(p_b_p_pivot, ├ Toe     ⌣  , DCTLUI_SLIDER_FLOAT, 0.2, 0.0, 0.4, 0.001)
-DEFINE_UI_PARAMS(p_toe_str, └ Roll off   ⌣   , DCTLUI_SLIDER_FLOAT, 2.0, 0.135, 8.0, 0.001)
+DEFINE_UI_PARAMS(p_toe_str, └ Fall off   ⌣   , DCTLUI_SLIDER_FLOAT, 4.0, 0.135, 8.0, 0.001)
+
 
 DEFINE_UI_PARAMS(p_mix_contrast, Linear / S curve: , DCTLUI_SLIDER_FLOAT, 1.0f, 0.0f, 1.0f, 0.1f)
+
 
 DEFINE_UI_PARAMS(split_strength, Split Tone Strength💪, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 1.0, 0.001)
 DEFINE_UI_PARAMS(split_highlight_color_mix, Hi 🔴<--->🟢, DCTLUI_SLIDER_FLOAT, 0.5, 0.0, 1.0, 0.001)
 DEFINE_UI_PARAMS(split_shadow_color_mix, Lo 🟢<--->🔵, DCTLUI_SLIDER_FLOAT, 0.5, 0.0, 1.0, 0.001)
 DEFINE_UI_PARAMS(bypass, 🚫 Bypass, DCTLUI_CHECK_BOX, 0)
-DEFINE_UI_PARAMS(bypass_exp,    ⤷ Exposure 🌞, DCTLUI_CHECK_BOX, 0)
+//DEFINE_UI_PARAMS(bypass_exp,    ⤷ Exposure 🌞, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(bypass_contrast,    ⤷ Contrast 🌓, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(bypass_splittone,    ⤷ Split toning 🔰, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(opt_showcurve, 📈 Show Curve, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(opt_ramp, 📏 Show Ramp, DCTLUI_CHECK_BOX, 0)
-DEFINE_UI_PARAMS(p_transfer_f, Transfer function, DCTLUI_COMBO_BOX, 1, {logc3,  di}, {ARRI LogC3,  DaVinci Intermediate})
+DEFINE_UI_PARAMS(p_transfer_f, Transfer function, DCTLUI_COMBO_BOX, 2, {logc3, logc4, di, aces_cct}, {ARRI LogC3, ARRI LogC4,  DaVinci Intermediate, ACEScct})
 //DEFINE_UI_PARAMS(limiter, 🔧 Limit input to 0-1, DCTLUI_CHECK_BOX, 0)
 
 
@@ -321,16 +468,7 @@ DEFINE_UI_PARAMS(p_transfer_f, Transfer function, DCTLUI_COMBO_BOX, 1, {logc3,  
 __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p_R, float p_G, float p_B) {
 
     float3 in_RGB = make_float3(p_R, p_G, p_B);
-    //float TF_pivot = set_pivot(pivot, p_transfer_f);
-    //pivot = pivot + TF_pivot;
-    //pivot *= set_pivot(pivot, p_transfer_f);
-
-    float logc3_gray = 0.391f;
-    float DI_gray = 0.336f;
-
-    if (p_transfer_f ==  0) { pivot = _clampf(( pivot + logc3_gray), 0.0f, 1.0f);}
-    if (p_transfer_f ==  1) { pivot = _clampf(( pivot + DI_gray), 0.0f, 1.0f);}
-
+    pivot = set_pivot(pivot, p_transfer_f);
 
 
     //create a linear ramp to enable the view graph control
@@ -369,16 +507,16 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
     //}
 
     float3 out;
-
+    float3 clean = {p_R, p_G, p_B};
     //bypass option that outputs untouched image when activated
-    if (bypass ==1 && bypass_contrast == 1 && bypass_splittone == 1 && bypass_exp == 1 || bypass ==1 && bypass_contrast == 0 && bypass_splittone == 0 && bypass_exp == 0) {
+    if (bypass ==1 && bypass_contrast == 1 && bypass_splittone == 1  || bypass ==1 && bypass_contrast == 0 && bypass_splittone == 0 ) {
         float3 clean = {p_R, p_G, p_B};
 
     return clean;
     }
 
-    // exposure slider and bypass option
-    if (bypass ==1 && bypass_exp == 0 || bypass == 0 && bypass_exp == 1 || bypass == 0 && bypass_exp == 0 ) {
+    // exposure slider that works in linear
+    //if (bypass ==1 && bypass_exp == 0 || bypass == 0 && bypass_exp == 1 || bypass == 0 && bypass_exp == 0 ) {
         P_exposure = P_exposure + 1.0f;
         in_RGB = GammaToLin(in_RGB, p_transfer_f);
         ramp = GammaToLin(ramp, p_transfer_f);
@@ -389,12 +527,12 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
     
         in_RGB = LinToGamma(in_RGB, p_transfer_f);
         ramp = LinToGamma(ramp, p_transfer_f);
-    }
+    //}
 
     //bypass option limited to the contrast operations
     if (bypass ==1 && bypass_contrast == 0 || bypass == 0 && bypass_contrast == 1 || bypass == 0 && bypass_contrast == 0) {
-        //apply contrast operations
-    
+                
+                //apply contrast operations
              float3 lin_contrast = apply_linear_contrastf3 (in_RGB, contrast, pivot);
              float3 ramp_linear = apply_linear_contrastf3 (ramp, contrast, pivot);
 
@@ -403,8 +541,16 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
 
              float3 mix_con = _mix(lin_contrast, roll_contrast, p_mix_contrast);
              float3 mix_ramp = _mix(ramp_linear, ramp_rolling, p_mix_contrast);
-    
-            float3 White_p = apply_white_point(mix_con, p_white_point, p_w_p_pivot, p_shoulder_str);
+
+                //mix back the original saturation channel in HSV to preserve saturation
+             float3 mix_con_HSV = RGB_to_HSV(mix_con);
+             float get_sat = HSV_sat_mixed (clean, mix_con, p_mix_sat);
+             float3 preserve_sat = mix_con_HSV;
+             preserve_sat.y = get_sat;
+             preserve_sat = HSV_to_RGB(preserve_sat);
+                
+                //apply compression to the white and black points
+            float3 White_p = apply_white_point(preserve_sat, p_white_point, p_w_p_pivot, p_shoulder_str);
             float3 ramp_White_p = apply_white_point(mix_ramp, p_white_point, p_w_p_pivot, p_shoulder_str);
 
             float3 black_p = apply_black_point(White_p, p_black_point, p_b_p_pivot, p_toe_str);           
@@ -461,7 +607,5 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
                 }
     }
     
-
-
     return out;
 }
