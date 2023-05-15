@@ -4,7 +4,7 @@
 
 
 //functions for Transfer function conversion
-__DEVICE__ float3 LinToLogC3 (float3 in) {
+ __DEVICE__ float3 LinToLogC3 (float3 in) {
     float3 out;
 
     float cut = 0.010591;
@@ -21,8 +21,8 @@ __DEVICE__ float3 LinToLogC3 (float3 in) {
 
     return out;
     }
-
-__DEVICE__ float3 LogC3ToLin (float3 in) {
+ 
+ __DEVICE__ float3 LogC3ToLin (float3 in) {
     float3 out;
 
     float cut = 0.010591;
@@ -39,8 +39,8 @@ __DEVICE__ float3 LogC3ToLin (float3 in) {
 
     return out;
     }//0
-
-__DEVICE__ float3 LinToDI (float3 in) {
+ 
+ __DEVICE__ float3 LinToDI (float3 in) {
     float3 out;
 
     float a = 0.0075;
@@ -55,8 +55,8 @@ __DEVICE__ float3 LinToDI (float3 in) {
 
     return out;
     }
-
-__DEVICE__ float3 DItoLin (float3 in) {
+ 
+ __DEVICE__ float3 DItoLin (float3 in) {
     float3 out;
 
     float a = 0.0075;
@@ -71,8 +71,8 @@ __DEVICE__ float3 DItoLin (float3 in) {
 
     return out;
     }//2
-
-__DEVICE__ float3 LinToACEScct (float3 in) {
+ 
+ __DEVICE__ float3 LinToACEScct (float3 in) {
     float3 out;
 
     float a = 10.5402377416545;
@@ -87,8 +87,8 @@ __DEVICE__ float3 LinToACEScct (float3 in) {
 
     return out;
     }
-
-__DEVICE__ float3 ACEScctToLin (float3 in) {
+ 
+ __DEVICE__ float3 ACEScctToLin (float3 in) {
     float3 out;
 
     float a = 10.5402377416545;
@@ -104,8 +104,8 @@ __DEVICE__ float3 ACEScctToLin (float3 in) {
 
     return out;
     }//3
-
-__DEVICE__ float3 LinToLogC4 (float3 in) {
+ 
+ __DEVICE__ float3 LinToLogC4 (float3 in) {
     float3 out;
 
     float a = (_powf(2.0, 18.0) - 16.0) / 117.45;
@@ -120,8 +120,8 @@ __DEVICE__ float3 LinToLogC4 (float3 in) {
 
     return out;
     }
-
-__DEVICE__ float3 LogC4ToLin (float3 in) {
+ 
+ __DEVICE__ float3 LogC4ToLin (float3 in) {
     float3 out;
 
     float a = (_powf(2.0, 18.0) - 16.0) / 117.45;
@@ -136,8 +136,8 @@ __DEVICE__ float3 LogC4ToLin (float3 in) {
 
     return out;
     }//1
-
-__DEVICE__ float3 LinToDLog (float3 in) {
+ 
+ __DEVICE__ float3 LinToDLog (float3 in) {
     float3 out;
 
     out.x = in.x <= 0.0078 ? 6.025 * in.x + 0.0929 : (_log10f(in.x * 0.9892 + 0.0108)) * 0.256663 + 0.584555;
@@ -146,8 +146,8 @@ __DEVICE__ float3 LinToDLog (float3 in) {
 
     return out;
     }
-
-__DEVICE__ float3 DLogToLin (float3 in) {
+ 
+ __DEVICE__ float3 DLogToLin (float3 in) {
     float3 out;
 
     out.x = in.x <= 0.14 ? (in.x - 0.0929) / 6.025 : (_powf(10, 3.89616 * in.x - 2.27752) - 0.0108) / 0.9892;
@@ -156,8 +156,8 @@ __DEVICE__ float3 DLogToLin (float3 in) {
 
     return out;
     }
-
-__DEVICE__ float3 LinToFLog (float3 in) {
+ 
+ __DEVICE__ float3 LinToFLog (float3 in) {
     float3 out;
 
     float a = 0.555556;
@@ -174,8 +174,8 @@ __DEVICE__ float3 LinToFLog (float3 in) {
 
     return out;
     }
-
-__DEVICE__ float3 FLogToLin (float3 in) {
+ 
+ __DEVICE__ float3 FLogToLin (float3 in) {
     float3 out;
 
     float a = 0.555556;
@@ -192,8 +192,8 @@ __DEVICE__ float3 FLogToLin (float3 in) {
 
     return out;
     }
-
-__DEVICE__ float3 LinToFLog2 (float3 in) {
+ 
+ __DEVICE__ float3 LinToFLog2 (float3 in) {
     float3 out;
 
     float a = 5.555556;
@@ -210,8 +210,8 @@ __DEVICE__ float3 LinToFLog2 (float3 in) {
 
     return out;
     }
-
-__DEVICE__ float3 FLog2ToLin (float3 in) {
+ 
+ __DEVICE__ float3 FLog2ToLin (float3 in) {
     float3 out;
 
     float a = 5.555556;
@@ -228,8 +228,8 @@ __DEVICE__ float3 FLog2ToLin (float3 in) {
 
     return out;
     }
-
-__DEVICE__ float3 LinToVLog (float3 in) {
+ 
+ __DEVICE__ float3 LinToVLog (float3 in) {
     float3 out;
 
     float cut = 0.01;
@@ -243,8 +243,8 @@ __DEVICE__ float3 LinToVLog (float3 in) {
 
     return out;
     }
-
-__DEVICE__ float3 VLogToLin (float3 in) {
+ 
+ __DEVICE__ float3 VLogToLin (float3 in) {
     float3 out;
 
     float cut = 0.181;
@@ -258,8 +258,8 @@ __DEVICE__ float3 VLogToLin (float3 in) {
 
     return out;
     }
-
-__DEVICE__ float3 LinToLog3G10 (float3 in) {
+ 
+ __DEVICE__ float3 LinToLog3G10 (float3 in) {
     float3 out;
 
     float a = 0.224282f;
@@ -277,8 +277,8 @@ __DEVICE__ float3 LinToLog3G10 (float3 in) {
 
     return out;
     }
-
-__DEVICE__ float3 Log3G10toLin (float3 in) {
+ 
+ __DEVICE__ float3 Log3G10toLin (float3 in) {
     float3 out;
 
     float a = 0.224282f;
@@ -296,8 +296,8 @@ __DEVICE__ float3 Log3G10toLin (float3 in) {
 
     return out;
     }
-
-__DEVICE__ float3 LinToSLog3 (float3 in) {
+ 
+ __DEVICE__ float3 LinToSLog3 (float3 in) {
     float3 out;
 
     out.x = in.x >= 0.01125000 ? (420.0 + _log10f((in.x + 0.01) / (0.18 + 0.01)) * 261.5) / 1023.0 : (in.x * (171.2102946929 - 95.0)/0.01125000 + 95.0) / 1023.0;
@@ -306,8 +306,8 @@ __DEVICE__ float3 LinToSLog3 (float3 in) {
 
     return out;
     }
-
-__DEVICE__ float3 SLog3ToLin (float3 in) {
+ 
+ __DEVICE__ float3 SLog3ToLin (float3 in) {
     float3 out;
 
     out.x = in.x >= 171.2102946929 / 1023.0 ? (_powf(10.0, ((in.x * 1023.0 - 420.0) / 261.5))) * (0.18 + 0.01) - 0.01 : (in.x * 1023.0 - 95.0) * 0.01125000 / (171.2102946929 - 95.0);
@@ -316,8 +316,8 @@ __DEVICE__ float3 SLog3ToLin (float3 in) {
 
     return out;
     }
-
-__DEVICE__ float3 LinToBMDFilmGen5(float3 in) {
+ 
+ __DEVICE__ float3 LinToBMDFilmGen5(float3 in) {
     float3 out;
 
     float a = 8.283605932402494f;
@@ -333,8 +333,8 @@ __DEVICE__ float3 LinToBMDFilmGen5(float3 in) {
 
     return out;
     }
-
-__DEVICE__ float3 BMDFilmGen5ToLin(float3 in) {
+ 
+ __DEVICE__ float3 BMDFilmGen5ToLin(float3 in) {
     float3 out;
 
     float a = 8.283605932402494f;
@@ -350,8 +350,8 @@ __DEVICE__ float3 BMDFilmGen5ToLin(float3 in) {
 
     return out;
     }
-
-__DEVICE__ float3 LinToCLog (float3 in) {
+ 
+ __DEVICE__ float3 LinToCLog (float3 in) {
     float3 out;
 
     out.x = in.x < 0 ? -.529136 * _log10f(1 - 10.1596 * in.x) + 0.0730597 : .529136 * _log10f(10.1596 * in.x + 1) + 0.0730597;
@@ -360,8 +360,8 @@ __DEVICE__ float3 LinToCLog (float3 in) {
 
     return out;
     }
-
-__DEVICE__ float3 CLogToLin (float3 in) {
+ 
+ __DEVICE__ float3 CLogToLin (float3 in) {
     float3 out;
 
     out.x = in.x < 0.0730597 ? -(_powf(10, (0.0730597 - in.x) / .529136) - 1) / 10.1596 : (_powf(10, (in.x - 0.0730597) / .529136) - 1) / 10.1596;
@@ -370,8 +370,8 @@ __DEVICE__ float3 CLogToLin (float3 in) {
 
     return out;
     }
-
-__DEVICE__ float3 LinToCLog2 (float3 in) {
+ 
+ __DEVICE__ float3 LinToCLog2 (float3 in) {
     float3 out;
 
     out.x = in.x < 0 ? -0.24136077 * _log10f(1 - 87.099375 * in.x) + 0.092864125 : 0.24136077 * _log10f(87.099375 * in.x + 1) + 0.092864125;
@@ -380,8 +380,8 @@ __DEVICE__ float3 LinToCLog2 (float3 in) {
 
     return out;
     }
-
-__DEVICE__ float3 CLog2ToLin (float3 in) {
+ 
+ __DEVICE__ float3 CLog2ToLin (float3 in) {
     float3 out;
 
     out.x = in.x < 0.092864125 ? -(_powf(10, (0.092864125 - in.x) / 0.24136077) - 1) / 87.099375 : (_powf(10, (in.x - 0.092864125) / 0.24136077) - 1) / 87.099375;
@@ -390,8 +390,8 @@ __DEVICE__ float3 CLog2ToLin (float3 in) {
 
     return out;
     }
-
-__DEVICE__ float3 LinToCLog3 (float3 in) {
+ 
+ __DEVICE__ float3 LinToCLog3 (float3 in) {
     float3 out;
 
     out.x = in.x < -0.014 ? -0.36726845 * _log10f(1 - 14.98325 * in.x) + 0.12783901 : in.x <= 0.014 ? 1.9754798 * in.x + 0.12512219 : 0.36726845 * _log10f(14.98325 * in.x + 1) + 0.12240537;
@@ -400,8 +400,8 @@ __DEVICE__ float3 LinToCLog3 (float3 in) {
 
     return out;
     }
-
-__DEVICE__ float3 CLog3ToLin (float3 in) {
+ 
+ __DEVICE__ float3 CLog3ToLin (float3 in) {
     float3 out;
 
     out.x = in.x < 0.097465473 ? -(_powf(10, (0.12783901 - in.x) / 0.36726845) - 1) / 14.98325 : in.x <= 0.15277891 ? (in.x - 0.12512219) / 1.9754798 : (_powf(10, (in.x - 0.12240537) / 0.36726845) - 1) / 14.98325;
@@ -410,9 +410,9 @@ __DEVICE__ float3 CLog3ToLin (float3 in) {
 
     return out;
     }
-
-
-__DEVICE__ float3 GammaCurveToLin (float3 in, float gamma) {
+ 
+ 
+ __DEVICE__ float3 GammaCurveToLin (float3 in, float gamma) {
     float3 out;
 
     out.x = _powf(_fmaxf(in.x, 0.0f), gamma);
@@ -421,8 +421,8 @@ __DEVICE__ float3 GammaCurveToLin (float3 in, float gamma) {
 
     return out;
     }  
-
-__DEVICE__ float3 LinToGammaCurve (float3 in, float gamma) {
+ 
+ __DEVICE__ float3 LinToGammaCurve (float3 in, float gamma) {
     float3 out;
 
     out.x = _powf(_fmaxf(in.x, 0.0f), (1 / gamma));
@@ -431,10 +431,11 @@ __DEVICE__ float3 LinToGammaCurve (float3 in, float gamma) {
 
     return out;
     }
+ 
+ 
+//functions that convert between color models
 
-
-
-__DEVICE__ float3 RGB_to_HSV(float3 RGB) {
+ __DEVICE__ float3 RGB_to_HSV(float3 RGB) {
     float3 HSV;
     float min = _fminf(_fminf(RGB.x, RGB.y), RGB.z);
     float max = _fmaxf(_fmaxf(RGB.x, RGB.y), RGB.z);
@@ -461,8 +462,8 @@ __DEVICE__ float3 RGB_to_HSV(float3 RGB) {
     HSV.x += 1.0f;
     return HSV;
     } //Convert to HSV
-
-__DEVICE__ float3 HSV_to_RGB(float3 HSV) {
+ 
+ __DEVICE__ float3 HSV_to_RGB(float3 HSV) {
     float3 RGB;
     if (HSV.y == 0.0f) {
     RGB.x = RGB.y = RGB.z = HSV.z;
@@ -480,10 +481,11 @@ __DEVICE__ float3 HSV_to_RGB(float3 HSV) {
     }
     return RGB;
     } //Convert from HSV to RGB
+ 
 
-
-
-__DEVICE__ float3 HSV_sat_mixed (float3 in_1, float3 in_2, float mix_sat, float contrast_mix) {
+//A function to mix saturation channel of HSV between image state before and after applying contrast
+ 
+ __DEVICE__ float3 HSV_sat_mixed (float3 in_1, float3 in_2, float mix_sat, float contrast_mix) {
     //float3 out = in;
     float3 HSV_1 = in_1;
     float3 HSV_2 = in_2;
@@ -512,12 +514,12 @@ __DEVICE__ float3 HSV_sat_mixed (float3 in_1, float3 in_2, float mix_sat, float 
     return HSV_to_RGB(HSV_2);
     
     }
-
+ 
 
 
 //functions to apply transfer function conversions
-
-__DEVICE__ float3 GammaToLin (float3 in, int gamma) {
+ 
+ __DEVICE__ float3 GammaToLin (float3 in, int gamma) {
 
     if (gamma ==  0) return LogC3ToLin(in);
     if (gamma ==  1) return LogC4ToLin(in);
@@ -539,8 +541,8 @@ __DEVICE__ float3 GammaToLin (float3 in, int gamma) {
 
     return make_float3(0, 0, 1); // Blue on error
     }
-
-__DEVICE__ float3 LinToGamma (float3 in, int gamma) {
+ 
+ __DEVICE__ float3 LinToGamma (float3 in, int gamma) {
     if (gamma ==  0) return LinToLogC3(in);
     if (gamma ==  1) return LinToLogC4(in);
     if (gamma ==  2) return LinToDI(in);
@@ -562,8 +564,8 @@ __DEVICE__ float3 LinToGamma (float3 in, int gamma) {
     
     return make_float3(0, 1, 0); // Green on error
     }
-
-__DEVICE__ float set_pivot (float pivot, int gamma) {
+ 
+ __DEVICE__ float set_pivot (float pivot, int gamma) {
     float p_transfer_f = gamma;
     float midgray;
     const float logc3_gray = 0.39101f;
@@ -602,9 +604,6 @@ __DEVICE__ float set_pivot (float pivot, int gamma) {
     if (p_transfer_f == 15) { midgray = linear_gray;}
 
 
-
-
-
     pivot = _clampf(( pivot + midgray), 0.02f, 1.0f); //clamping to 0 caused artifacts
     
     return pivot;
@@ -614,7 +613,7 @@ __DEVICE__ float set_pivot (float pivot, int gamma) {
 
 //functions for the main functionality of contrast and split toning
 
-__DEVICE__ float3 apply_linear_contrastf3 (float3 in, float contrast, float pivot) {
+ __DEVICE__ float3 apply_linear_contrastf3 (float3 in, float contrast, float pivot) {
     
     float3 out = in;
     //offsetting the user slider to set stratingpoints at zero
@@ -630,8 +629,8 @@ __DEVICE__ float3 apply_linear_contrastf3 (float3 in, float contrast, float pivo
 
     return out;
     }
-
-__DEVICE__ float3 apply_rolling_contrastf3 (float3 in, float contrast, float pivot) {
+ 
+ __DEVICE__ float3 apply_rolling_contrastf3 (float3 in, float contrast, float pivot) {
     
     float3 out = in;
     //offsett the user slider to set the starting point at zero instead of 1
@@ -668,8 +667,8 @@ __DEVICE__ float3 apply_rolling_contrastf3 (float3 in, float contrast, float piv
     return out;
 
     }
-
-__DEVICE__ float3 apply_white_point (float3 in, float white_point, float pivot, float shoulder_strength) {
+ 
+ __DEVICE__ float3 apply_white_point (float3 in, float white_point, float pivot, float shoulder_strength) {
 
 float3 out = in; 
 float scale_factor;
@@ -716,8 +715,8 @@ if (in.z > pivot) {
     return out;
 
     }
-
-__DEVICE__ float3 apply_black_point (float3 in, float black_point, float pivot, float toe_str) {
+ 
+ __DEVICE__ float3 apply_black_point (float3 in, float black_point, float pivot, float toe_str) {
 
 float3 out = in; 
 
@@ -774,42 +773,7 @@ return out;
 
     }
 
-__DEVICE__ float3 apply_highlight_split (float3 in, float strength, float color_mix) {
-  float3 out = in;
-  float red_strength = ((1 - color_mix) * strength) + 1.f;
-  float green_strength = (color_mix * strength) + 1.f;
 
-  out.x = in.x * red_strength;
-  out.y = in.y * green_strength;
-  out.z = in.z;
-  out /= (_fmaxf(red_strength, green_strength));
-
-  return out;
-  }
-
-__DEVICE__ float3 apply_shadow_split (float3 in, float strength, float color_mix) {
-
-  float3 out = in;
-
-  in.x = (1 - in.x);
-  in.y = (1 - in.y);
-  in.z = (1 - in.z);
-  
-  float green_strength = ((1 - color_mix) * strength) + 1.f;
-  float blue_strength = (color_mix * strength) + 1.f;
-  
-  out.x = in.x;
-  out.y = in.y * (1.0f / green_strength);
-  out.z = in.z * (1.0f / blue_strength);
-  out *= (_fminf(green_strength, blue_strength));
-
-  out.x = (1 - out.x);
-  out.y = (1 - out.y);
-  out.z = (1 - out.z);
-  
-
-  return out;
-  }
 
 
 
@@ -820,23 +784,17 @@ DEFINE_UI_PARAMS(p_mix_sat, Saturation mix:🖍️ , DCTLUI_SLIDER_FLOAT, 0.5f, 
 
 DEFINE_UI_PARAMS(p_white_point, ⚪White Point ⚪ :, DCTLUI_SLIDER_FLOAT, 0.999, 0.0, 0.999, 0.0001)
 DEFINE_UI_PARAMS(p_w_p_pivot, ├ Shoulder  ╭, DCTLUI_SLIDER_FLOAT, 0.6, 0.2, 1, 0.1)
-DEFINE_UI_PARAMS(p_shoulder_str, └ Fall off ╭   , DCTLUI_SLIDER_FLOAT, 1.5, 0.3, 8.0, 0.001)
+DEFINE_UI_PARAMS(p_shoulder_str, └ Fall off ╭   , DCTLUI_SLIDER_FLOAT, 4, 0.3, 10.0, 0.001)
 
 DEFINE_UI_PARAMS(p_black_point, ⚫Black Point ⚫ :, DCTLUI_SLIDER_FLOAT, 0.0001, 0.0001, .25, 0.0001)
 DEFINE_UI_PARAMS(p_b_p_pivot, ├ Toe     ⌣  , DCTLUI_SLIDER_FLOAT, 0.37, 0.0, 0.8, 0.001)
-DEFINE_UI_PARAMS(p_toe_str, └ Fall off   ⌣   , DCTLUI_SLIDER_FLOAT, 5.0, 0.135, 8.0, 0.001)
+DEFINE_UI_PARAMS(p_toe_str, └ Fall off   ⌣   , DCTLUI_SLIDER_FLOAT, 5.0, 0.135, 10.0, 0.001)
 
 
 DEFINE_UI_PARAMS(p_mix_contrast, Linear / S curve: , DCTLUI_SLIDER_FLOAT, 1.0f, 0.0f, 1.0f, 0.1f)
 
 
-DEFINE_UI_PARAMS(split_strength, Split Tone Strength💪, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 1.0, 0.001)
-DEFINE_UI_PARAMS(split_highlight_color_mix, Hi 🔴<--->🟢, DCTLUI_SLIDER_FLOAT, 0.5, 0.0, 1.0, 0.001)
-DEFINE_UI_PARAMS(split_shadow_color_mix, Lo 🟢<--->🔵, DCTLUI_SLIDER_FLOAT, 0.5, 0.0, 1.0, 0.001)
 DEFINE_UI_PARAMS(bypass, 🚫 Bypass, DCTLUI_CHECK_BOX, 0)
-//DEFINE_UI_PARAMS(bypass_exp,    ⤷ Exposure 🌞, DCTLUI_CHECK_BOX, 0)
-DEFINE_UI_PARAMS(bypass_contrast,    ⤷ Contrast 🌓, DCTLUI_CHECK_BOX, 0)
-DEFINE_UI_PARAMS(bypass_splittone,    ⤷ Split toning 🔰, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(opt_showcurve, 📈 Show Curve, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(opt_ramp, 📏 Show Ramp, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(p_transfer_f, Transfer function, DCTLUI_COMBO_BOX, 2, {logc3, logc4, di, aces_cct, log3g10, slog3, bmd_f5, clog3, dlog, fLog, fLog2, vlog, g22, g24, g26, linear}, {ARRI LogC3, ARRI LogC4,  DaVinci Intermediate, ACEScct, RED Log3G10, Sony S-Log3, BMD Film Gen 5, Canon Log 3, DJI D-Log, FujiFilm F-Log, FujiFilm F-Log2, Panasonic V-Log, Gamma 2.2, Gamma 2.4, Gamma 2.6, Linear})
@@ -852,7 +810,6 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
     float3 out;
 
 
-
     //create a linear ramp to enable the view graph control
     float width = (float)p_Width;
     float height = (float)p_Height;
@@ -863,87 +820,25 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
     float rX = X / width;
     float3 ramp = {rX, rX, rX};
 
-
-    //scales down the strength slider to limit the effective range to a range that produces pleasing results
-    split_strength = split_strength * .2f;
-    split_shadow_color_mix = (split_shadow_color_mix * .3f) + .5f;
-    split_highlight_color_mix = (split_highlight_color_mix * .3f) + .1f;
-
-
     
     //sanitize black and white points
 
-    p_w_p_pivot = _fmaxf(_fminf((p_white_point - 0.01f), p_w_p_pivot ), 0.05f);
+    p_w_p_pivot = p_w_p_pivot >= .5f ? _fmaxf(_fminf((p_white_point - 0.01f), p_w_p_pivot ), 0.05f) : _fmaxf(_fminf((p_white_point + 0.35f), p_w_p_pivot ), 0.05f);
+
     p_black_point = 1.0f - p_black_point;
     p_b_p_pivot = _fminf((p_black_point - 0.01f), p_b_p_pivot );
-    p_white_point = _fmaxf(p_white_point*.3f + 0.69f,0.67f);
+    p_white_point = _fmaxf(p_white_point*.5f + 0.49f,0.67f);
     //p_white_point = _fmaxf(p_white_point , 0.5f);
     p_black_point = _fmaxf(p_black_point , 0.8f);
     
 
-    //bypass option that outputs untouched image when activated
-    if (bypass ==1 && bypass_contrast == 1 && bypass_splittone == 1  || bypass ==1 && bypass_contrast == 0 && bypass_splittone == 0 ) {
+//bypass option that outputs untouched image when activated
+    if (bypass ==1 ) {
         //float3 clean = {p_R, p_G, p_B};
 
-    return clean;
-    }
-
-
-    
-    //bypass option limited to the contrast operations
-    if (bypass ==1 && bypass_contrast == 0 || bypass == 0 && bypass_contrast == 1 || bypass == 0 && bypass_contrast == 0) {
-                
-
-                //apply compression to the white and black points
-             in_RGB = apply_white_point(in_RGB, p_white_point, p_w_p_pivot, p_shoulder_str);
-             ramp = apply_white_point(ramp, p_white_point, p_w_p_pivot, p_shoulder_str);
-
-             in_RGB = apply_black_point(in_RGB, p_black_point, p_b_p_pivot, p_toe_str);           
-             ramp = apply_black_point(ramp, p_black_point, p_b_p_pivot, p_toe_str);
-
-
-                //apply contrast operations
-             float3 lin_contrast = apply_linear_contrastf3 (in_RGB, contrast, pivot);
-             float3 ramp_linear = apply_linear_contrastf3 (ramp, contrast, pivot);
-
-             float3 roll_contrast = apply_rolling_contrastf3 (in_RGB, contrast, pivot);
-             float3 ramp_rolling = apply_rolling_contrastf3 (ramp, contrast, pivot);
-
-             float3 mix_con = _mix(lin_contrast, roll_contrast, p_mix_contrast);
-             float3 mix_ramp = _mix(ramp_linear, ramp_rolling, p_mix_contrast);
-
-                //mix back the original saturation channel in HSV to preserve saturation
-             mix_con = HSV_sat_mixed (in_RGB, mix_con, p_mix_sat, p_mix_contrast);
-
-
-                // exposure slider that works in linear
-            P_exposure = P_exposure + 1.0f;
-            mix_con = GammaToLin(mix_con, p_transfer_f);
-            mix_ramp = GammaToLin(mix_ramp, p_transfer_f);
-    
-            //if (P_exposure == 1) { return LinToGamma(make_float3 (0.18f, .18f, .18f), p_transfer_f);}
-    
-            // Apply linear gain
-            mix_con = mix_con * P_exposure;
-            mix_ramp = mix_ramp * P_exposure;
-        
-            mix_con = LinToGamma(mix_con, p_transfer_f);
-            mix_ramp = LinToGamma(mix_ramp, p_transfer_f);
-            out = mix_con;
-            ramp = mix_ramp;
-    }
-
-    //applies the split toning inclusindg the bypass functionality
-    if (bypass ==1 && bypass_splittone == 0 || bypass == 0 && bypass_splittone == 1 || bypass == 0 && bypass_splittone == 0) {
-        out = apply_shadow_split(out, split_strength, split_shadow_color_mix);
-        out = apply_highlight_split(out, split_strength, split_highlight_color_mix);
-        ramp = apply_shadow_split(ramp, split_strength, split_shadow_color_mix);
-        ramp = apply_highlight_split(ramp, split_strength, split_highlight_color_mix);
-    }
-    
-
+     out = clean;
     //Optional show curve functionality
-    if (opt_showcurve == 1) {
+     if (opt_showcurve == 1) {
     
         float overlayR = ramp.x >= (Y - 5.0f) / height && ramp.x <= (Y + 5.0f) / height ? 1.0f : 0.0f;
         float overlayG = ramp.y >= (Y - 5.0f) / height && ramp.y <= (Y + 5.0f) / height ? 1.0f : 0.0f;
@@ -973,6 +868,90 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
     }
 
     //option to overlay a grayscale ramp on the bottom edge of the frame
+        if (opt_ramp) {
+
+        if( rY < 0.1f) {out = ramp;}
+
+    
+    }
+
+    return out;
+    }
+
+
+              
+
+//apply compression to the white and black points
+     in_RGB = apply_white_point(in_RGB, p_white_point, p_w_p_pivot, p_shoulder_str);
+     ramp = apply_white_point(ramp, p_white_point, p_w_p_pivot, p_shoulder_str);
+
+     in_RGB = apply_black_point(in_RGB, p_black_point, p_b_p_pivot, p_toe_str);           
+     ramp = apply_black_point(ramp, p_black_point, p_b_p_pivot, p_toe_str);
+
+
+        //apply contrast operations
+     float3 lin_contrast = apply_linear_contrastf3 (in_RGB, contrast, pivot);
+     float3 ramp_linear = apply_linear_contrastf3 (ramp, contrast, pivot);
+
+     float3 roll_contrast = apply_rolling_contrastf3 (in_RGB, contrast, pivot);
+     float3 ramp_rolling = apply_rolling_contrastf3 (ramp, contrast, pivot);
+
+     float3 mix_con = _mix(lin_contrast, roll_contrast, p_mix_contrast);
+     float3 mix_ramp = _mix(ramp_linear, ramp_rolling, p_mix_contrast);
+
+ //mix back the original saturation channel in HSV to preserve saturation
+     mix_con = HSV_sat_mixed (in_RGB, mix_con, p_mix_sat, p_mix_contrast);
+
+
+ // exposure slider that works in linear
+    P_exposure = P_exposure + 1.0f;
+    mix_con = GammaToLin(mix_con, p_transfer_f);
+    mix_ramp = GammaToLin(mix_ramp, p_transfer_f);
+    
+     //if (P_exposure == 1) { return LinToGamma(make_float3 (0.18f, .18f, .18f), p_transfer_f);}
+    
+ // Apply linear gain
+    mix_con = mix_con * P_exposure;
+    mix_ramp = mix_ramp * P_exposure;
+    
+    mix_con = LinToGamma(mix_con, p_transfer_f);
+    mix_ramp = LinToGamma(mix_ramp, p_transfer_f);
+    out = mix_con;
+    ramp = mix_ramp;
+
+    
+
+//Optional show curve functionality
+    if (opt_showcurve == 1) {
+    
+        float overlayR = ramp.x >= (Y - 5.0f) / height && ramp.x <= (Y + 5.0f) / height ? 1.0f : 0.0f;
+        float overlayG = ramp.y >= (Y - 5.0f) / height && ramp.y <= (Y + 5.0f) / height ? 1.0f : 0.0f;
+        float overlayB = ramp.z >= (Y - 5.0f) / height && ramp.z <= (Y + 5.0f) / height ? 1.0f : 0.0f;
+        out.x = overlayR == 0.0f ? out.x : overlayR;
+        out.y = overlayG == 0.0f ? out.y : overlayG;
+        out.z = overlayB == 0.0f ? out.z : overlayB;
+            if (rX < pivot+0.0025f && rX > pivot- 0.0025f) {
+                out.x = .8f;
+                out.y = .8f;
+                out.z = .8f;
+            }
+
+                else {
+                    if (rX < p_w_p_pivot+0.001f && rX > p_w_p_pivot- 0.001f) {
+                    out.x = 0.8f;
+                    out.y = 0.1f;
+                    out.z = 0.01f;
+                        }
+
+                    if (rX < p_b_p_pivot+0.001f && rX > p_b_p_pivot- 0.001f) {
+                    out.x = 0.01f;
+                    out.y = 0.3f;
+                    out.z = 0.7f;
+                    }
+                }
+    }
+
+//option to overlay a grayscale ramp on the bottom edge of the frame
     if (opt_ramp) {
 
         if( rY < 0.1f) {out = ramp;}
@@ -981,5 +960,5 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
     }
 
     
-    return out;
-}
+return out;
+    }
