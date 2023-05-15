@@ -777,18 +777,18 @@ return out;
 
 
 
-DEFINE_UI_PARAMS(contrast, Contrast 🌓, DCTLUI_SLIDER_FLOAT, 0.0, -0.5, 2, 0.001)
+DEFINE_UI_PARAMS(contrast, Contrast 🌓 , DCTLUI_SLIDER_FLOAT, 0.0, -0.5, 2, 0.001)
 DEFINE_UI_PARAMS(pivot, Relative Pivot 📌, DCTLUI_SLIDER_FLOAT, 0.0, -1, 1, 0.001)
 DEFINE_UI_PARAMS(P_exposure,  Exposure 🌞, DCTLUI_SLIDER_FLOAT, 0.0f, -0.955f, 4.0f, 0.001f)
-DEFINE_UI_PARAMS(p_mix_sat, Saturation mix:🖍️ , DCTLUI_SLIDER_FLOAT, 0.5f, 0.0f, 1.0f, 0.01f)
+DEFINE_UI_PARAMS(p_mix_sat, Saturation mix: 🖍️, DCTLUI_SLIDER_FLOAT, 0.5f, 0.0f, 1.0f, 0.01f)
 
-DEFINE_UI_PARAMS(p_white_point, ⚪White Point ⚪ :, DCTLUI_SLIDER_FLOAT, 0.999, 0.0, 0.999, 0.0001)
+DEFINE_UI_PARAMS(p_white_point, ⚪ White Point  :⚪, DCTLUI_SLIDER_FLOAT, 0.999, 0.0, 0.999, 0.0001)
 DEFINE_UI_PARAMS(p_w_p_pivot, ├ Shoulder  ╭, DCTLUI_SLIDER_FLOAT, 0.6, 0.2, 1, 0.1)
-DEFINE_UI_PARAMS(p_shoulder_str, └ Fall off ╭   , DCTLUI_SLIDER_FLOAT, 4, 0.3, 10.0, 0.001)
+DEFINE_UI_PARAMS(p_shoulder_str,└ Fall offf ╭   , DCTLUI_SLIDER_FLOAT, 5, 0.0, 10.0, 0.001)
 
-DEFINE_UI_PARAMS(p_black_point, ⚫Black Point ⚫ :, DCTLUI_SLIDER_FLOAT, 0.0001, 0.0001, .25, 0.0001)
-DEFINE_UI_PARAMS(p_b_p_pivot, ├ Toe     ⌣  , DCTLUI_SLIDER_FLOAT, 0.37, 0.0, 0.8, 0.001)
-DEFINE_UI_PARAMS(p_toe_str, └ Fall off   ⌣   , DCTLUI_SLIDER_FLOAT, 5.0, 0.135, 10.0, 0.001)
+DEFINE_UI_PARAMS(p_black_point, ⚫ Black Point  :⚫, DCTLUI_SLIDER_FLOAT, 0.0001, 0.0001, .5, 0.0001)
+DEFINE_UI_PARAMS(p_b_p_pivot, ├ Toe     ⌣  , DCTLUI_SLIDER_FLOAT, 0.5, 0.0, 0.8, 0.001)
+DEFINE_UI_PARAMS(p_toe_str, └ Fall off   ⌣   , DCTLUI_SLIDER_FLOAT, 2.0, 0.0, 10.0, 0.001)
 
 
 DEFINE_UI_PARAMS(p_mix_contrast, Linear / S curve: , DCTLUI_SLIDER_FLOAT, 1.0f, 0.0f, 1.0f, 0.1f)
@@ -823,13 +823,15 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
     
     //sanitize black and white points
 
-    p_w_p_pivot = p_w_p_pivot >= .5f ? _fmaxf(_fminf((p_white_point - 0.01f), p_w_p_pivot ), 0.05f) : _fmaxf(_fminf((p_white_point + 0.35f), p_w_p_pivot ), 0.05f);
+    p_w_p_pivot = _fminf(p_white_point, p_w_p_pivot );
+    p_shoulder_str= _fmaxf((10 - p_shoulder_str), 0.3f);
+    p_toe_str= _fmaxf((10 - p_toe_str), 0.135f);
 
     p_black_point = 1.0f - p_black_point;
-    p_b_p_pivot = _fminf((p_black_point - 0.01f), p_b_p_pivot );
-    p_white_point = _fmaxf(p_white_point*.5f + 0.49f,0.67f);
+    p_b_p_pivot = _fminf((p_black_point - 0.05f) , p_b_p_pivot );
+    p_white_point = _fmaxf(p_white_point*.5f + 0.49f,0.6f);
     //p_white_point = _fmaxf(p_white_point , 0.5f);
-    p_black_point = _fmaxf(p_black_point , 0.8f);
+    p_black_point = _fmaxf(p_black_point , 0.69f);
     
 
 //bypass option that outputs untouched image when activated
