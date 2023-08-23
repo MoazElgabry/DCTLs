@@ -1,77 +1,266 @@
-DEFINE_UI_PARAMS(highlight_r, Highlight Color Red, DCTLUI_SLIDER_FLOAT, 1.0, 0.0, 1.0, 0.01)
-DEFINE_UI_PARAMS(highlight_g, Highlight Color Green, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 1.0, 0.01)
-DEFINE_UI_PARAMS(highlight_b, Highlight Color Blue, DCTLUI_SLIDER_FLOAT, 1.0, 0.0, 1.0, 0.01)
-DEFINE_UI_PARAMS(checker_size, Checkerboard Square Size, DCTLUI_SLIDER_INT, 0, 0, 1000, 1)
-DEFINE_UI_PARAMS(highlight_nans, Highlight NaNs, DCTLUI_CHECK_BOX, 1)
-DEFINE_UI_PARAMS(highlight_ninfs, Highlight -Inf, DCTLUI_CHECK_BOX, 1)
-DEFINE_UI_PARAMS(highlight_negatives, Highlight < 0.0, DCTLUI_CHECK_BOX, 1)
-DEFINE_UI_PARAMS(highlight_zeros, Highlight == 0.0, DCTLUI_CHECK_BOX, 1)
-DEFINE_UI_PARAMS(highlight_ones, Highlight == 1.0, DCTLUI_CHECK_BOX, 1)
-DEFINE_UI_PARAMS(highlight_gt_ones, Highlight > 1.0, DCTLUI_CHECK_BOX, 1)
-DEFINE_UI_PARAMS(highlight_pinfs, Highlight +Inf, DCTLUI_CHECK_BOX, 1)
+//helper functions
+
+#define PI 3.1415926535897932384626
+
+__DEVICE__ float3 cross_product(float3 a, float3 b) {
+    float3 out = make_float3(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x);
+    return out;
+    }
+
+__DEVICE__ inline float pow2f(float base) {
+    return base * base;
+    }
+
+__DEVICE__ float dot_product(float3 a, float3 b) {
+    return a.x * b.x + a.y * b.y + a.z * b.z;
+    }
+
+__DEVICE__ float norm_f3(float3 a) {
+    return _sqrtf(pow2f(a.x) + pow2f(a.y) + pow2f(a.z));
+    }
+
+__DEVICE__ float3 unit_vec(float3 a) {
+    float norm = norm_f3(a);
+    float3 out = make_float3(a.x / norm, a.y / norm, a.z / norm);
+    return out;
+    }
+
+__DEVICE__ float3 mv_33_3(float mat[3][3], float3 v) {
+    float3 out = make_float3(mat[0][0] * v.x + mat[0][1] * v.y + mat[0][2] * v.z,
+                             mat[1][0] * v.x + mat[1][1] * v.y + mat[1][2] * v.z,
+                             mat[2][0] * v.x + mat[2][1] * v.y + mat[2][2] * v.z);
+    return out;
+    }
+
+__DEVICE__ void make_rotation_mat_axis_angle(float mat[3][3], float3 axis, float angle) {
+    // Axis assumed to be unit vector, angle assuemd to be in radians
+    float c = _cosf(angle);
+    float s = _sinf(angle);
+
+    mat[0][0] = c + pow2f(axis.x) * (1.0 - c);
+    mat[0][1] = axis.x * axis.y * (1.0 - c) - axis.z * s;
+    mat[0][2] = axis.x * axis.z * (1.0 - c) + axis.y * s;
+    mat[1][0] = axis.x * axis.y * (1.0 - c) + axis.z * s;
+    mat[1][1] = c + pow2f(axis.y) * (1.0 - c);
+    mat[1][2] = axis.y * axis.z * (1.0 - c) - axis.x * s;
+    mat[2][0] = axis.z * axis.x * (1.0 - c) - axis.y * s;
+    mat[2][1] = axis.z * axis.y * (1.0 - c) + axis.x * s;
+    mat[2][2] = c + pow2f(axis.z) * (1.0 - c);
+    }
+
+
+
+//color models 
+ __DEVICE__ float3 RGB_to_HSL(float3 RGB) {
+    float3 HSL;
+
+    float min = _fminf(_fminf(RGB.x, RGB.y), RGB.z);
+    float max = _fmaxf(_fmaxf(RGB.x, RGB.y), RGB.z);
+    float luminance = RGB.z;
+    luminance = (max+min)/2;
+    float hue = 0.0;
+    float saturation = 0.0;
+
+    float delta = max - min;
+    if (delta > 0.0) {
+        if (max == RGB.x) {
+            hue = _fmod((RGB.y - RGB.z) / delta, 6.0);
+        } else if (max == RGB.y) {
+            hue = ((RGB.z - RGB.x) / delta) + 2.0;
+        } else {
+            hue = ((RGB.x - RGB.y) / delta) + 4.0;
+        }
+
+        if (luminance < 0.5) {
+           saturation = delta / (max + min);
+        } else {
+            saturation = delta / (2.0 - max - min);
+        }
+    }
+
+    HSL = make_float3(hue / 6.0, saturation, luminance);
+    return HSL;
+    } //Convert to HSL
+ 
+ __DEVICE__ float3 HSL_to_RGB(float3 HSL) {
+    float3 RGB;
+
+    float hue = HSL.x * 6.0f;
+    float saturation = HSL.y;
+    float luminance = HSL.z;
+
+    float c = (1.0 - _fabs(2.0 * luminance - 1.0)) * saturation;
+    float x = c * (1.0 - _fabs(_fmod(hue, 2.0) - 1.0));
+    float m = luminance - (c / 2.0);
+
+    if (hue < 1.0) {
+         RGB = make_float3(c, x, 0.0);
+     } else if (hue < 2.0) {
+         RGB = make_float3(x, c, 0.0);
+     } else if (hue < 3.0) {
+         RGB = make_float3(0.0, c, x);
+     } else if (hue < 4.0) {
+         RGB = make_float3(0.0, x, c);
+     } else if (hue < 5.0) {
+         RGB = make_float3(x, 0.0, c);
+     } else {
+         RGB = make_float3(c, 0.0, x);
+     }
+ 
+     // Add m to each component to get the final RGB color
+     RGB.x += m;
+     RGB.y += m;
+     RGB.z += m;
+ 
+     return RGB;
+    } //Convert from HSL to RGB
+
+ __DEVICE__ float3 RGB_to_HSV(float3 RGB) {
+    float3 HSV;
+    float min = _fminf(_fminf(RGB.x, RGB.y), RGB.z);
+    float max = _fmaxf(_fmaxf(RGB.x, RGB.y), RGB.z);
+    HSV.z = max;
+    float delta = max - min;
+    if (max != 0.0f) {
+    HSV.y = delta / max;
+    } else {
+    HSV.y = 0.0f;
+    HSV.x = 0.0f;
+    return HSV;
+    }
+    if (delta == 0.0f) {
+    HSV.x = 0.0f;
+    } else if (RGB.x == max) {
+    HSV.x = (RGB.y - RGB.z) / delta;
+    } else if (RGB.y == max) {
+    HSV.x = 2.0f + (RGB.z - RGB.x) / delta;
+    } else {
+    HSV.x = 4.0f + (RGB.x - RGB.y) / delta;
+    }
+    HSV.x *= 1.0f / 6.0f;
+    if (HSV.x < 0.0f)
+    HSV.x += 1.0f;
+    return HSV;
+    } //Convert to HSV
+ 
+ __DEVICE__ float3 HSV_to_RGB(float3 HSV) {
+    float3 RGB;
+    if (HSV.y == 0.0f) {
+    RGB.x = RGB.y = RGB.z = HSV.z;
+    } else {
+    HSV.x *= 6.0f;
+    int i = floor(HSV.x);
+    float f = HSV.x - i;
+    i = (i >= 0) ? (i % 6) : (i % 6) + 6;
+    float p = HSV.z * (1.0f - HSV.y);
+    float q = HSV.z * (1.0f - HSV.y * f);
+    float t = HSV.z * (1.0f - HSV.y * (1.0f - f));
+    RGB.x = i == 0 ? HSV.z : i == 1 ? q : i == 2 ? p : i == 3 ? p : i == 4 ? t : HSV.z;
+    RGB.y = i == 0 ? t : i == 1 ? HSV.z : i == 2 ? HSV.z : i == 3 ? q : i == 4 ? p : p;
+    RGB.z = i == 0 ? p : i == 1 ? p : i == 2 ? t : i == 3 ? HSV.z : i == 4 ? HSV.z : q;
+    }
+    return RGB;
+    } //Convert from HSV to RGB
+
+__DEVICE__ float3 rgb_to_cone(float3 rgb) {
+    const float pi= 3.14159265359f;
+    const float rtr = rgb.x * 0.81649658f + rgb.y * -0.40824829f + rgb.z * -0.40824829f;
+    const float rtg = rgb.x * 0.0f + rgb.y * 0.70710678f + rgb.z * -0.70710678f;
+    const float rtb = rgb.x * 0.57735027f + rgb.y * 0.57735027f + rgb.z * 0.57735027f;
+
+    const float art = _atan2f(rtg, rtr);
+
+    const float sphr = _sqrtf(rtr*rtr + rtg*rtg + rtb*rtb);
+    const float spht = art < 0.0f ? art + 2.0f * 3.141592653589f : art;
+    const float sphp = _atan2f(_sqrtf(rtr*rtr + rtg*rtg), rtb);
+
+//This is to modify the lum component which is the main reason why the saturation component has a different behavior 
+    const float huecoef1= 1.0f/(2.0f-(0.78539816f/0.61547971f));
+    const float huecoef2 = 2.0f*sphp*_sinf((2.0f*pi/3.0f)-_fmod(spht,(pi/3.0f)))/1.7320508075688f;
+    const float huemag =((_acosf(_cosf(3.0f*spht+pi)))/(pi*huecoef1)+(((0.78539816f/0.61547971f))-1.0f))*huecoef2;
+    const float satmag = _sinf(huemag+0.61547971f);
+
+
+
+    return make_float3(
+        sphr*satmag,
+        spht * 0.15915494309189535f,
+        sphp * 1.0467733744265997f
+    );
+    } //Convert to cone cordinates by Juan Pablo Zambrano
+
+__DEVICE__ float3 cone_to_rgb(float3 sph) {
+    
+    const float pi= 3.14159265359f;
+    sph.y *= 6.283185307179586f;
+    sph.z *= 0.9553166181245093f;
+    const float huecoef1= 1.0f/(2.0f-(0.78539816f/0.61547971f));
+    const float huecoef2 = 2.0f*sph.z*_sinf((2.0f*pi/3.0f)- _fmod(sph.y,(pi/3.0f)))/1.7320508075688f;
+    const float huemag =((_acosf(_cosf(3.0f*sph.y+pi)))/(pi*huecoef1)+(((0.78539816f/0.61547971f))-1.0f))*huecoef2;
+    const float satmagsp = _sinf(huemag+0.61547971f);
+    sph.x *= 1.0f/satmagsp;
+
+    const float ctr = sph.x * _sinf(sph.z) * _cosf(sph.y);
+    const float ctg = sph.x * _sinf(sph.z) * _sinf(sph.y);
+    const float ctb = sph.x * _cosf(sph.z);
+
+    return make_float3(
+        ctr * 0.81649658f + ctg * 0.0f + ctb * 0.57735027f,
+        ctr * -0.40824829f + ctg * 0.70710678f + ctb * 0.57735027f,
+        ctr * -0.40824829f + ctg * -0.70710678f + ctb * 0.57735027f
+    );
+    } // convert from cone to RGB
+
+
+__DEVICE__ float3 rgb_to_spherical(float3 rgb) {
+    const float rtr = rgb.x * 0.81649658f + rgb.y * -0.40824829f + rgb.z * -0.40824829f;
+    const float rtg = rgb.x * 0.0f + rgb.y * 0.70710678f + rgb.z * -0.70710678f;
+    const float rtb = rgb.x * 0.57735027f + rgb.y * 0.57735027f + rgb.z * 0.57735027f;
+
+    const float art = _atan2f(rtg, rtr);
+
+    const float sphr = _sqrtf(rtr*rtr + rtg*rtg + rtb*rtb);
+    const float spht = art < 0.0f ? art + 2.0f * 3.141592653589f : art;
+    const float sphp = _atan2f(_sqrtf(rtr*rtr + rtg*rtg), rtb);
+
+    return make_float3(
+        sphr * 0.5773502691896258f,
+        spht * 0.15915494309189535f,
+        sphp * 1.0467733744265997f
+    );
+    }//Convert to cone cordinates by
+
+
+__DEVICE__ float3 spherical_to_rgb(float3 sph) {
+    sph.x *= 1.7320508075688772f;
+    sph.y *= 6.283185307179586f;
+    sph.z *= 0.9553166181245093f;
+
+    const float ctr = sph.x * _sinf(sph.z) * _cosf(sph.y);
+    const float ctg = sph.x * _sinf(sph.z) * _sinf(sph.y);
+    const float ctb = sph.x * _cosf(sph.z);
+
+    return make_float3(
+        ctr * 0.81649658f + ctg * 0.0f + ctb * 0.57735027f,
+        ctr * -0.40824829f + ctg * 0.70710678f + ctb * 0.57735027f,
+        ctr * -0.40824829f + ctg * -0.70710678f + ctb * 0.57735027f
+    );
+    } // convert from cone to RGB
+
+
+DEFINE_UI_PARAMS(p_model, Color model, DCTLUI_COMBO_BOX, 0, { hsl, hsv, cone, spherical}, { HSL, HSV, Cone, Spherical })
+DEFINE_UI_PARAMS(p_inverse, Inverse, DCTLUI_CHECK_BOX, 0)
+
+//DEFINE_UI_PARAMS(p_dir, Direction, DCTLUI_COMBO_BOX, 0, { p_forward, p_inverse }, { Forward, Inverse })
 
 __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p_R, float p_G, float p_B) {
-    float3 curr_color = make_float3(p_R, p_G, p_B);
-    float3 output = curr_color;
-    bool flag = 0;
+    float3 RGB = make_float3(p_R, p_G, p_B);
+    float3 output;
+    //float PI = 3.1415926535897932384626;
+if      (p_model == 0) { if (p_inverse == 0) {output = RGB_to_HSL(RGB);} else { output = HSL_to_RGB(RGB);}}
+else if (p_model == 1) { if (p_inverse == 0) {output = RGB_to_HSV(RGB);} else { output = HSV_to_RGB(RGB);}}
+else if (p_model == 2) { if (p_inverse == 0) {output = rgb_to_cone(RGB);} else { output = cone_to_rgb(RGB);}}
+else if (p_model == 3) { if (p_inverse == 0) {output = rgb_to_spherical(RGB);} else { output = spherical_to_rgb(RGB);}}
 
-    if (highlight_gt_ones) {
-        if (curr_color.x > 1.0 || curr_color.y > 1.0 || curr_color.z > 1.0) {
-            output = make_float3(highlight_r, highlight_g, highlight_b);
-            flag = 1;
-        }
-    }
-
-    if (highlight_ones) {
-        if (curr_color.x == 1.0 || curr_color.y == 1.0 || curr_color.z == 1.0) {
-            output = make_float3(highlight_r, highlight_g, highlight_b);
-            flag = 1;
-        }
-    }
-
-    if (highlight_negatives) {
-        if (curr_color.x < 0.0 || curr_color.y < 0.0 || curr_color.z < 0.0) {
-            output = make_float3(highlight_r, highlight_g, highlight_b);
-            flag = 1;
-        }
-    }
-
-    if (highlight_zeros) {
-        if (curr_color.x == 0.0 || curr_color.y == 0.0 || curr_color.z == 0.0) {
-            output = make_float3(highlight_r, highlight_g, highlight_b);
-            flag = 1;
-        }
-    }
-
-    if (highlight_nans) {
-        if (isnan(curr_color.x) || isnan(curr_color.y) || isnan(curr_color.z)) {
-            output = make_float3(highlight_r, highlight_g, highlight_b);
-            flag = 1;
-        }
-    }
-
-    if (highlight_ninfs) {
-        if ((isinf(curr_color.x) && curr_color.x < 0.0) ||
-            (isinf(curr_color.y) && curr_color.y < 0.0) ||
-            (isinf(curr_color.z) && curr_color.z < 0.0)) {
-            output = make_float3(highlight_r, highlight_g, highlight_b);
-            flag = 1;
-        }
-    }
-
-    if (highlight_pinfs) {
-        if ((isinf(curr_color.x) && curr_color.x > 0.0) ||
-            (isinf(curr_color.y) && curr_color.y > 0.0) ||
-            (isinf(curr_color.z) && curr_color.z > 0.0)) {
-            output = make_float3(highlight_r, highlight_g, highlight_b);
-            flag = 1;
-        }
-    }
-
-    if (checker_size) {
-        if ((p_X / checker_size + p_Y / checker_size) % 2 == 0 && flag) {
-            output = make_float3(1.0 - highlight_r, 1.0 - highlight_g, 1.0 - highlight_b);
-        }
-    }
     return output;
 }

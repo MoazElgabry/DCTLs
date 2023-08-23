@@ -479,60 +479,11 @@
     }
     return RGB;
     } //Convert from HSV to RGB
-
-__DEVICE__ float3 RGB_to_cone(float3 rgb) {
-    const float pi= 3.14159265359f;
-    const float rtr = rgb.x * 0.81649658f + rgb.y * -0.40824829f + rgb.z * -0.40824829f;
-    const float rtg = rgb.x * 0.0f + rgb.y * 0.70710678f + rgb.z * -0.70710678f;
-    const float rtb = rgb.x * 0.57735027f + rgb.y * 0.57735027f + rgb.z * 0.57735027f;
-
-    const float art = _atan2f(rtg, rtr);
-
-    const float sphr = _sqrtf(rtr*rtr + rtg*rtg + rtb*rtb);
-    const float spht = art < 0.0f ? art + 2.0f * 3.141592653589f : art;
-    const float sphp = _atan2f(_sqrtf(rtr*rtr + rtg*rtg), rtb);
-
-//This is to modify the lum component which is the main reason why the saturation component has a different behavior 
-    const float huecoef1= 1.0f/(2.0f-(0.78539816f/0.61547971f));
-    const float huecoef2 = 2.0f*sphp*_sinf((2.0f*pi/3.0f)-_fmod(spht,(pi/3.0f)))/1.7320508075688f;
-    const float huemag =((_acosf(_cosf(3.0f*spht+pi)))/(pi*huecoef1)+(((0.78539816f/0.61547971f))-1.0f))*huecoef2;
-    const float satmag = _sinf(huemag+0.61547971f);
-
-
-
-    return make_float3(
-        sphr*satmag,
-        spht * 0.15915494309189535f,
-        sphp * 1.0467733744265997f
-    );
-    } //Convert to cone cordinates by Juan Pablo Zambrano
-
-__DEVICE__ float3 cone_to_RGB(float3 sph) {
-    
-    const float pi= 3.14159265359f;
-    sph.y *= 6.283185307179586f;
-    sph.z *= 0.9553166181245093f;
-    const float huecoef1= 1.0f/(2.0f-(0.78539816f/0.61547971f));
-    const float huecoef2 = 2.0f*sph.z*_sinf((2.0f*pi/3.0f)- _fmod(sph.y,(pi/3.0f)))/1.7320508075688f;
-    const float huemag =((_acosf(_cosf(3.0f*sph.y+pi)))/(pi*huecoef1)+(((0.78539816f/0.61547971f))-1.0f))*huecoef2;
-    const float satmagsp = _sinf(huemag+0.61547971f);
-    sph.x *= 1.0f/satmagsp;
-
-    const float ctr = sph.x * _sinf(sph.z) * _cosf(sph.y);
-    const float ctg = sph.x * _sinf(sph.z) * _sinf(sph.y);
-    const float ctb = sph.x * _cosf(sph.z);
-
-    return make_float3(
-        ctr * 0.81649658f + ctg * 0.0f + ctb * 0.57735027f,
-        ctr * -0.40824829f + ctg * 0.70710678f + ctb * 0.57735027f,
-        ctr * -0.40824829f + ctg * -0.70710678f + ctb * 0.57735027f
-    );
-    } // convert from cone to RGB
  
 
 //A function to mix saturation channel of HSV between image state before and after applying contrast
  
- __DEVICE__ float3 HSV_sat_mixed (float3 in_1, float3 in_2, float mix_sat) {
+ __DEVICE__ float3 HSV_sat_mixed (float3 in_1, float3 in_2, float mix_sat, float contrast_mix) {
     //float3 out = in;
     float3 HSV_1 = in_1;
     float3 HSV_2 = in_2;
@@ -549,11 +500,9 @@ __DEVICE__ float3 cone_to_RGB(float3 sph) {
        // HSV_2.z = HSV_2.z;    
      //}
    // else {
-    //float new_sat = _mix(HSV_1.z, HSV_2.z, mix_sat);
-    mix_sat = mix_sat*.5f + .5f;
-    float new_sat =  HSV_2.y * _fmaxf(mix_sat, .5f);
-    //float new_hue = _mix(HSV_1.y, HSV_2.y, mix_sat);
-    //HSV_2.y = new_hue;
+    float new_sat = _mix(HSV_1.y, HSV_2.y, mix_sat);
+    float new_hue = _mix(HSV_1.x, HSV_2.x, mix_sat);
+    HSV_2.x = new_hue;
     HSV_2.y = new_sat;
 
      //   }
@@ -700,7 +649,7 @@ __DEVICE__ float3 powf3(float3 base, float exp) {
     out.y = (in.y - pivot) * contrast + pivot;
     out.z = (in.z - pivot) * contrast + pivot;
     
-
+    //contrast = contrast-1.f;
     return out;
     }
  
@@ -849,6 +798,93 @@ return out;
     }
 
 
+__DEVICE__ float apply_contrast_curve (float input, float contrast, float pivot, float white, float black, float shoulder, float toe, int p_transfer_f) {
+
+float output = input;
+
+//params
+float p_slope = contrast;
+float p_ls = shoulder;
+float P_lt = toe;
+
+//pivot
+float P_ivx = pivot;
+float P_ivy = pivot;
+
+// control point shoulder 
+float p_sx = (p_ls/_sqrtf((powf(p_slope , 2)+1))) + P_ivx;
+float p_sy = ((p_slope * p_ls)/_sqrtf((powf(p_slope ,2)+1))) + P_ivy;
+
+// white
+float p_wx = 1.2f;
+float p_wy = white;
+//if (p_transfer_f == 15) {
+//  p_wy = white * 2.0f; 
+//  p_wx = 2.0f;}
+//control point toe
+float p_tx = ((-1 * P_lt)/_sqrtf(powf(p_slope , 2)+1)) + P_ivx;
+float p_ty = ((-1 * p_slope * P_lt)/_sqrtf(powf(p_slope, 2)+1)) + P_ivy;
+
+//black
+float p_bx = 0.0f;
+float p_by = black;
+
+//sanitize user parameters
+
+   //shoulder = _fminf(shoulder, pivot  );
+   //toe = _fminf(toe, pivot );
+   //white = _fmaxf(white, shoulder);
+
+//Slope Intercept Form of Linear Segment
+
+float m = (p_sy - p_ty) / (p_sx - p_tx);
+float b = p_ty - p_tx * m;
+float f_lin = input * m + b;
+
+//inverse
+//float f_ilin = ( input - b) / m;
+
+//float m_t = m * powf((m*p_tx +b),0.0f);
+
+
+//Solve Toe Segment
+
+float b_t = (m * (p_tx - p_bx))/ (p_ty - p_by);
+float a_t = _logf(p_ty - p_by) - b_t * _logf(p_tx - p_bx);
+float f_toe =  (1* _expf(a_t + b_t * _logf(1 *(input - p_bx)))) + p_by;
+
+//inverse
+//float f_itoe = (1* _expf(_logf(1 *(input - p_bx)) - a_t)) / b_t + p_by;
+
+
+//Solve Shoulder Segment
+float b_s = (m * (p_wx - p_sx))/ (p_wy - p_sy);
+float a_s = _logf(p_wy - p_sy) - b_s * _logf(p_wx - p_sx);
+float f_sh = (-1* _expf(a_s + b_s * _logf(-1 *(input - p_wx)))) + p_wy;
+
+//inverse
+//float f_ish = (-1* _expf(_logf(-1 *(input - p_wy)) - a_s)) / b_s + p_wx;
+
+//the curve
+
+if (input <= p_tx) {output = f_toe;}
+if (input > p_tx  && input < p_sx) {output = f_lin;}
+if (input >= p_sx) {output = f_sh;}
+    
+
+
+return output;
+
+
+   }
+
+__DEVICE__ float3 apply_contrast_curve_f3 (float3 input, float contrast, float pivot, float white, float black, float shoulder, float toe, int p_transfer_f) {
+    float3 output = input;
+     output.x = apply_contrast_curve (output.x,  contrast,  pivot,  white,  black,  shoulder,  toe, p_transfer_f);
+     output.y = apply_contrast_curve (output.y,  contrast,  pivot,  white,  black,  shoulder,  toe, p_transfer_f);
+     output.z = apply_contrast_curve (output.z,  contrast,  pivot,  white,  black,  shoulder,  toe, p_transfer_f);
+     return output;
+   }
 
 
 
@@ -857,13 +893,13 @@ DEFINE_UI_PARAMS(pivot, Relative Pivot 📌, DCTLUI_SLIDER_FLOAT, 0.0, -1, 1, 0.
 DEFINE_UI_PARAMS(P_exposure,  Exposure 🌞, DCTLUI_SLIDER_FLOAT, 0.0f, -0.955f, 4.0f, 0.001f)
 DEFINE_UI_PARAMS(p_mix_sat, Desat : 🖍️, DCTLUI_SLIDER_FLOAT, 1.0f, 0.0f, 1.0f, 0.01f)
 
-DEFINE_UI_PARAMS(p_white_point, ⚪ White Point  :⚪, DCTLUI_SLIDER_FLOAT, 1.015f, 0.0f, 1.018f, 0.0001f)
-DEFINE_UI_PARAMS(p_w_p_pivot, ├ Shoulder  ╭, DCTLUI_SLIDER_FLOAT, 0.6, 0.2, .997f, 0.1)
-DEFINE_UI_PARAMS(p_shoulder_str,└ Fall off ╭   , DCTLUI_SLIDER_FLOAT, 5, 0.0, 10.0, 0.001)
+DEFINE_UI_PARAMS(p_white_point, ⚪ White Point  :⚪, DCTLUI_SLIDER_FLOAT, 1.015f, 0.5f, 1.f, 0.0001f)
+DEFINE_UI_PARAMS(p_shoulder, ├ Shoulder  ╭, DCTLUI_SLIDER_FLOAT, 0.1, 0, 1, 0.1)
+//DEFINE_UI_PARAMS(p_shoulder_str,└ Fall off ╭   , DCTLUI_SLIDER_FLOAT, 5, 0.0, 10.0, 0.001)
 
-DEFINE_UI_PARAMS(p_black_point, ⚫ Black Point  :⚫, DCTLUI_SLIDER_FLOAT, 0.0001, 0.0001, .5, 0.0001)
-DEFINE_UI_PARAMS(p_b_p_pivot, ├ Toe     ⌣  , DCTLUI_SLIDER_FLOAT, 0.5, 0.0, 0.8, 0.001)
-DEFINE_UI_PARAMS(p_toe_str, └ Fall off   ⌣   , DCTLUI_SLIDER_FLOAT, 2.0, 0.0, 10.0, 0.001)
+DEFINE_UI_PARAMS(p_black_point, ⚫ Black Point  :⚫, DCTLUI_SLIDER_FLOAT, 0.0001, 0.0001, .25, 0.0001)
+DEFINE_UI_PARAMS(p_toe, ├ Toe     ⌣  , DCTLUI_SLIDER_FLOAT, 0.1, 0.0f, 1, 0.001)
+//DEFINE_UI_PARAMS(p_toe_str, └ Fall off   ⌣   , DCTLUI_SLIDER_FLOAT, 2.0, 0.0, 10.0, 0.001)
 
 
 DEFINE_UI_PARAMS(p_mix_contrast, Linear / S curve: , DCTLUI_SLIDER_FLOAT, 1.0f, 0.0f, 1.0f, 0.01f)
@@ -900,17 +936,19 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
 
     
     //sanitize black and white points
-    if (p_transfer_f == 15) {p_shoulder_str += 5;}
-    p_w_p_pivot = _fminf(p_white_point, p_w_p_pivot );
-    p_shoulder_str= _fmaxf((10 - p_shoulder_str), 0.3f);
-    p_toe_str= _fmaxf((10 - p_toe_str), 0.135f);
+   p_white_point = _fmaxf(p_white_point, pivot*1.01f);
+   //p_shoulder = p_shoulder> pivot ? _fmaxf(_fminf(p_shoulder, p_white_point * .6f), pivot) :_fmaxf(p_shoulder, pivot);
+   p_toe = _fminf(_fmaxf(p_toe , 0.001f), pivot );
+   p_shoulder = _fmaxf(_fminf(p_shoulder,p_white_point * .3f) , -0.5f);
+   
 
-    p_black_point = 1.0f - p_black_point;
-    p_b_p_pivot = _fminf((p_black_point - 0.05f) , p_b_p_pivot );
-    p_white_point = _fmaxf(p_white_point*.5f + 0.49f,0.5f);
-    //p_white_point = _fmaxf(p_white_point , 0.5f);
-    p_black_point = _fmaxf(p_black_point , 0.69f);
+   // p_shoulder_str= _fmaxf((10 - p_shoulder_str), 0.3f);
+   // p_toe_str= _fmaxf((10 - p_toe_str), 0.135f);
 
+
+
+   // 
+   // p_black_point = _fmaxf(p_black_point , 0.69f);
     
 
 //bypass option that outputs untouched image when activated
@@ -936,13 +974,13 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
                         out.z = .8f;
                          }  
 
-                        if (rX < p_w_p_pivot+0.001f && rX > p_w_p_pivot- 0.001f && rY > 0.0f && rY< 1.1f) {
+                        if (rX < p_shoulder+.4f+0.001f && rX > p_shoulder+.4f- 0.001f && rY > 0.0f && rY< 1.1f) {
                         out.x = 0.8f;
                         out.y = 0.1f;
                         out.z = 0.01f;
                             }
     
-                        if (rX < p_b_p_pivot+0.001f && rX > p_b_p_pivot- 0.001f && rY > 0.0f && rY< 1.1f) {
+                        if (rX < p_toe+0.001f && rX > p_toe- 0.001f && rY > 0.0f && rY< 1.1f) {
                         out.x = 0.01f;
                         out.y = 0.3f;
                         out.z = 0.7f;
@@ -958,13 +996,13 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
                         out.z = .8f;
                          }   
 
-                    if (rX < p_w_p_pivot+0.001f && rX > p_w_p_pivot- 0.001f) {
+                    if (rX < p_shoulder+.4f+0.001f && rX > p_shoulder+.4f- 0.001f) {
                         out.x = 0.8f;
                         out.y = 0.1f;
                         out.z = 0.01f;
                          }
 
-                    if (rX < p_b_p_pivot+0.001f && rX > p_b_p_pivot- 0.001f) {
+                    if (rX < p_toe+0.001f && rX > p_toe- 0.001f) {
                         out.x = 0.01f;
                         out.y = 0.3f;
                         out.z = 0.7f;
@@ -992,27 +1030,27 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
               
 
 //apply compression to the white and black points
-     in_RGB = apply_white_point(in_RGB, p_white_point, p_w_p_pivot, p_shoulder_str);
-     ramp = apply_white_point(ramp, p_white_point, p_w_p_pivot, p_shoulder_str);
+    //in_RGB = apply_white_point(in_RGB, p_white_point, p_shoulder, p_shoulder_str);
+    //ramp = apply_white_point(ramp, p_white_point, p_shoulder, p_shoulder_str);
 
-     in_RGB = apply_black_point(in_RGB, p_black_point, p_b_p_pivot, p_toe_str);           
-     ramp = apply_black_point(ramp, p_black_point, p_b_p_pivot, p_toe_str);
+    //in_RGB = apply_black_point(in_RGB, p_black_point, p_toe, p_toe_str);           
+    //ramp = apply_black_point(ramp, p_black_point, p_toe, p_toe_str);
 
 
         //apply contrast operations
      float3 lin_contrast = apply_linear_contrastf3 (in_RGB, contrast, pivot);
      float3 ramp_linear = apply_linear_contrastf3 (ramp, contrast, pivot);
      //lin_contrast = HSV_sat_mixed (in_RGB, lin_contrast, p_mix_sat, p_mix_contrast);
-
-     float3 roll_contrast = apply_rolling_contrastf3 (in_RGB, contrast, pivot);
-     float3 ramp_rolling = apply_rolling_contrastf3 (ramp, contrast, pivot);
+    contrast += 1.f;
+     float3 roll_contrast = apply_contrast_curve_f3 (in_RGB,  contrast,  pivot,  p_white_point,  p_black_point,  p_shoulder,  p_toe, p_transfer_f);
+     float3 ramp_rolling = apply_contrast_curve_f3 (ramp,  contrast,  pivot,  p_white_point,  p_black_point,  p_shoulder,  p_toe, p_transfer_f);
      //roll_contrast = HSV_sat_mixed (in_RGB, roll_contrast, p_mix_sat, p_mix_contrast);
 
-     in_RGB = _mix(lin_contrast, roll_contrast, p_mix_contrast);
-     ramp = _mix(ramp_linear, ramp_rolling, p_mix_contrast);
+    in_RGB = _mix(lin_contrast, roll_contrast, p_mix_contrast);
+    ramp = _mix(ramp_linear, ramp_rolling, p_mix_contrast);
 
  //mix back the original saturation channel in HSV to preserve saturation
-     in_RGB = HSV_sat_mixed (clean, in_RGB, p_mix_sat);
+     //in_RGB = HSV_sat_mixed (clean, in_RGB, p_mix_sat, p_mix_contrast);
 
 
  // exposure slider that works in linear
@@ -1054,13 +1092,13 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
                         out.z = .8f;
                          }  
 
-                        if (rX < p_w_p_pivot+0.001f && rX > p_w_p_pivot- 0.001f && rY > 0.0f && rY< 1.1f) {
+                        if (rX < p_shoulder+.4f+0.001f && rX > p_shoulder+.4f- 0.001f && rY > 0.0f && rY< 1.1f) {
                         out.x = 0.8f;
                         out.y = 0.1f;
                         out.z = 0.01f;
                             }
     
-                        if (rX < p_b_p_pivot+0.001f && rX > p_b_p_pivot- 0.001f && rY > 0.0f && rY< 1.1f) {
+                        if (rX < p_toe+0.001f && rX > p_toe- 0.001f && rY > 0.0f && rY< 1.1f) {
                         out.x = 0.01f;
                         out.y = 0.3f;
                         out.z = 0.7f;
@@ -1076,13 +1114,13 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
                         out.z = .8f;
                          }   
 
-                    if (rX < p_w_p_pivot+0.001f && rX > p_w_p_pivot- 0.001f) {
+                    if (rX < p_shoulder+.4f+0.001f && rX > p_shoulder+.4f- 0.001f) {
                         out.x = 0.8f;
                         out.y = 0.1f;
                         out.z = 0.01f;
                          }
 
-                    if (rX < p_b_p_pivot+0.001f && rX > p_b_p_pivot- 0.001f) {
+                    if (rX < p_toe+0.001f && rX > p_toe- 0.001f) {
                         out.x = 0.01f;
                         out.y = 0.3f;
                         out.z = 0.7f;
