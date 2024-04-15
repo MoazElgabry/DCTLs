@@ -465,7 +465,7 @@ control_params_t green_params = {0.33333f, green_adjustment_amt, 0.01f, 0.01f};
 control_params_t blue_params = {.70, blue_adjustment_amt, 0.1f, 0.1f};
 control_params_t cyan_params = {0.4833, cyan_adjustment_amt, 0.3f, 0.3f};
 control_params_t magenta_params = {.85, magenta_adjustment_amt, 0.2f, 0.2f};
-control_params_t yellow_params = {.172222, yellow_adjustment_amt, 0.1f, 0.1f};
+control_params_t yellow_params = {.172222, yellow_adjustment_amt, 0.2f, 0.2f};
 control_params_t params = {selected_hue, adjustment_amt, left_feather, right_feather};
 
 float3 curr_color = make_float3(p_R, p_G, p_B);
