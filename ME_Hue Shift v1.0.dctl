@@ -427,19 +427,18 @@ __DEVICE__ float complementary_hue_curve(float complementary_fade, float x, cont
 
 
 
-DEFINE_UI_PARAMS(red_adjustment_amt, Red🟥, DCTLUI_SLIDER_FLOAT, 0.0, -.6, .6, 0.01)
-DEFINE_UI_PARAMS(green_adjustment_amt, Green🟩, DCTLUI_SLIDER_FLOAT, 0.0, -0.7, .7, 0.01)
-DEFINE_UI_PARAMS(blue_adjustment_amt, Blue🟦, DCTLUI_SLIDER_FLOAT, 0.0, -0.7, .7, 0.01)
-DEFINE_UI_PARAMS(cyan_adjustment_amt, Cyan⬜️, DCTLUI_SLIDER_FLOAT, 0.0, -0.7, .7, 0.01)
-DEFINE_UI_PARAMS(magenta_adjustment_amt, Magenta🟪, DCTLUI_SLIDER_FLOAT, 0.0, -0.57, .57, 0.01)
-DEFINE_UI_PARAMS(yellow_adjustment_amt, Yellow🟨, DCTLUI_SLIDER_FLOAT, 0.0, -0.6, .6, 0.01)
-DEFINE_UI_PARAMS(adjustment_amt, Adjustment Amount, DCTLUI_SLIDER_FLOAT, 0.0, -1, 1, 0.01)
-DEFINE_UI_PARAMS(selected_hue, Custom Hue Angle, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 360.0, 0.01)
-DEFINE_UI_PARAMS(left_feather, Left Feather, DCTLUI_SLIDER_FLOAT, 0.1, 0.0, 1.0, 0.01)
-DEFINE_UI_PARAMS(right_feather, Right Feather, DCTLUI_SLIDER_FLOAT, 0.1, 0.0, 1.0, 0.01)
+DEFINE_UI_PARAMS(red_adjustment_amt, Red 🟥, DCTLUI_SLIDER_FLOAT, 0.0, -.6, .6, 0.001)
+DEFINE_UI_PARAMS(green_adjustment_amt, Green 🟩, DCTLUI_SLIDER_FLOAT, 0.0, -0.7, .7, 0.001)
+DEFINE_UI_PARAMS(blue_adjustment_amt, Blue 🟦, DCTLUI_SLIDER_FLOAT, 0.0, -0.6, .6, 0.001)
+DEFINE_UI_PARAMS(cyan_adjustment_amt, Cyan ⬜️, DCTLUI_SLIDER_FLOAT, 0.0, -0.7, .7, 0.001)
+DEFINE_UI_PARAMS(magenta_adjustment_amt, Magenta 🟪, DCTLUI_SLIDER_FLOAT, 0.0, -0.57, .57, 0.001)
+DEFINE_UI_PARAMS(yellow_adjustment_amt, Yellow 🟨, DCTLUI_SLIDER_FLOAT, 0.0, -0.6, .6, 0.001)
+DEFINE_UI_PARAMS(skin_adjustment_amt, Skin 👩🏻‍🦲, DCTLUI_SLIDER_FLOAT, 0.0, -0.25, .25, 0.001)
+DEFINE_UI_PARAMS(adjustment_amt, Custom Hue, DCTLUI_SLIDER_FLOAT, 0.0, -1, 1, 0.001)
+DEFINE_UI_PARAMS(selected_hue, Select Hue Angle, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 360.0, 0.001)
 DEFINE_UI_PARAMS(complementary_fade, Opposite hue change, DCTLUI_SLIDER_FLOAT, 1.0, 0.0, 1.0, 0.01)
 
-DEFINE_UI_PARAMS(color_model, Color model, DCTLUI_COMBO_BOX, 0, {chen, hsv, cone,norm_cone, reuleaux}, {Chen, HSV, Cone, Normalized Conical, Reuleaux})
+DEFINE_UI_PARAMS(color_model, Color model, DCTLUI_COMBO_BOX, 2, {chen, hsv, cone,norm_cone, reuleaux}, {Chen, HSV, Cone, Normalized Conical, Reuleaux})
 
 DEFINE_UI_PARAMS(complementary_curve, Affect Opposite Hues, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(bypass, 🚫 Bypass, DCTLUI_CHECK_BOX, 0)
@@ -460,13 +459,14 @@ float curr_pos_x = (float)p_X / (float)(p_Width - 1);
 float curr_pos_y = 1.0 - (float)p_Y / (float)(p_Height - 1);
 
 control_params_t no_params = {0, 0, 0.01f, 0.01f};
-control_params_t red_params = {0, red_adjustment_amt, 0.01f, 0.01f};
-control_params_t green_params = {0.33333f, green_adjustment_amt, 0.01f, 0.01f};
-control_params_t blue_params = {.70, blue_adjustment_amt, 0.1f, 0.1f};
-control_params_t cyan_params = {0.4833, cyan_adjustment_amt, 0.3f, 0.3f};
-control_params_t magenta_params = {.85, magenta_adjustment_amt, 0.2f, 0.2f};
-control_params_t yellow_params = {.172222, yellow_adjustment_amt, 0.2f, 0.2f};
-control_params_t params = {selected_hue, adjustment_amt, left_feather, right_feather};
+control_params_t red_params = {0, red_adjustment_amt*-1, 0.01f, 0.01f};
+control_params_t green_params = {0.33333f, green_adjustment_amt*-1, 0.01f, 0.01f};
+control_params_t blue_params = {.70, blue_adjustment_amt*-1, 0.1f, 0.1f};
+control_params_t cyan_params = {0.4833, cyan_adjustment_amt*-1, 0.3f, 0.3f};
+control_params_t magenta_params = {.85, magenta_adjustment_amt*-1, 0.2f, 0.2f};
+control_params_t yellow_params = {.172222, yellow_adjustment_amt*-1, 0.2f, 0.2f};
+control_params_t skin_params = {.04444, skin_adjustment_amt*-1, 0.1f, 0.1f};
+control_params_t params = {selected_hue, adjustment_amt*-1, 0.3, 0.3};
 
 float3 curr_color = make_float3(p_R, p_G, p_B);
 float3 clean_color = make_float3(p_R, p_G, p_B);
@@ -506,6 +506,20 @@ float curve_pos_y;
     }
 
 
+
+//-------Skintone----------
+    
+
+
+   float3 skin_shifted_color = make_float3(single_hue_curve(curr_color.x, skin_params), single_hue_curve(curr_color.y, skin_params), single_hue_curve(curr_color.z, skin_params));
+   float skin_curve_pos_y = single_hue_curve(curr_pos_x, skin_params);
+   if (complementary_curve) {
+        skin_shifted_color = make_float3(complementary_hue_curve(complementary_fade,curr_color.x, skin_params),
+                                    complementary_hue_curve(complementary_fade,curr_color.y, skin_params),
+                                    complementary_hue_curve(complementary_fade,curr_color.z, skin_params));
+        skin_curve_pos_y = complementary_hue_curve(complementary_fade,curr_pos_x, skin_params);}
+
+        //------------------
 
 //-------reds----------
     
@@ -613,12 +627,13 @@ float curve_pos_y;
     cyan_shifted_color= curr_color * (1.0 - output_mask) + cyan_shifted_color * output_mask;
     magenta_shifted_color= curr_color * (1.0 - output_mask) + magenta_shifted_color * output_mask;
     yellow_shifted_color= curr_color * (1.0 - output_mask) + yellow_shifted_color * output_mask;
+    skin_shifted_color= curr_color * (1.0 - output_mask) + skin_shifted_color * output_mask;
     custom_shifted_color = curr_color * (1.0 - output_mask) + custom_shifted_color * output_mask;
 
-    output_color = curr_color + (red_shifted_color - curr_color) + ( green_shifted_color - curr_color) + ( blue_shifted_color - curr_color ) + ( cyan_shifted_color - curr_color) + (magenta_shifted_color - curr_color ) + (yellow_shifted_color - curr_color ) + (custom_shifted_color - curr_color);
+    output_color = curr_color + (red_shifted_color - curr_color) + ( green_shifted_color - curr_color) + ( blue_shifted_color - curr_color ) + ( cyan_shifted_color - curr_color) + (magenta_shifted_color - curr_color ) + (yellow_shifted_color - curr_color ) + (custom_shifted_color - curr_color) + (skin_shifted_color - curr_color);
     //curve_pos_y =  (custom_curve_pos_y +  red_curve_pos_y + green_curve_pos_y + blue_curve_pos_y + cyan_curve_pos_y + magenta_curve_pos_y + yellow_curve_pos_y) /7;
   
-    curve_pos_y = curve_pos_y+ (custom_curve_pos_y - curve_pos_y) +  (red_curve_pos_y - curve_pos_y) + (green_curve_pos_y - curve_pos_y) + (blue_curve_pos_y - curve_pos_y) + (cyan_curve_pos_y - curve_pos_y) + (magenta_curve_pos_y - curve_pos_y) + (yellow_curve_pos_y - curve_pos_y);
+    curve_pos_y = curve_pos_y+ (custom_curve_pos_y - curve_pos_y) +  (red_curve_pos_y - curve_pos_y) + (green_curve_pos_y - curve_pos_y) + (blue_curve_pos_y - curve_pos_y) + (cyan_curve_pos_y - curve_pos_y) + (magenta_curve_pos_y - curve_pos_y) + (yellow_curve_pos_y - curve_pos_y) + (skin_curve_pos_y - curve_pos_y);
 
     // Rendering the curve on the screen.
     if (draw_curve) {
