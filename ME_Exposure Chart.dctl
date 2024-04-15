@@ -217,33 +217,44 @@
 
 
     
-    return make_float3(0, 1, 0); // Green on error
+    return make_float3(1, 0, 0); // Red on error
     }
  
  __DEVICE__ float set_mid_gray (float mid_gray, int TF) {
 
-    float p_TF = TF;
     float3 get_mid = make_float3(0.18f, 0.18f,0.18f);
-    get_mid = LinToTF(get_mid, p_TF);
-    //get_mid = maxf3(get_mid);
+    get_mid = LinToTF(get_mid, TF);
     mid_gray = get_mid.x;
     
     return mid_gray;
     }
  
 
-DEFINE_UI_PARAMS(num_steps, Number of Steps, DCTLUI_SLIDER_INT, 16, 1, 32, 1)
-DEFINE_UI_PARAMS(mid_gray, Middle Gray Value, DCTLUI_SLIDER_FLOAT, 0.18, 0.0, 1.0, 0.001)
-DEFINE_UI_PARAMS(opt_mid, Custom Middle Gray, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_PARAMS(num_steps, Number of Steps, DCTLUI_SLIDER_INT, 17, 1, 36, 1)
+DEFINE_UI_PARAMS(mid_gray, Enable Custom Mid-Gray , DCTLUI_SLIDER_FLOAT, 0.18, 0.0, 1.0, 0.001)
+DEFINE_UI_PARAMS(opt_mid, Custom Mid-gray in linear, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(opt_card, Show Gray Card, DCTLUI_CHECK_BOX, 0)
-DEFINE_UI_PARAMS(opt_ramp, Show linear ramp, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_PARAMS(opt_ramp, Overlay linear ramp, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(opt_scope, :: Wide aspect mode ::, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(p_TF, Transfer function, DCTLUI_COMBO_BOX, 2, {logc3, logc4, di, aces_cct, log3g10, slog3, bmd_f5, clog3, dlog, fLog, fLog2, vlog, g22, g24, g26, linear}, {ARRI LogC3, ARRI LogC4,  DaVinci Intermediate, ACEScct, RED Log3G10, Sony S-Log3, BMD Film Gen 5, Canon Log 3, DJI D-Log, FujiFilm F-Log, FujiFilm F-Log2, Panasonic V-Log, Gamma 2.2, Gamma 2.4, Gamma 2.6, Linear})
 
 
 __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p_R, float p_G, float p_B) {
+   int slct_p_TF;
+   //remember the selcted transfer function
+   slct_p_TF = p_TF;
 
-    if (opt_mid) {mid_gray = mid_gray; } else { mid_gray = set_mid_gray ( mid_gray,p_TF);}
+    if (opt_mid == 1) {
+      p_TF = 15;
+      mid_gray = mid_gray; 
+      
+     } 
+
+    else { 
+      p_TF = slct_p_TF;
+      //mid_gray = set_mid_gray ( mid_gray,p_TF);
+      
+    }
 
     float frame_width = p_Width;
     float frame_height = p_Height;
@@ -262,7 +273,7 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
 
     if (0.25f <= x && x <= 0.75f && 0.33f <= y && y <= 0.66f) {
         // Middle box
-        Output = make_float3(mid_gray, mid_gray, mid_gray);
+        Output = LinToTF(make_float3(mid_gray, mid_gray, mid_gray), p_TF);
     } else if (y <= 0.6f) {
         // Top half of chart, make steps
         int curr_step = (int) (x / step_width);
@@ -281,7 +292,7 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
 
     if (opt_card)  {
     // make gray card
-     Output = make_float3(mid_gray, mid_gray, mid_gray);;   
+     Output = LinToTF(make_float3(mid_gray, mid_gray, mid_gray), p_TF);   
         }
 
     return Output;

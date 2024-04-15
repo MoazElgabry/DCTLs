@@ -1,0 +1,634 @@
+#line 2
+// ME_Ratio Shaper ver 1.0
+//Made by Moaz Elgabry
+
+
+
+// matrix multiplication 
+ __DEVICE__ float3 mv_33_3(float mat[3][3], float3 v) {
+     float3 out = make_float3(mat[0][0] * v.x + mat[0][1] * v.y + mat[0][2] * v.z,
+                              mat[1][0] * v.x + mat[1][1] * v.y + mat[1][2] * v.z,
+                              mat[2][0] * v.x + mat[2][1] * v.y + mat[2][2] * v.z);
+     return out;
+ }
+
+//color models
+  __DEVICE__ float3 RGBtoCHEN(float3 in) {
+    float r = in.x;
+    float g = in.y;
+    float b = in.z;
+
+    float h;
+    float c;
+    float l;
+
+    const float rtr = r * 0.81649658f + g * -0.40824829f + b * -0.40824829f;
+    const float rtg = r * 0.0f + g * 0.70710678f + b * -0.70710678f;
+    const float rtb = r * 0.57735027f + g * 0.57735027f + b * 0.57735027f;
+
+    const float art = _atan2f(rtg, rtr);
+
+    const float sphr = _sqrtf(rtr*rtr + rtg*rtg + rtb*rtb);
+    const float spht = art < 0.0f ? art + 2.0f * 3.141592653589f : art;
+    const float sphp = _atan2f(_sqrtf(rtr*rtr + rtg*rtg), rtb);
+
+    l = sphr * 0.5773502691896258f;
+    h = spht * 0.15915494309189535f;
+    c = sphp * 1.0467733744265997f;
+
+    return make_float3(h, c, l);
+   } //by Kaur Hendrikson
+  
+  __DEVICE__ float3 CHENtoRGB(float3 in) {
+    float h = in.x * 6.283185307179586f;
+    float c = in.y * 0.9553166181245093f;
+    float l = in.z * 1.7320508075688772f;
+    
+   float r = 0;
+   float g = 0;
+   float b = 0;
+
+    const float ctr = l * _sinf(c) * _cosf(h);
+    const float ctg = l * _sinf(c) * _sinf(h);
+    const float ctb = l * _cosf(c);
+
+    r = ctr * 0.81649658f + ctg * 0.0f + ctb * 0.57735027f;
+    g = ctr * -0.40824829f + ctg * 0.70710678f + ctb * 0.57735027f;
+    b = ctr * -0.40824829f + ctg * -0.70710678f + ctb * 0.57735027f;
+
+    return make_float3(r, g, b);
+   } //by Kaur Hendrikson
+ 
+  __DEVICE__ float3 RGB_to_HSV(float3 RGB) {
+    float3 HSV;
+    float min = _fminf(_fminf(RGB.x, RGB.y), RGB.z);
+    float max = _fmaxf(_fmaxf(RGB.x, RGB.y), RGB.z);
+    HSV.z = max;
+    float delta = max - min;
+    if (max != 0.0f) {
+    HSV.y = delta / max;
+    } else {
+    HSV.y = 0.0f;
+    HSV.x = 0.0f;
+    return HSV;
+    }
+    if (delta == 0.0f) {
+    HSV.x = 0.0f;
+    } else if (RGB.x == max) {
+    HSV.x = (RGB.y - RGB.z) / delta;
+    } else if (RGB.y == max) {
+    HSV.x = 2.0f + (RGB.z - RGB.x) / delta;
+    } else {
+    HSV.x = 4.0f + (RGB.x - RGB.y) / delta;
+    }
+    HSV.x *= 1.0f / 6.0f;
+    if (HSV.x < 0.0f)
+    HSV.x += 1.0f;
+    return HSV;
+     } //Convert to HSV
+  
+  __DEVICE__ float3 HSV_to_RGB(float3 HSV) {
+    float3 RGB;
+    if (HSV.y == 0.0f) {
+    RGB.x = RGB.y = RGB.z = HSV.z;
+    } else {
+    HSV.x *= 6.0f;
+    int i = floor(HSV.x);
+    float f = HSV.x - i;
+    i = (i >= 0) ? (i % 6) : (i % 6) + 6;
+    float p = HSV.z * (1.0f - HSV.y);
+    float q = HSV.z * (1.0f - HSV.y * f);
+    float t = HSV.z * (1.0f - HSV.y * (1.0f - f));
+    RGB.x = i == 0 ? HSV.z : i == 1 ? q : i == 2 ? p : i == 3 ? p : i == 4 ? t : HSV.z;
+    RGB.y = i == 0 ? t : i == 1 ? HSV.z : i == 2 ? HSV.z : i == 3 ? q : i == 4 ? p : p;
+    RGB.z = i == 0 ? p : i == 1 ? p : i == 2 ? t : i == 3 ? HSV.z : i == 4 ? HSV.z : q;
+    }
+    return RGB;
+     } //Convert from HSV to RGB
+ 
+ __DEVICE__ float3 rgb_to_cone(float3 rgb) {
+    const float pi= 3.14159265359f;
+    const float rtr = rgb.x * 0.81649658f + rgb.y * -0.40824829f + rgb.z * -0.40824829f;
+    const float rtg = rgb.x * 0.0f + rgb.y * 0.70710678f + rgb.z * -0.70710678f;
+    const float rtb = rgb.x * 0.57735027f + rgb.y * 0.57735027f + rgb.z * 0.57735027f;
+
+    const float art = _atan2f(rtg, rtr);
+
+    const float sphr = _sqrtf(rtr*rtr + rtg*rtg + rtb*rtb);
+    const float spht = art < 0.0f ? art + 2.0f * 3.141592653589f : art;
+    const float sphp = _atan2f(_sqrtf(rtr*rtr + rtg*rtg), rtb);
+
+//This is to modify the lum component which is the main reason why the saturation component has a different behavior 
+    const float huecoef1= 1.0f/(2.0f-(0.78539816f/0.61547971f));
+    const float huecoef2 = 2.0f*sphp*_sinf((2.0f*pi/3.0f)-_fmod(spht,(pi/3.0f)))/1.7320508075688f;
+    const float huemag =((_acosf(_cosf(3.0f*spht+pi)))/(pi*huecoef1)+(((0.78539816f/0.61547971f))-1.0f))*huecoef2;
+    const float satmag = _sinf(huemag+0.61547971f);
+
+
+
+    return make_float3(
+        sphr*satmag,
+        spht * 0.15915494309189535f,
+        sphp * 1.0467733744265997f
+    );
+     } //Convert to cone cordinates by Juan Pablo Zambrano
+ 
+ __DEVICE__ float3 cone_to_rgb(float3 sph) {
+    
+    const float pi= 3.14159265359f;
+    sph.y *= 6.283185307179586f;
+    sph.z *= 0.9553166181245093f;
+    const float huecoef1= 1.0f/(2.0f-(0.78539816f/0.61547971f));
+    const float huecoef2 = 2.0f*sph.z*_sinf((2.0f*pi/3.0f)- _fmod(sph.y,(pi/3.0f)))/1.7320508075688f;
+    const float huemag =((_acosf(_cosf(3.0f*sph.y+pi)))/(pi*huecoef1)+(((0.78539816f/0.61547971f))-1.0f))*huecoef2;
+    const float satmagsp = _sinf(huemag+0.61547971f);
+    sph.x *= 1.0f/satmagsp;
+
+    const float ctr = sph.x * _sinf(sph.z) * _cosf(sph.y);
+    const float ctg = sph.x * _sinf(sph.z) * _sinf(sph.y);
+    const float ctb = sph.x * _cosf(sph.z);
+
+    return make_float3(
+        ctr * 0.81649658f + ctg * 0.0f + ctb * 0.57735027f,
+        ctr * -0.40824829f + ctg * 0.70710678f + ctb * 0.57735027f,
+        ctr * -0.40824829f + ctg * -0.70710678f + ctb * 0.57735027f
+    );
+     } // convert from cone to RGB
+ 
+ __DEVICE__ float3 rgb_to_reuleaux(float3 rgb) {
+    #define PI 3.1415926535897932384626
+
+    float3 NORM_MULTS = make_float3(2.0f * PI, _sqrtf(2.0f), 1.0f);
+    float3 rot = {  _sqrtf(2.0f) / 6.0f * (2.0f * rgb.x - rgb.y - rgb.z),
+                    (rgb.y - rgb.z) / _sqrtf(6.0f),
+                    (rgb.x + rgb.y + rgb.z) / 3.0f};
+    float3 rlx = {  PI - _atan2f(rot.y, -rot.x),
+                    rot.z == 0.0f ? 0.0f : _hypotf(rot.x, rot.y) / rot.z,
+                    _fmaxf(rgb.x, _fmaxf(rgb.y, rgb.z))};
+    return rlx / NORM_MULTS;
+    }
+ 
+ __DEVICE__ float3 reuleaux_to_rgb(float3 rlx) {
+    #define PI 3.1415926535897932384626
+    float3 NORM_MULTS = make_float3(2.0f * PI, _sqrtf(2.0f), 1.0f);
+    rlx *= NORM_MULTS;
+    float m = NORM_MULTS.y * _fmaxf(_cosf(rlx.x), _fmaxf(_cosf(rlx.x + NORM_MULTS.x / 3.0f), _cosf(rlx.x - NORM_MULTS.x / 3.0f))) + 1.0f/rlx.y;
+    float3 ocs = {  rlx.z * _cosf(rlx.x) / m,
+                    rlx.z * _sinf(rlx.x) / m,
+                    rlx.z};
+    float3 rgb = {  ocs.z - _sqrtf(3.0f / 2.0f) * _fmaxf(_fabs(ocs.y) - _sqrtf(3.0f) * ocs.x, 0.0f),
+                    ocs.z - _sqrtf(3.0f / 2.0f) * (_fmaxf(_fabs(ocs.y), _sqrtf(3.0f) * ocs.x) - ocs.y),
+                    ocs.z - _sqrtf(3.0f / 2.0f) * (_fmaxf(_fabs(ocs.y), _sqrtf(3.0f) * ocs.x) + ocs.y)};
+    return rgb;
+    }
+
+ //normalized conical coordinate
+    #define PI 3.1415926535897932384626
+  __DEVICE__ float normalize_gain(float3 in) {
+
+   float3 out = in;
+   
+   float chroma = in.y;
+   float angle = (in.x)*2*PI;
+   angle = angle - PI/6;
+
+   chroma = chroma*_atan2f(_sqrtf(2.0f),1.0f);
+   out.y = _tanf(chroma)/_sqrtf(2.0f);
+   float chroma_gain = 1/(2*_cosf((_acosf(_sinf(3*(angle))))/3));
+
+
+    return chroma_gain;
+  
+  }
+  
+  
+  __DEVICE__ float3 rgb_to_spherical(float3 x) {
+    
+    float3 in = x;
+    float norm = _fmaxf(in.x,_fmaxf(in.y,in.z));
+    float rot_mat[3][3] = {{_sqrtf(6.0f)/3.0f, -_sqrtf(6.0f)/6.0f, -_sqrtf(6.0f)/6.0f}, {0.0, _sqrtf(2.0f)/2.0f,-_sqrtf(2.0f)/2.0f}, {_sqrtf(3.0f)/3.0f, _sqrtf(3.0f)/3.0f, _sqrtf(3.0f)/3.0f}};
+
+    float3 rotated_color = mv_33_3(rot_mat, x);
+    float theta = _atan2f(rotated_color.y, rotated_color.x) / (2.0 * PI);
+
+    
+    float3 spherical = make_float3(0.0, 0.0, 0.0);
+   
+   spherical.x = theta < 0.0 ? theta + 1.0 : theta;
+   spherical.y = _sqrtf((rotated_color.x)*(rotated_color.x) + (rotated_color.y)*(rotated_color.y));
+   spherical.y = _atan2f(spherical.y,rotated_color.z)/_atan2f(_sqrtf(2.0f),1.0f);
+   spherical.z = norm;
+
+    
+    return spherical;
+  }
+  
+  
+  __DEVICE__ float3 spherical_to_cone(float3 in) {
+
+   float3 out = in;
+   
+   float chroma = in.y;
+   float angle = (in.x)*2*PI;
+   angle = angle - PI/6;
+
+   chroma = chroma*_atan2f(_sqrtf(2.0f),1.0f);
+   out.y = _tanf(chroma)/_sqrtf(2.0f);
+   float chroma_gain = normalize_gain(in);
+
+   out.y = out.y/chroma_gain;
+
+
+    return out;
+  }
+  
+  
+  __DEVICE__ float3 cone_to_spherical(float3 in) {
+
+   float3 out = in;
+   
+   float chroma = in.y;
+   float angle = (in.x)*2*PI;
+   angle = angle - PI/6;
+
+   chroma = chroma*_atan2f(_sqrtf(2.0f),1.0f);
+   out.y = _tanf(chroma)/_sqrtf(2.0f);
+   float chroma_gain = normalize_gain(in);
+
+   out.y = out.y*chroma_gain;
+
+
+    return out;
+  }
+  
+  __DEVICE__ float3 cone_to_RGB(float3 in) {
+
+   float3 copy = in;
+   copy.x = copy.x + 0.5f;
+
+   float chroma_gain1 = normalize_gain(in);
+   float chroma_gain2 = normalize_gain(copy);
+
+   float norm_gain = (chroma_gain2+chroma_gain1*in.y)/chroma_gain2;
+
+   in.z = in.z/norm_gain;
+   in.y = in.y*chroma_gain1;
+
+   float3 out = in;
+
+   out.x = _cosf(in.x*2*PI)*in.y*in.z*_sqrtf(3)/(_sqrtf(2)/2);
+   out.y = _sinf(in.x*2*PI)*in.y*in.z*_sqrtf(3)/(_sqrtf(2)/2);
+   out.z = in.z*_sqrtf(3);
+
+   float rot_mat[3][3] = {{_sqrtf(6.0f)/3.0f, 0.0, _sqrtf(3.0f)/3.0f}, {-_sqrtf(6.0f)/6.0f, _sqrtf(2.0f)/2.0f,_sqrtf(3.0f)/3.0f}, {-_sqrtf(6.0f)/6.0f, -_sqrtf(2.0f)/2.0f, _sqrtf(3.0f)/3.0f}};
+
+    out = mv_33_3(rot_mat, out);
+
+
+    return out;
+  }
+  
+  __DEVICE__ float3 spherical_to_rgb(float3 in) {
+
+   float3 copy = in;
+   copy.x = copy.x + 0.5f;
+
+   float chroma_gain1 = normalize_gain(in);
+   float chroma_gain2 = normalize_gain(copy);
+
+   in.y = _tanf(in.y*_atan2f(_sqrtf(2.0f),1.0f));
+   in.y = in.y/_sqrtf(2);
+   in.y = in.y/chroma_gain1;
+
+   float norm_gain = (chroma_gain2+chroma_gain1*in.y)/chroma_gain2;
+
+   in.z = in.z/norm_gain;
+   in.y = in.y*chroma_gain1;
+
+   float3 out = in;
+
+   out.x = _cosf(in.x*2*PI)*in.y*in.z*_sqrtf(3)/(_sqrtf(2)/2);
+   out.y = _sinf(in.x*2*PI)*in.y*in.z*_sqrtf(3)/(_sqrtf(2)/2);
+   out.z = in.z*_sqrtf(3);
+
+   float rot_mat[3][3] = {{_sqrtf(6.0f)/3.0f, 0.0, _sqrtf(3.0f)/3.0f}, {-_sqrtf(6.0f)/6.0f, _sqrtf(2.0f)/2.0f,_sqrtf(3.0f)/3.0f}, {-_sqrtf(6.0f)/6.0f, -_sqrtf(2.0f)/2.0f, _sqrtf(3.0f)/3.0f}};
+
+    out = mv_33_3(rot_mat, out);
+
+
+    return out;
+  }
+
+
+    
+
+ 
+
+//main tool functions
+
+__DEVICE__ float powf(float base, float exp) {
+    return _copysignf(_powf(_fabs(base), exp), base);
+}
+
+__DEVICE__ float smoothstep(float x) {
+    x = _clampf(x, 0.0, 1.0);
+    return 3.0 * powf(x, 2.0) - 2.0 * powf(x, 3.0);
+}
+
+__DEVICE__ float mod(float x, float y) {
+    if (x < 0) {
+        return y + _fmod(x, y);
+    } else {
+        return _fmod(x, y);
+    }
+}
+
+typedef struct {
+        float selected_hue;
+        float adjustment_amt;
+        float left_feather;
+        float right_feather;
+} control_params_t;
+
+__DEVICE__ float single_hue_curve(float x, control_params_t params) {
+    // Assume x is a hue between 0 and 1
+    // offset x by the amount that brings the selected_hue to 0.5
+    params.adjustment_amt *= 0.2;
+    float offset = 0.5 - params.selected_hue;
+    float curr_hue = mod(x + offset, 1.0);
+    float left_bound = 0.5 - _fabs(params.adjustment_amt) * (params.left_feather + 1.5);
+    float right_bound = 0.5 + _fabs(params.adjustment_amt) * (params.right_feather + 1.5);
+
+    if (left_bound <= curr_hue && curr_hue <= 0.5) {
+        // left sigmoid case
+        curr_hue = params.adjustment_amt * smoothstep((curr_hue - left_bound) / (0.5 - left_bound)) + curr_hue;
+    } else if (0.5 <= curr_hue && curr_hue <= right_bound) {
+        curr_hue = params.adjustment_amt * (1.0 - smoothstep((curr_hue - 0.5) / (right_bound - 0.5))) + curr_hue;
+    }
+    float output = mod(curr_hue - offset, 1.0);
+    return output;
+}
+
+__DEVICE__ float complementary_hue_curve(float x, control_params_t params) {
+    control_params_t complementary_params = {
+        mod(params.selected_hue + 0.5, 1.0), params.adjustment_amt, params.left_feather, params.right_feather};
+    float out = x;
+    out = single_hue_curve(out, params);
+    out = single_hue_curve(out, complementary_params);
+    return out;
+}
+
+
+
+
+//functions for implementing the feathered luma mask
+
+ __DEVICE__ float3 mixFloat3(float mix, float3 inA, float3 inB) {
+    // Note that when a float3 is multiplied by a float, it multiplies each component
+    return inA * (1-mix) + inB * mix;
+ }
+
+
+
+ __DEVICE__ float3 ColorModel(float3 in, int colorModel, bool direction) {
+
+   float3 out = in;
+        if (colorModel == 0 && direction == 1) {out = RGBtoCHEN(out);}
+    if (colorModel == 0 && direction == 0) {out = CHENtoRGB(out);}
+    if (colorModel == 1 && direction == 1) {out = RGB_to_HSV(out);}
+    if (colorModel == 1 && direction == 0) {out = HSV_to_RGB(out);}
+    if (colorModel == 2 && direction == 1) {out = rgb_to_cone(out);}
+    if (colorModel == 2 && direction == 0) {out = cone_to_rgb(out);}
+    if (colorModel == 3 && direction == 1) {
+      out = spherical_to_cone(rgb_to_spherical(out));
+      out.x = out.y<0.0001f?0:out.x;}
+    if (colorModel == 3 && direction == 0) {out = cone_to_RGB(out);}
+    if (colorModel == 4 && direction == 1) {out = rgb_to_reuleaux(out);}
+    if (colorModel == 4 && direction == 0) {out = reuleaux_to_rgb(out);}
+    
+   
+   //else { out = make_float3(1,0,0);} //red on error
+
+   return out;
+
+ }
+
+  __DEVICE__ int setChannel (int color_model) {
+   int channel;
+  if (color_model == 0) {channel = 1;}
+  if (color_model == 1) {channel = 1;}
+  if (color_model == 2) {channel = 2;}
+  if (color_model == 3) {channel = 1;}
+  return channel;
+  }
+ 
+ 
+
+
+
+
+DEFINE_UI_PARAMS(red_adjustment_amt, Red🟥, DCTLUI_SLIDER_FLOAT, 0.0, -.5, .5, 0.01)
+DEFINE_UI_PARAMS(green_adjustment_amt, Green🟩, DCTLUI_SLIDER_FLOAT, 0.0, -0.7, .7, 0.01)
+DEFINE_UI_PARAMS(blue_adjustment_amt, Blue🟦, DCTLUI_SLIDER_FLOAT, 0.0, -0.7, .7, 0.01)
+DEFINE_UI_PARAMS(cyan_adjustment_amt, Cyan⬜️, DCTLUI_SLIDER_FLOAT, 0.0, -0.7, .7, 0.01)
+DEFINE_UI_PARAMS(magenta_adjustment_amt, Magenta🟪, DCTLUI_SLIDER_FLOAT, 0.0, -0.57, .57, 0.01)
+DEFINE_UI_PARAMS(yellow_adjustment_amt, Yellow🟨, DCTLUI_SLIDER_FLOAT, 0.0, -0.6, .6, 0.01)
+DEFINE_UI_PARAMS(selected_hue, Custom Hue Angle, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 360.0, 0.01)
+DEFINE_UI_PARAMS(adjustment_amt, Adjustment Amount, DCTLUI_SLIDER_FLOAT, 0.0, -1, 1, 0.01)
+DEFINE_UI_PARAMS(left_feather, Left Feather, DCTLUI_SLIDER_FLOAT, 0.1, 0.0, 1.0, 0.01)
+DEFINE_UI_PARAMS(right_feather, Right Feather, DCTLUI_SLIDER_FLOAT, 0.1, 0.0, 1.0, 0.01)
+
+DEFINE_UI_PARAMS(color_model, Color model, DCTLUI_COMBO_BOX, 0, {chen, hsv, cone,norm_cone, reuleaux}, {Chen, HSV, Cone, Normalized Conical, Reuleaux})
+
+DEFINE_UI_PARAMS(complementary_curve, Affect Complementary Hues, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_PARAMS(bypass, 🚫 Bypass, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_PARAMS(draw_curve, 📈 Draw Curve, DCTLUI_CHECK_BOX, 0)
+
+
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p_R, float p_G, float p_B) {
+    
+//--------------------------
+//--------------------------
+//prepare for doing magic here
+//--------------------------
+//--------------------------
+
+
+selected_hue /= 360.0;
+float curr_pos_x = (float)p_X / (float)(p_Width - 1);
+float curr_pos_y = 1.0 - (float)p_Y / (float)(p_Height - 1);
+
+control_params_t red_params = {0, red_adjustment_amt, 0.01f, 0.01f};
+control_params_t green_params = {0.2972f, green_adjustment_amt, 0.01f, 0.01f};
+control_params_t blue_params = {.72222, blue_adjustment_amt, 0.01f, 0.01f};
+control_params_t cyan_params = {0.438, cyan_adjustment_amt, 0.01f, 0.01f};
+control_params_t magenta_params = {.831111, magenta_adjustment_amt, 0.01f, 0.01f};
+control_params_t yellow_params = {.172222, yellow_adjustment_amt, 0.01f, 0.01f};
+control_params_t params = {selected_hue, adjustment_amt, left_feather, right_feather};
+
+float3 curr_color = make_float3(p_R, p_G, p_B);
+float3 clean_color = make_float3(p_R, p_G, p_B);
+float3 output_color = curr_color;
+float curve_pos_y;
+
+
+
+
+
+//move to the working color model for adjusting hue
+
+   curr_color = ColorModel(curr_color,color_model,1);
+   int channel= setChannel(color_model);
+
+
+
+//--------------------------
+//--------------------------
+//start doing magic here
+//--------------------------
+//--------------------------
+
+
+
+// Filter down which channels to apply the curve to.
+    float3 output_mask;
+    if (channel == 1) {
+        output_mask = make_float3(1.0, 0.0, 0.0);
+    } else if (channel == 2) {
+        output_mask = make_float3(0.0, 1.0, 0.0);
+    } else if (channel == 3) {
+        output_mask = make_float3(0.0, 0.0, 1.0);
+    } else if (channel == 4) {
+        output_mask = make_float3(1.0, 1.0, 1.0);
+    }
+
+//-------reds----------
+    
+
+
+   float3 red_shifted_color = make_float3(single_hue_curve(curr_color.x, red_params), single_hue_curve(curr_color.y, red_params), single_hue_curve(curr_color.z, red_params));
+   curve_pos_y = single_hue_curve(curr_pos_x, red_params);
+   if (complementary_curve) {
+        red_shifted_color = make_float3(complementary_hue_curve(curr_color.x, red_params),
+                                    complementary_hue_curve(curr_color.y, red_params),
+                                    complementary_hue_curve(curr_color.z, red_params));
+        curve_pos_y = complementary_hue_curve(curr_pos_x, red_params);}
+
+        //------------------
+
+//-------green----------
+    
+
+   float3 green_shifted_color = make_float3(single_hue_curve(curr_color.x, green_params), single_hue_curve(curr_color.y, green_params), single_hue_curve(curr_color.z, green_params));
+   curve_pos_y = single_hue_curve(curr_pos_x, green_params);
+   if (complementary_curve) {
+        green_shifted_color = make_float3(complementary_hue_curve(curr_color.x, green_params),
+                                    complementary_hue_curve(curr_color.y, green_params),
+                                    complementary_hue_curve(curr_color.z, green_params));
+        curve_pos_y = complementary_hue_curve(curr_pos_x, green_params);}
+
+        //------------------
+
+//-------Blues----------
+    
+
+   float3 blue_shifted_color = make_float3(single_hue_curve(curr_color.x, blue_params), single_hue_curve(curr_color.y, blue_params), single_hue_curve(curr_color.z, blue_params));
+   curve_pos_y = single_hue_curve(curr_pos_x, blue_params);
+   if (complementary_curve) {
+        blue_shifted_color = make_float3(complementary_hue_curve(curr_color.x, blue_params),
+                                    complementary_hue_curve(curr_color.y, blue_params),
+                                    complementary_hue_curve(curr_color.z, blue_params));
+        curve_pos_y = complementary_hue_curve(curr_pos_x, blue_params);}
+
+        //------------------
+
+//-------Cyans----------
+    
+
+
+   float3 cyan_shifted_color = make_float3(single_hue_curve(curr_color.x, cyan_params), single_hue_curve(curr_color.y, cyan_params), single_hue_curve(curr_color.z, cyan_params));
+   curve_pos_y = single_hue_curve(curr_pos_x, cyan_params);
+   if (complementary_curve) {
+        cyan_shifted_color = make_float3(complementary_hue_curve(curr_color.x, cyan_params),
+                                    complementary_hue_curve(curr_color.y, cyan_params),
+                                    complementary_hue_curve(curr_color.z, cyan_params));
+        curve_pos_y = complementary_hue_curve(curr_pos_x, cyan_params);}
+
+        //------------------
+
+//-------magentas----------
+    
+
+   float3 magenta_shifted_color = make_float3(single_hue_curve(curr_color.x, magenta_params), single_hue_curve(curr_color.y, magenta_params), single_hue_curve(curr_color.z, magenta_params));
+   curve_pos_y = single_hue_curve(curr_pos_x, magenta_params);
+   if (complementary_curve) {
+        magenta_shifted_color = make_float3(complementary_hue_curve(curr_color.x, magenta_params),
+                                    complementary_hue_curve(curr_color.y, magenta_params),
+                                    complementary_hue_curve(curr_color.z, magenta_params));
+        curve_pos_y = complementary_hue_curve(curr_pos_x, magenta_params);}
+
+        //------------------
+
+//-------yellows----------
+    
+
+
+   float3 yellow_shifted_color = make_float3(single_hue_curve(curr_color.x, yellow_params), single_hue_curve(curr_color.y, yellow_params), single_hue_curve(curr_color.z, yellow_params));
+   curve_pos_y = single_hue_curve(curr_pos_x, yellow_params);
+   if (complementary_curve) {
+        yellow_shifted_color = make_float3(complementary_hue_curve(curr_color.x, yellow_params),
+                                    complementary_hue_curve(curr_color.y, yellow_params),
+                                    complementary_hue_curve(curr_color.z, yellow_params));
+        curve_pos_y = complementary_hue_curve(curr_pos_x, yellow_params);}
+
+        //------------------
+
+
+
+   float3 custom_shifted_color = make_float3(single_hue_curve(curr_color.x, params), single_hue_curve(curr_color.y, params), single_hue_curve(curr_color.z, params));
+   curve_pos_y = single_hue_curve(curr_pos_x, params);
+   if (complementary_curve) {
+        custom_shifted_color = make_float3(complementary_hue_curve(curr_color.x, params),
+                                    complementary_hue_curve(curr_color.y, params),
+                                    complementary_hue_curve(curr_color.z, params));
+        curve_pos_y = complementary_hue_curve(curr_pos_x, params);}
+
+  
+//prepare final outputs--------------------------
+
+
+    red_shifted_color= curr_color * (1.0 - output_mask) + red_shifted_color * output_mask;
+    green_shifted_color= curr_color * (1.0 - output_mask) + green_shifted_color * output_mask;
+    blue_shifted_color= curr_color * (1.0 - output_mask) + blue_shifted_color * output_mask;
+    cyan_shifted_color= curr_color * (1.0 - output_mask) + cyan_shifted_color * output_mask;
+    magenta_shifted_color= curr_color * (1.0 - output_mask) + magenta_shifted_color * output_mask;
+    yellow_shifted_color= curr_color * (1.0 - output_mask) + yellow_shifted_color * output_mask;
+    custom_shifted_color = curr_color * (1.0 - output_mask) + custom_shifted_color * output_mask;
+
+    output_color = curr_color + (red_shifted_color - curr_color) + ( green_shifted_color - curr_color) + ( blue_shifted_color - curr_color ) + ( cyan_shifted_color - curr_color) + (magenta_shifted_color - curr_color ) + (yellow_shifted_color - curr_color ) + (custom_shifted_color - curr_color);
+
+    // Rendering the curve on the screen.
+    if (draw_curve) {
+        if (_fabs(curve_pos_y - curr_pos_y) < 0.003 || _fabs(curr_pos_x - selected_hue) < 0.003) {
+            output_color = 0.5 * (1.0 - output_mask) + output_mask * curve_pos_y;
+        }
+        if (complementary_curve == 1 && _fabs(mod(selected_hue + 0.5 - curr_pos_x, 1.0)) < 0.003 && mod(curr_pos_y, 0.05) < 0.02) {
+            // Draw position of complementary hue.
+            output_color = 0.5 * (1.0 - output_mask) + output_mask * curve_pos_y;
+        }
+    }
+
+
+
+
+// move back to the orignal color space
+ output_color = ColorModel(output_color,color_model,0);
+
+//bypass option
+if  (bypass) { output_color = clean_color;}
+
+
+return output_color;
+
+
+}

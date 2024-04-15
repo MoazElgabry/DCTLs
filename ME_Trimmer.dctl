@@ -1,5 +1,7 @@
-//Flimic Contrast V1.1.1
-#line 3
+// ME_Ratio Shaper ver 1.0
+//Made by Moaz Elgabry
+#line 4
+
 
 //functions for Transfer function conversion
  __DEVICE__ float3 LinToLogC3 (float3 in) {
@@ -431,155 +433,7 @@
     }
  
  
-//functions that convert between color models
 
- __DEVICE__ float3 RGB_to_HSV(float3 RGB) {
-    float3 HSV;
-    float min = _fminf(_fminf(RGB.x, RGB.y), RGB.z);
-    float max = _fmaxf(_fmaxf(RGB.x, RGB.y), RGB.z);
-    HSV.z = max;
-    float delta = max - min;
-    if (max != 0.0f) {
-    HSV.y = delta / max;
-    } else {
-    HSV.y = 0.0f;
-    HSV.x = 0.0f;
-    return HSV;
-    }
-    if (delta == 0.0f) {
-    HSV.x = 0.0f;
-    } else if (RGB.x == max) {
-    HSV.x = (RGB.y - RGB.z) / delta;
-    } else if (RGB.y == max) {
-    HSV.x = 2.0f + (RGB.z - RGB.x) / delta;
-    } else {
-    HSV.x = 4.0f + (RGB.x - RGB.y) / delta;
-    }
-    HSV.x *= 1.0f / 6.0f;
-    if (HSV.x < 0.0f)
-    HSV.x += 1.0f;
-    return HSV;
-    } //Convert to HSV
- 
- __DEVICE__ float3 HSV_to_RGB(float3 HSV) {
-    float3 RGB;
-    if (HSV.y == 0.0f) {
-    RGB.x = RGB.y = RGB.z = HSV.z;
-    } else {
-    HSV.x *= 6.0f;
-    int i = floor(HSV.x);
-    float f = HSV.x - i;
-    i = (i >= 0) ? (i % 6) : (i % 6) + 6;
-    float p = HSV.z * (1.0f - HSV.y);
-    float q = HSV.z * (1.0f - HSV.y * f);
-    float t = HSV.z * (1.0f - HSV.y * (1.0f - f));
-    RGB.x = i == 0 ? HSV.z : i == 1 ? q : i == 2 ? p : i == 3 ? p : i == 4 ? t : HSV.z;
-    RGB.y = i == 0 ? t : i == 1 ? HSV.z : i == 2 ? HSV.z : i == 3 ? q : i == 4 ? p : p;
-    RGB.z = i == 0 ? p : i == 1 ? p : i == 2 ? t : i == 3 ? HSV.z : i == 4 ? HSV.z : q;
-    }
-    return RGB;
-    } //Convert from HSV to RGB
-
-__DEVICE__ float3 RGB_to_cone(float3 rgb) {
-    const float pi= 3.14159265359f;
-    const float rtr = rgb.x * 0.81649658f + rgb.y * -0.40824829f + rgb.z * -0.40824829f;
-    const float rtg = rgb.x * 0.0f + rgb.y * 0.70710678f + rgb.z * -0.70710678f;
-    const float rtb = rgb.x * 0.57735027f + rgb.y * 0.57735027f + rgb.z * 0.57735027f;
-
-    const float art = _atan2f(rtg, rtr);
-
-    const float sphr = _sqrtf(rtr*rtr + rtg*rtg + rtb*rtb);
-    const float spht = art < 0.0f ? art + 2.0f * 3.141592653589f : art;
-    const float sphp = _atan2f(_sqrtf(rtr*rtr + rtg*rtg), rtb);
-
-//This is to modify the lum component which is the main reason why the saturation component has a different behavior 
-    const float huecoef1= 1.0f/(2.0f-(0.78539816f/0.61547971f));
-    const float huecoef2 = 2.0f*sphp*_sinf((2.0f*pi/3.0f)-_fmod(spht,(pi/3.0f)))/1.7320508075688f;
-    const float huemag =((_acosf(_cosf(3.0f*spht+pi)))/(pi*huecoef1)+(((0.78539816f/0.61547971f))-1.0f))*huecoef2;
-    const float satmag = _sinf(huemag+0.61547971f);
-
-
-
-    return make_float3(
-        sphr*satmag,
-        spht * 0.15915494309189535f,
-        sphp * 1.0467733744265997f
-    );
-    } //Convert to cone cordinates by Juan Pablo Zambrano
-
-__DEVICE__ float3 cone_to_RGB(float3 sph) {
-    
-    const float pi= 3.14159265359f;
-    sph.y *= 6.283185307179586f;
-    sph.z *= 0.9553166181245093f;
-    const float huecoef1= 1.0f/(2.0f-(0.78539816f/0.61547971f));
-    const float huecoef2 = 2.0f*sph.z*_sinf((2.0f*pi/3.0f)- _fmod(sph.y,(pi/3.0f)))/1.7320508075688f;
-    const float huemag =((_acosf(_cosf(3.0f*sph.y+pi)))/(pi*huecoef1)+(((0.78539816f/0.61547971f))-1.0f))*huecoef2;
-    const float satmagsp = _sinf(huemag+0.61547971f);
-    sph.x *= 1.0f/satmagsp;
-
-    const float ctr = sph.x * _sinf(sph.z) * _cosf(sph.y);
-    const float ctg = sph.x * _sinf(sph.z) * _sinf(sph.y);
-    const float ctb = sph.x * _cosf(sph.z);
-
-    return make_float3(
-        ctr * 0.81649658f + ctg * 0.0f + ctb * 0.57735027f,
-        ctr * -0.40824829f + ctg * 0.70710678f + ctb * 0.57735027f,
-        ctr * -0.40824829f + ctg * -0.70710678f + ctb * 0.57735027f
-    );
-    } // convert from cone to RGB
- 
-
-//A function to mix saturation channel of HSV between image state before and after applying contrast
- 
- __DEVICE__ float3 HSV_sat_mixed (float3 in_1, float3 in_2, float mix_sat) {
-    //float3 out = in;
-    //float3 HSV_1 = in_1;
-    //float3 HSV_2 = in_2;
-
-
-    in_1 = RGB_to_HSV(in_1);//clean
-    in_2 = RGB_to_HSV(in_2);//mixed contrast
-        //if ( mix_sat < 1.f && contrast_mix < 1.f) {
-  
-  
-    mix_sat = mix_sat*.5f + .5f;
-    float new_sat =  in_2.y * _fmaxf(mix_sat, .5f);
-    //float new_hue = _mix(in_1.y, in_2.y, mix_sat);
-    //in_2.y = new_hue;
-    in_2.y = new_sat;
-
-     //   }
-
-
-
-    return HSV_to_RGB(in_2);
-    
-    }
- 
-
-// Helper functions
-
-__DEVICE__ float powf(float base, float exp) {
-    return _copysignf(_powf(_fabs(base), exp), base);
-    }
-
-__DEVICE__ float pow2f(float base) {
-    return _powf(_fabs(base), 2.0);
-    }
-
-__DEVICE__ float maxf3(float3 x) {
-    return _fmaxf(_fmaxf(x.x, x.y), x.z);
-    }
-
-__DEVICE__ float minf3(float3 x) {
-    return _fminf(_fminf(x.x, x.y), x.z);
-    }
-
-__DEVICE__ float3 powf3(float3 base, float exp) {
-    return make_float3(powf(base.x, exp), powf(base.y, exp), powf(base.z, exp));
-    }
-    
 
 //functions to apply transfer function conversions
  
@@ -671,71 +525,104 @@ __DEVICE__ float3 powf3(float3 base, float exp) {
     //get_mid = maxf3(get_mid);
     midgray = get_mid.x;
 
-    pivot = _clampf(( pivot + midgray), 0.02f, 1.0f); //clamping to 0 caused artifacts
+    pivot = pivot + midgray;
     
     return pivot;
     }
 
 
+//color models
+ __DEVICE__ float3 RGBtoCHEN(float3 in) {
+    float r = in.x;
+    float g = in.y;
+    float b = in.z;
 
-//functions for the main functionality of contrast and split toning
+    float h;
+    float c;
+    float l;
 
- __DEVICE__ float3 apply_linear_contrastf3 (float3 in, float contrast, float pivot) {
-    
-    float3 out = in;
-    //offsetting the user slider to set the starting point at zero
-    contrast = contrast+1.f;
-    //limit user input to zero
-    if (contrast <0.f) {contrast = _fmaxf(contrast, 0.0f);}
+    const float rtr = r * 0.81649658f + g * -0.40824829f + b * -0.40824829f;
+    const float rtg = r * 0.0f + g * 0.70710678f + b * -0.70710678f;
+    const float rtb = r * 0.57735027f + g * 0.57735027f + b * 0.57735027f;
 
-    
-    out.x = (in.x - pivot) * contrast + pivot;
-    out.y = (in.y - pivot) * contrast + pivot;
-    out.z = (in.z - pivot) * contrast + pivot;
-    
+    const float art = _atan2f(rtg, rtr);
 
-    return out;
-    }
+    const float sphr = _sqrtf(rtr*rtr + rtg*rtg + rtb*rtb);
+    const float spht = art < 0.0f ? art + 2.0f * 3.141592653589f : art;
+    const float sphp = _atan2f(_sqrtf(rtr*rtr + rtg*rtg), rtb);
+
+    l = sphr * 0.5773502691896258f;
+    h = spht * 0.15915494309189535f;
+    c = sphp * 1.0467733744265997f;
+
+    return make_float3(h, c, l);
+  } //by Kaur Hendrikson
  
- __DEVICE__ float3 apply_rolling_contrastf3 (float3 in, float contrast, float pivot) {
+ __DEVICE__ float3 CHENtoRGB(float3 in) {
+    float h = in.x * 6.283185307179586f;
+    float c = in.y * 0.9553166181245093f;
+    float l = in.z * 1.7320508075688772f;
     
-    float3 out = in;
-    //offsett the user slider to set the starting point at zero instead of 1
-    contrast = contrast + 1.f;
+   float r = 0;
+   float g = 0;
+   float b = 0;
 
-    // apply rolling contrast
-    if (in.x <= pivot) {out.x = powf((in.x / pivot) , contrast) * pivot;} 
-        if (in.x > pivot) {
-            in.x = 1 - in.x; 
-            pivot = 1 - pivot;
-            out.x = powf((in.x / pivot) , contrast) * pivot;
-            out.x = 1 - out.x;
-            pivot = 1 - pivot;
-        }
+    const float ctr = l * _sinf(c) * _cosf(h);
+    const float ctg = l * _sinf(c) * _sinf(h);
+    const float ctb = l * _cosf(c);
 
-    if (in.y <= pivot ) {out.y = powf((in.y / pivot) , contrast) * pivot;}
-        if (in.y > pivot) {
-            in.y = 1 - in.y; 
-            pivot = 1 - pivot;
-            out.y = powf((in.y / pivot) , contrast) * pivot;
-            out.y = 1 - out.y;
-            pivot = 1 - pivot;
-        }
+    r = ctr * 0.81649658f + ctg * 0.0f + ctb * 0.57735027f;
+    g = ctr * -0.40824829f + ctg * 0.70710678f + ctb * 0.57735027f;
+    b = ctr * -0.40824829f + ctg * -0.70710678f + ctb * 0.57735027f;
 
-    if (in.z <= pivot) {out.z = powf((in.z / pivot) , contrast) * pivot;}
-    
-        if (in.z > pivot) {
-            in.z = 1 - in.z; 
-            pivot = 1 - pivot;
-            out.z = powf((in.z / pivot) , contrast) * pivot;
-            out.z = 1 - out.z;
-            pivot = 1 - pivot;
-        }
-    
-    return out;
-
-    }
+    return make_float3(r, g, b);
+  } //by Kaur Hendrikson
  
+
+//main tool functions
+
+
+__DEVICE__ float3 exposure_high(float3 rgb, float ex, float pv, float fa, int inv) {
+  // Zoned highlight exposure with falloff : https://www.desmos.com/calculator/ylq5yvkhoq
+
+  // Parameter setup
+  const float f = 5.0f * _powf(fa, 1.6f) + 1.0f;
+  const float p = _fabs(ex + f) < 1e-8f ? 1e-8f : (ex + f) / f;
+  const float m = _powf(2.0f, ex);
+  const float t0 = 0.18f * _powf(2.0f, pv);
+  const float a = _powf(t0, 1.0f - p) / p;
+  const float b = t0 * (1.0f - 1.0f / p);
+  const float x1 = t0 * _powf(2.0f, f);
+  const float y1 = a * _powf(x1, p) + b;
+
+  // Calculate scale factor for rgb
+  float n = _fmaxf(rgb.x, _fmaxf(rgb.y, rgb.z));
+  float s;
+  if (inv == 1)
+    s = n < t0 ? 1.0f : n > y1 ? ((m * x1 - y1 + n) / m) / n : _powf((n - b) / a, 1.0f / p) / n;
+  else
+    s = n < t0 ? 1.0f : n > x1 ? (m * (n - x1) + y1) / n : (a * _powf(n, p) + b) / n;
+  return rgb * s;
+}
+
+__DEVICE__ float3 exposure_low(float3 rgb, float ex, float pv, float fa) {
+  // Zoned shadow exposure with falloff : https://www.desmos.com/calculator/my116fpnix
+  // https://colab.research.google.com/drive/1GAoiqR33U2zlW5fw1byUdZBw7eqJibjN
+
+  // Parameter setup
+  const float f = 6.0f - 5.0f * fa;
+  const float p = _fminf(f / 2.0f, f / 2.0f * _powf(0.5, ex));
+  const float t0 = 0.18f * _powf(2.0f, pv);
+  const float _c = _powf(2.0f, ex);
+  const float _a = p*(_c - 1.0f)/_powf(t0, p + 1.0f);
+  const float _b = (1.0f - _c)*(p + 1.0f)/_powf(t0, p);
+  
+  // Calculate scale factor for rgb
+  float n = _fmaxf(rgb.x, _fmaxf(rgb.y, rgb.z));
+  float s = n > t0 || n < 0.0f ? 1.0f : _powf(n, p) * (_a * n + _b) + _c; // implicit divide by n here
+  return rgb * s;
+}
+
  __DEVICE__ float3 apply_white_point (float3 in, float white_point, float pivot, float shoulder_strength) {
 
 float3 out = in; 
@@ -781,9 +668,9 @@ if (in.z > pivot) {
         }
 
     return out;
+ }
 
-    }
- 
+
  __DEVICE__ float3 apply_black_point (float3 in, float black_point, float pivot, float toe_str) {
 
 float3 out = in; 
@@ -838,83 +725,128 @@ float scale_factor;
  out.z = 1 - out.z;
 
 return out;
-
-    }
-
+ }
 
 
+DEFINE_UI_PARAMS(P_exHI, Hi - Exposure, DCTLUI_SLIDER_FLOAT, 0.0, -5.0, 5.0, 0.0)
+DEFINE_UI_PARAMS(P_faHI, Hi Falloff, DCTLUI_SLIDER_FLOAT, 0.8, 0.0, 1.0, 0.0)
+//DEFINE_UI_PARAMS(invert, invert, DCTLUI_CHECK_BOX, 0)
 
 
-DEFINE_UI_PARAMS(contrast, Contrast 🌓 , DCTLUI_SLIDER_FLOAT, 0.0, -0.5, 2, 0.001)
-DEFINE_UI_PARAMS(pivot, Relative Pivot 📌, DCTLUI_SLIDER_FLOAT, 0.0, -1, 1, 0.001)
-DEFINE_UI_PARAMS(P_exposure,  Exposure 🌞, DCTLUI_SLIDER_FLOAT, 0.0f, -0.955f, 4.0f, 0.001f)
-DEFINE_UI_PARAMS(p_mix_sat, Desat : 🖍️, DCTLUI_SLIDER_FLOAT, 1.0f, 0.0f, 1.0f, 0.01f)
+DEFINE_UI_PARAMS(P_exLo, Lo - Exposure, DCTLUI_SLIDER_FLOAT, 0.0, -5.0, 5.0, 0.0)
+DEFINE_UI_PARAMS(P_faLo, Lo Falloff, DCTLUI_SLIDER_FLOAT, 0.8, 0.0, 1.0, 0.0)
 
-DEFINE_UI_PARAMS(p_white_point, ⚪ White Point  :⚪, DCTLUI_SLIDER_FLOAT, 1.015f, 0.0f, 1.018f, 0.0001f)
-DEFINE_UI_PARAMS(p_w_p_pivot, ├ Shoulder  ╭, DCTLUI_SLIDER_FLOAT, 0.6, 0.2, .997f, 0.1)
-DEFINE_UI_PARAMS(p_shoulder_str,└ Fall off ╭   , DCTLUI_SLIDER_FLOAT, 5, 0.0, 10.0, 0.001)
-
-DEFINE_UI_PARAMS(p_black_point, ⚫ Black Point  :⚫, DCTLUI_SLIDER_FLOAT, 0.0001, 0.0001, .5, 0.0001)
-DEFINE_UI_PARAMS(p_b_p_pivot, ├ Toe     ⌣  , DCTLUI_SLIDER_FLOAT, 0.5, 0.0, 0.8, 0.001)
-DEFINE_UI_PARAMS(p_toe_str, └ Fall off   ⌣   , DCTLUI_SLIDER_FLOAT, 2.0, 0.0, 10.0, 0.001)
+DEFINE_UI_PARAMS(p_white_point, Roll High End , DCTLUI_SLIDER_FLOAT, 0.9999f, 0.0f, 0.9999f, 0.0001f)
+DEFINE_UI_PARAMS(p_black_point, Roll Low End , DCTLUI_SLIDER_FLOAT, 0.0011, 0.0011, 1, 0.0001)
+DEFINE_UI_PARAMS(p_save_sat, Preserve Color , DCTLUI_SLIDER_FLOAT, .5f, 0.0f, 1.0f, 0.01f)
 
 
-DEFINE_UI_PARAMS(p_mix_contrast, Linear / S curve: , DCTLUI_SLIDER_FLOAT, 1.0f, 0.0f, 1.0f, 0.01f)
-
+DEFINE_UI_PARAMS(P_pvHI, HI Pivot, DCTLUI_SLIDER_FLOAT, 0.0, -5.0, 5.0, 0.0)
+DEFINE_UI_PARAMS(P_pvLo, Lo Pivot, DCTLUI_SLIDER_FLOAT, 0.0, -3.0, 2.5, 0.0)
 
 DEFINE_UI_PARAMS(bypass, 🚫 Bypass, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(opt_showcurve, 📈 Show Curve, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(opt_ramp, 📏 Show Ramp, DCTLUI_CHECK_BOX, 0)
-DEFINE_UI_PARAMS(opt_ramp_scope, :  Wide aspect overlays :, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_PARAMS(opt_ramp_scope, =Wide aspect overlays =, DCTLUI_CHECK_BOX, 0)
+
 DEFINE_UI_PARAMS(p_transfer_f, Transfer function, DCTLUI_COMBO_BOX, 2, {logc3, logc4, di, aces_cct, log3g10, slog3, bmd_f5, clog3, dlog, fLog, fLog2, vlog, g22, g24, g26, linear}, {ARRI LogC3, ARRI LogC4,  DaVinci Intermediate, ACEScct, RED Log3G10, Sony S-Log3, BMD Film Gen 5, Canon Log 3, DJI D-Log, FujiFilm F-Log, FujiFilm F-Log2, Panasonic V-Log, Gamma 2.2, Gamma 2.4, Gamma 2.6, Linear})
 
 
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p_R, float p_G, float p_B) 
+{
+    
+//--------------------------
+//--------------------------
+//prepare for doing magic here
+//--------------------------
+//--------------------------
 
 
-__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p_R, float p_G, float p_B) {
-
-    const float3 clean = make_float3(p_R, p_G, p_B);
-    float3 in_RGB = make_float3(p_R, p_G, p_B);
-    pivot = set_pivot(pivot, p_transfer_f);
+    const float3 bypass_RGB = make_float3(p_R, p_G, p_B);
     float3 out;
+    //float3 outRGB0;
+    out = bypass_RGB;
+   P_pvLo = 2.9*set_pivot(P_pvLo, p_transfer_f);
+   P_pvHI = 3*set_pivot(P_pvHI, p_transfer_f);
+
+ //Roll sanitization
+	p_white_point= .7 + p_white_point*.3;
+	float P_black= 1-p_black_point;
+	P_black = .9+ P_black*.1;
+	float black_pivot = set_pivot(0, p_transfer_f);
 
 
-    //create a linear ramp to enable the view graph control
-    float width = (float)p_Width;
-    float height = (float)p_Height;
-    if (opt_ramp_scope) {height = height*0.64f; }
-    float X = (float)p_X;
-    float Y = height - (float)p_Y;
-    if (opt_ramp_scope) { Y = height*1.28f - (float)p_Y; }
-    //Relative X,Y 
-    float rY = Y / height;
-    float rX = X / width;
-    float3 ramp = {rX, rX, rX};
 
+  //create a linear ramp to enable the view graph control
+   	float width = (float)p_Width;
+   	float height = (float)p_Height;
+   	if (opt_ramp_scope) {height = height*0.64f; }
+   	float X = (float)p_X;
+   	float Y = height - (float)p_Y;
+   	if (opt_ramp_scope) { Y = height*1.28f - (float)p_Y; }
+   	//Relative X,Y 
+   	float rY = Y / height;
+   	float rX = X / width;
+   	float3 ramp = {rX, rX, rX};
+
+   	//a clean version of the ramp to show in the bypass version
+    float3 cleanRamp = ramp;
     
-    //sanitize black and white points
-    if (p_transfer_f == 15) {p_shoulder_str += 5;}
-    p_w_p_pivot = _fminf(p_white_point, p_w_p_pivot );
-    p_shoulder_str= _fmaxf((10 - p_shoulder_str), 0.3f);
-    p_toe_str= _fmaxf((10 - p_toe_str), 0.135f);
+    //extract original saturation
+    float3 chen_lum;
+    float3 save_sat;
+    chen_lum = RGBtoCHEN(out);
+    float chen_hue = chen_lum.x;
+    float chen_sat= chen_lum.y;
+    float chen_luma= chen_lum.z;
+    chen_lum= make_float3 (chen_luma,chen_luma,chen_luma);
 
-    p_black_point = 1.0f - p_black_point;
-    p_b_p_pivot = _fminf((p_black_point - 0.05f) , p_b_p_pivot );
-    p_white_point = _fmaxf(p_white_point*.5f + 0.49f,0.5f);
-    //p_white_point = _fmaxf(p_white_point , 0.5f);
-    p_black_point = _fmaxf(p_black_point , 0.69f);
+//--------------------------
+//--------------------------
+//start doing magic here
+//--------------------------
+//--------------------------
 
-    
 
-//bypass option that outputs untouched image when activated
-    if (bypass ==1 ) {
-        //float3 clean = {p_R, p_G, p_B};
 
-     out = clean;
+
+  out = exposure_low(out, P_exLo, P_pvLo, P_faLo);
+  ramp = exposure_low(ramp, P_exLo, P_pvLo, P_faLo);
+  chen_lum= exposure_low(chen_lum, P_exLo, P_pvLo, P_faLo);
+
+  out = exposure_high(out, P_exHI, P_pvHI, P_faHI, 0);
+  ramp = exposure_high(ramp, P_exHI, P_pvHI, P_faHI, 0);
+  chen_lum = exposure_high(chen_lum, P_exHI, P_pvHI, P_faHI, 0);
+
+
+  //apply compression to the white and black points
+     out = apply_white_point(out, p_white_point, 0.0f, 3.0);
+     ramp = apply_white_point(ramp, p_white_point, 0.0f, 3.0);
+     chen_lum = apply_white_point(chen_lum, p_white_point, 0.0f, 3.0);
+
+     out = apply_black_point(out, P_black, black_pivot, 5.0f);           
+     ramp = apply_black_point(ramp, P_black, black_pivot, 5.0f);
+     chen_lum = apply_black_point(chen_lum, P_black, black_pivot, 5.0f);
+
+     //implement preserve color functionality
+
+     save_sat = make_float3 (chen_hue,chen_sat,chen_lum.z);
+     save_sat = CHENtoRGB(save_sat);
+     out = _mix(out, save_sat, p_save_sat);
+  
+
+	// bypass option including a bypass option to the ramp to display an untouched curve
+     if (bypass ==1 ) {
+
+   	   	out = bypass_RGB;
+   	   	ramp = cleanRamp;
+
+   		}
+
     //Optional show curve functionality
      if (opt_showcurve == 1) {
     
-float3 scopeY = LinToGamma(make_float3(.9f,.9f,.9f), p_transfer_f);
+ 		float3 scopeY = LinToGamma(make_float3(.9f,.9f,.9f), p_transfer_f);
 
 
         float overlayR = ramp.x >= (Y - 5.0f) / height && ramp.x <= (Y + 5.0f) / height ? scopeY.x : 0.0f;
@@ -924,235 +856,24 @@ float3 scopeY = LinToGamma(make_float3(.9f,.9f,.9f), p_transfer_f);
         out.y = overlayG == 0.0f ? out.y : overlayG;
         out.z = overlayB == 0.0f ? out.z : overlayB;
             
+		}
 
-                    //Wide aspect mode
-       if (opt_ramp_scope) {
-
-                        if (rX < pivot+0.0025f && rX > pivot- 0.0025f && rY > 0.0f  && rY< 1.1f) {
-                        float3 scopeR = LinToGamma(make_float3(.8f,.8f,.8f), p_transfer_f);
-                        float3 scopeG = LinToGamma(make_float3(.8f,.8f,.8f), p_transfer_f);
-                        float3 scopeB = LinToGamma(make_float3(.8f,.8f,.8f), p_transfer_f);
-
-                        out.x = scopeR.x;
-                        out.y = scopeG.x;
-                        out.z = scopeB.x;
-
-                         }  
-
-                        if (rX < p_w_p_pivot+0.001f && rX > p_w_p_pivot- 0.001f && rY > 0.0f && rY< 1.1f) {
-                        float3 scopeR = LinToGamma(make_float3(.8f,.8f,.8f), p_transfer_f);
-                        float3 scopeG = LinToGamma(make_float3(.1f,.1f,.1f), p_transfer_f);
-                        float3 scopeB = LinToGamma(make_float3(.01f,.01f,.01f), p_transfer_f);
-
-                        out.x = scopeR.x;
-                        out.y = scopeG.x;
-                        out.z = scopeB.x;
-                            }
-    
-                        if (rX < p_b_p_pivot+0.001f && rX > p_b_p_pivot- 0.001f && rY > 0.0f && rY< 1.1f) {
-                        float3 scopeR = LinToGamma(make_float3(.01f,.01f,.01f), p_transfer_f);
-                        float3 scopeG = LinToGamma(make_float3(.3f,.3f,.3f), p_transfer_f);
-                        float3 scopeB = LinToGamma(make_float3(.7f,.7f,.7f), p_transfer_f);
-
-                        out.x = scopeR.x;
-                        out.y = scopeG.x;
-                        out.z = scopeB.x;
-                        }
-
-                    } 
-                    //wide aspect mode off
-        else{
-
-                    if (rX < pivot+0.0025f && rX > pivot- 0.0025f) {
-                        float3 scopeR = LinToGamma(make_float3(.8f,.8f,.8f), p_transfer_f);
-                        float3 scopeG = LinToGamma(make_float3(.8f,.8f,.8f), p_transfer_f);
-                        float3 scopeB = LinToGamma(make_float3(.8f,.8f,.8f), p_transfer_f);
-
-                        out.x = scopeR.x;
-                        out.y = scopeG.x;
-                        out.z = scopeB.x;
-                         }   
-
-                    if (rX < p_w_p_pivot+0.001f && rX > p_w_p_pivot- 0.001f) {
-                        float3 scopeR = LinToGamma(make_float3(.8f,.8f,.8f), p_transfer_f);
-                        float3 scopeG = LinToGamma(make_float3(.1f,.1f,.1f), p_transfer_f);
-                        float3 scopeB = LinToGamma(make_float3(.01f,.01f,.01f), p_transfer_f);
-
-                        out.x = scopeR.x;
-                        out.y = scopeG.x;
-                        out.z = scopeB.x;
-                         }
-
-                    if (rX < p_b_p_pivot+0.001f && rX > p_b_p_pivot- 0.001f) {
-                        float3 scopeR = LinToGamma(make_float3(.01f,.01f,.01f), p_transfer_f);
-                        float3 scopeG = LinToGamma(make_float3(.3f,.3f,.3f), p_transfer_f);
-                        float3 scopeB = LinToGamma(make_float3(.7f,.7f,.7f), p_transfer_f);
-
-                        out.x = scopeR.x;
-                        out.y = scopeG.x;
-                        out.z = scopeB.x;
-                        }
-                    
-                }
-    }
-
-    //option to overlay a grayscale ramp on the bottom edge of the frame
-        if (opt_ramp) {
-         if (opt_ramp_scope){ 
-                if( rY < 0.05f  && rY > -0.02) {out = ramp;}
-            return out;
-            }  
-         if( rY < 0.1f) {out = ramp;}
-         
-
-    
-    }
-
-    return out;
-    }
+  	//option to overlay a grayscale ramp on the bottom edge of the frame
+      if (opt_ramp) {
+          if (opt_ramp_scope){ 
+                  if( rY < 0.05f  && rY > -0.02f) {out = ramp;}
+              return out;
+              }  
+      if( rY < 0.1f ) {out = ramp;}
+                  
+      
+      }
 
 
-              
-
-//apply compression to the white and black points
-     in_RGB = apply_white_point(in_RGB, p_white_point, p_w_p_pivot, p_shoulder_str);
-     ramp = apply_white_point(ramp, p_white_point, p_w_p_pivot, p_shoulder_str);
-
-     in_RGB = apply_black_point(in_RGB, p_black_point, p_b_p_pivot, p_toe_str);           
-     ramp = apply_black_point(ramp, p_black_point, p_b_p_pivot, p_toe_str);
 
 
-        //apply contrast operations
-     float3 lin_contrast = apply_linear_contrastf3 (in_RGB, contrast, pivot);
-     float3 ramp_linear = apply_linear_contrastf3 (ramp, contrast, pivot);
-     //lin_contrast = HSV_sat_mixed (in_RGB, lin_contrast, p_mix_sat, p_mix_contrast);
-
-     float3 roll_contrast = apply_rolling_contrastf3 (in_RGB, contrast, pivot);
-     float3 ramp_rolling = apply_rolling_contrastf3 (ramp, contrast, pivot);
-     //roll_contrast = HSV_sat_mixed (in_RGB, roll_contrast, p_mix_sat, p_mix_contrast);
-
-     in_RGB = _mix(lin_contrast, roll_contrast, p_mix_contrast);
-     ramp = _mix(ramp_linear, ramp_rolling, p_mix_contrast);
-
- //mix back the original saturation channel in HSV to preserve saturation
-     in_RGB = HSV_sat_mixed (clean, in_RGB, p_mix_sat);
 
 
- // exposure slider that works in linear
-    P_exposure = P_exposure + 1.0f;
-    in_RGB = GammaToLin(in_RGB, p_transfer_f);
-    ramp = GammaToLin(ramp, p_transfer_f);
-    
-     //if (P_exposure == 1) { return LinToGamma(make_float3 (0.18f, .18f, .18f), p_transfer_f);}
-    
-        // Apply linear gain
-           in_RGB = in_RGB * P_exposure;
-           ramp = ramp * P_exposure;
-    
-    in_RGB = LinToGamma(in_RGB, p_transfer_f);
-    ramp = LinToGamma(ramp, p_transfer_f);
+  return out;
 
-    out = in_RGB;
-   
-
-    
-
-//Optional show curve functionality
-    if (opt_showcurve == 1) {
-    
-         float3 scopeY = LinToGamma(make_float3(.9f,.9f,.9f), p_transfer_f);
-
-
-        float overlayR = ramp.x >= (Y - 5.0f) / height && ramp.x <= (Y + 5.0f) / height ? scopeY.x : 0.0f;
-        float overlayG = ramp.y >= (Y - 5.0f) / height && ramp.y <= (Y + 5.0f) / height ? scopeY.y : 0.0f;
-        float overlayB = ramp.z >= (Y - 5.0f) / height && ramp.z <= (Y + 5.0f) / height ? scopeY.z : 0.0f;
-        out.x = overlayR == 0.0f ? out.x : overlayR;
-        out.y = overlayG == 0.0f ? out.y : overlayG;
-        out.z = overlayB == 0.0f ? out.z : overlayB;
-            
-
-                    //Wide aspect mode
-       if (opt_ramp_scope) {
-
-                        if (rX < pivot+0.0025f && rX > pivot- 0.0025f && rY > 0.0f  && rY< 1.1f) {
-                        float3 scopeR = LinToGamma(make_float3(.8f,.8f,.8f), p_transfer_f);
-                        float3 scopeG = LinToGamma(make_float3(.8f,.8f,.8f), p_transfer_f);
-                        float3 scopeB = LinToGamma(make_float3(.8f,.8f,.8f), p_transfer_f);
-
-                        out.x = scopeR.x;
-                        out.y = scopeG.x;
-                        out.z = scopeB.x;
-
-                         }  
-
-                        if (rX < p_w_p_pivot+0.001f && rX > p_w_p_pivot- 0.001f && rY > 0.0f && rY< 1.1f) {
-                        float3 scopeR = LinToGamma(make_float3(.8f,.8f,.8f), p_transfer_f);
-                        float3 scopeG = LinToGamma(make_float3(.1f,.1f,.1f), p_transfer_f);
-                        float3 scopeB = LinToGamma(make_float3(.01f,.01f,.01f), p_transfer_f);
-
-                        out.x = scopeR.x;
-                        out.y = scopeG.x;
-                        out.z = scopeB.x;
-                            }
-    
-                        if (rX < p_b_p_pivot+0.001f && rX > p_b_p_pivot- 0.001f && rY > 0.0f && rY< 1.1f) {
-                        float3 scopeR = LinToGamma(make_float3(.01f,.01f,.01f), p_transfer_f);
-                        float3 scopeG = LinToGamma(make_float3(.3f,.3f,.3f), p_transfer_f);
-                        float3 scopeB = LinToGamma(make_float3(.7f,.7f,.7f), p_transfer_f);
-
-                        out.x = scopeR.x;
-                        out.y = scopeG.x;
-                        out.z = scopeB.x;
-                        }
-
-                    } 
-                    //wide aspect mode off
-        else{
-
-                    if (rX < pivot+0.0025f && rX > pivot- 0.0025f) {
-                        float3 scopeR = LinToGamma(make_float3(.8f,.8f,.8f), p_transfer_f);
-                        float3 scopeG = LinToGamma(make_float3(.8f,.8f,.8f), p_transfer_f);
-                        float3 scopeB = LinToGamma(make_float3(.8f,.8f,.8f), p_transfer_f);
-
-                        out.x = scopeR.x;
-                        out.y = scopeG.x;
-                        out.z = scopeB.x;
-                         }   
-
-                    if (rX < p_w_p_pivot+0.001f && rX > p_w_p_pivot- 0.001f) {
-                        float3 scopeR = LinToGamma(make_float3(.8f,.8f,.8f), p_transfer_f);
-                        float3 scopeG = LinToGamma(make_float3(.1f,.1f,.1f), p_transfer_f);
-                        float3 scopeB = LinToGamma(make_float3(.01f,.01f,.01f), p_transfer_f);
-
-                        out.x = scopeR.x;
-                        out.y = scopeG.x;
-                        out.z = scopeB.x;
-                         }
-
-                    if (rX < p_b_p_pivot+0.001f && rX > p_b_p_pivot- 0.001f) {
-                        float3 scopeR = LinToGamma(make_float3(.01f,.01f,.01f), p_transfer_f);
-                        float3 scopeG = LinToGamma(make_float3(.3f,.3f,.3f), p_transfer_f);
-                        float3 scopeB = LinToGamma(make_float3(.7f,.7f,.7f), p_transfer_f);
-
-                        out.x = scopeR.x;
-                        out.y = scopeG.x;
-                        out.z = scopeB.x;
-                        }
-                    
-                }
-    }
-
-//option to overlay a grayscale ramp on the bottom edge of the frame
-    if (opt_ramp) {
-        if (opt_ramp_scope){ 
-                if( rY < 0.05f  && rY > -0.02f) {out = ramp;}
-            return out;
-            }  
-    if( rY < 0.1f ) {out = ramp;}
-                
-    
-    }
-
-    
-return out;
-    }
+}

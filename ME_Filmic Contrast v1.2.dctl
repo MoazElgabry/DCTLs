@@ -1,5 +1,5 @@
 #line 2
-//Flimic Contrast V1.1.1
+//Flimic Contrast V1.2
 
 
 //functions for Transfer function conversion
@@ -481,7 +481,7 @@
     return RGB;
     } //Convert from HSV to RGB
 
-__DEVICE__ float3 RGB_to_cone(float3 rgb) {
+   __DEVICE__ float3 RGB_to_cone(float3 rgb) {
     const float pi= 3.14159265359f;
     const float rtr = rgb.x * 0.81649658f + rgb.y * -0.40824829f + rgb.z * -0.40824829f;
     const float rtg = rgb.x * 0.0f + rgb.y * 0.70710678f + rgb.z * -0.70710678f;
@@ -493,7 +493,7 @@ __DEVICE__ float3 RGB_to_cone(float3 rgb) {
     const float spht = art < 0.0f ? art + 2.0f * 3.141592653589f : art;
     const float sphp = _atan2f(_sqrtf(rtr*rtr + rtg*rtg), rtb);
 
-//This is to modify the lum component which is the main reason why the saturation component has a different behavior 
+ //This is to modify the lum component which is the main reason why the saturation component has a different behavior 
     const float huecoef1= 1.0f/(2.0f-(0.78539816f/0.61547971f));
     const float huecoef2 = 2.0f*sphp*_sinf((2.0f*pi/3.0f)-_fmod(spht,(pi/3.0f)))/1.7320508075688f;
     const float huemag =((_acosf(_cosf(3.0f*spht+pi)))/(pi*huecoef1)+(((0.78539816f/0.61547971f))-1.0f))*huecoef2;
@@ -506,9 +506,9 @@ __DEVICE__ float3 RGB_to_cone(float3 rgb) {
         spht * 0.15915494309189535f,
         sphp * 1.0467733744265997f
     );
-    } //Convert to cone cordinates by Juan Pablo Zambrano
-
-__DEVICE__ float3 cone_to_RGB(float3 sph) {
+       } //Convert to cone cordinates by Juan Pablo Zambrano
+   
+   __DEVICE__ float3 cone_to_RGB(float3 sph) {
     
     const float pi= 3.14159265359f;
     sph.y *= 6.283185307179586f;
@@ -528,9 +528,9 @@ __DEVICE__ float3 cone_to_RGB(float3 sph) {
         ctr * -0.40824829f + ctg * 0.70710678f + ctb * 0.57735027f,
         ctr * -0.40824829f + ctg * -0.70710678f + ctb * 0.57735027f
     );
-    } // convert from cone to RGB
-
-__DEVICE__ float3 RGBtoCHEN(float3 in) {
+       } // convert from cone to RGB
+   
+   __DEVICE__ float3 RGBtoCHEN(float3 in) {
     float r = in.x;
     float g = in.y;
     float b = in.z;
@@ -554,9 +554,9 @@ __DEVICE__ float3 RGBtoCHEN(float3 in) {
     c = sphp * 1.0467733744265997f;
 
     return make_float3(h, c, l);
- } //by Kaur Hendrikson
-
-__DEVICE__ float3 CHENtoRGB(float3 in) {
+    } //by Kaur Hendrikson
+   
+   __DEVICE__ float3 CHENtoRGB(float3 in) {
     float h = in.x * 6.283185307179586f;
     float c = in.y * 0.9553166181245093f;
     float l = in.z * 1.7320508075688772f;
@@ -574,32 +574,32 @@ __DEVICE__ float3 CHENtoRGB(float3 in) {
     b = ctr * -0.40824829f + ctg * -0.70710678f + ctb * 0.57735027f;
 
     return make_float3(r, g, b);
- } //by Kaur Hendrikson
+    } //by Kaur Hendrikson
  
 
 
 // Helper functions
-
-__DEVICE__ float powf(float base, float exp) {
-    return _copysignf(_powf(_fabs(base), exp), base);
-    }
-
-__DEVICE__ float pow2f(float base) {
-    return _powf(_fabs(base), 2.0);
-    }
-
-__DEVICE__ float maxf3(float3 x) {
-    return _fmaxf(_fmaxf(x.x, x.y), x.z);
-    }
-
-__DEVICE__ float minf3(float3 x) {
-    return _fminf(_fminf(x.x, x.y), x.z);
-    }
-
-__DEVICE__ float3 powf3(float3 base, float exp) {
-    return make_float3(powf(base.x, exp), powf(base.y, exp), powf(base.z, exp));
-    }
-    
+ 
+ __DEVICE__ float powf(float base, float exp) {
+     return _copysignf(_powf(_fabs(base), exp), base);
+     }
+ 
+ __DEVICE__ float pow2f(float base) {
+     return _powf(_fabs(base), 2.0);
+     }
+ 
+ __DEVICE__ float maxf3(float3 x) {
+     return _fmaxf(_fmaxf(x.x, x.y), x.z);
+     }
+ 
+ __DEVICE__ float minf3(float3 x) {
+     return _fminf(_fminf(x.x, x.y), x.z);
+     }
+ 
+ __DEVICE__ float3 powf3(float3 base, float exp) {
+     return make_float3(powf(base.x, exp), powf(base.y, exp), powf(base.z, exp));
+     }
+     
 
 //functions to apply transfer function conversions
  
@@ -698,9 +698,9 @@ __DEVICE__ float3 powf3(float3 base, float exp) {
 
 
 
-//functions for the main functionality of contrast and split toning
+//functions for the main functionality of contrast 
 
- __DEVICE__ float apply_linear_contrast (float in, float contrast, float pivot) {
+  __DEVICE__ float apply_linear_contrast (float in, float contrast, float pivot) {
     
     float out = in;
     //offsetting the user slider to set the starting point at zero
@@ -712,9 +712,9 @@ __DEVICE__ float3 powf3(float3 base, float exp) {
 
 
     return out;
-    }
-
-__DEVICE__ float3 apply_linear_contrastf3 (float3 in, float contrast, float pivot) {
+     }
+ 
+ __DEVICE__ float3 apply_linear_contrastf3 (float3 in, float contrast, float pivot) {
    float3 out = in;
 
    out.x = apply_linear_contrast (out.x, contrast, pivot);
@@ -722,8 +722,8 @@ __DEVICE__ float3 apply_linear_contrastf3 (float3 in, float contrast, float pivo
    out.z = apply_linear_contrast (out.z, contrast, pivot);
 
    return out;
- }
- __DEVICE__ float apply_rolling_contrast (float in, float contrast, float pivot) {
+  }
+  __DEVICE__ float apply_rolling_contrast (float in, float contrast, float pivot) {
    float out = in;
        //offsett the user slider to set the starting point at zero instead of 1
    contrast = contrast + 1.f;
@@ -740,9 +740,9 @@ __DEVICE__ float3 apply_linear_contrastf3 (float3 in, float contrast, float pivo
             pivot = 1 - pivot;
         }
    return out;
-
- }
- __DEVICE__ float3 apply_rolling_contrastf3 (float3 in, float contrast, float pivot) {
+ 
+  }
+  __DEVICE__ float3 apply_rolling_contrastf3 (float3 in, float contrast, float pivot) {
     
     float3 out = in;
 
@@ -752,15 +752,15 @@ __DEVICE__ float3 apply_linear_contrastf3 (float3 in, float contrast, float pivo
     out.z = apply_rolling_contrast (out.z, contrast, pivot);
     
     return out;
-
-    }
  
- __DEVICE__ float3 apply_white_point (float3 in, float white_point, float pivot, float shoulder_strength) {
-
-float3 out = in; 
-float scale_factor;
-
-if (in.x > pivot) {
+     }
+  
+  __DEVICE__ float3 apply_white_point (float3 in, float white_point, float pivot, float shoulder_strength) {
+   
+   float3 out = in; 
+   float scale_factor;
+   
+   if (in.x > pivot) {
     scale_factor = (1.0f - pivot) / _powf(_powf((white_point - pivot) / (1.0f - pivot), -1.0f*shoulder_strength) - 1.0f, 1.0f/shoulder_strength);
     
     out.x = pivot + scale_factor *((in.x - pivot) / scale_factor) / (_powf(1.0f + _powf((in.x - pivot) / scale_factor, shoulder_strength), 1.0f / shoulder_strength));
@@ -773,7 +773,7 @@ if (in.x > pivot) {
         
         }
 
-if (in.y > pivot) {
+   if (in.y > pivot) {
     scale_factor = (1.0f - pivot) / _powf(_powf((white_point - pivot) / (1.0f - pivot), -1.0f*shoulder_strength) - 1.0f, 1.0f/shoulder_strength);
     
     out.y = pivot + scale_factor *((in.y - pivot) / scale_factor) / (_powf(1.0f + _powf((in.y - pivot) / scale_factor, shoulder_strength), 1.0f / shoulder_strength));
@@ -786,7 +786,7 @@ if (in.y > pivot) {
         
         }
 
-if (in.z > pivot) {
+   if (in.z > pivot) {
     scale_factor = (1.0f - pivot) / _powf(_powf((white_point - pivot) / (1.0f - pivot), -1.0f*shoulder_strength) - 1.0f, 1.0f/shoulder_strength);
     
     out.z = pivot + scale_factor *((in.z - pivot) / scale_factor) / (_powf(1.0f + _powf((in.z - pivot) / scale_factor, shoulder_strength), 1.0f / shoulder_strength));
@@ -800,19 +800,19 @@ if (in.z > pivot) {
         }
 
     return out;
-
-    }
  
- __DEVICE__ float3 apply_black_point (float3 in, float black_point, float pivot, float toe_str) {
+     }
+  
+  __DEVICE__ float3 apply_black_point (float3 in, float black_point, float pivot, float toe_str) {
 
-float3 out = in; 
-
-in.x = 1.0f - in.x;
-in.y = 1.0f - in.y ;
-in.z = 1.0f - in.z ;
-
-float scale_factor;
-
+      float3 out = in; 
+      
+      in.x = 1.0f - in.x;
+      in.y = 1.0f - in.y ;
+      in.z = 1.0f - in.z ;
+      
+      float scale_factor;
+      
     if (in.x > pivot) {
     scale_factor = (1.0f - pivot) / _powf(_powf((black_point - pivot) / (1.0f - pivot), -1.0f*toe_str) - 1.0f, 1.0f/toe_str);
     
@@ -852,48 +852,127 @@ float scale_factor;
         
         }
 
- out.x = 1 - out.x;
- out.y = 1 - out.y;
- out.z = 1 - out.z;
+    out.x = 1 - out.x;
+    out.y = 1 - out.y;
+    out.z = 1 - out.z;
+   
+   return out;
+    
+        }
+    
 
-return out;
+//functions for implementing the feathered luma mask
+     __DEVICE__ float smoothstep(float x) {
+    x = _clampf(x, 0.0, 1.0);
+    return 3.0 * powf(x, 2.0) - 2.0 * powf(x, 3.0);}
 
-    }
+   __DEVICE__ float3 HiLoLumaMask (float3 in, float3 base, float HiThreshold, float HiFeather, float LoThreshold,  float LoFeather, float TF, float factor, float alpha, int X, int Y)  {
+      float3 mid_grey_f3 = LinToGamma(make_float3 (0.18,0.18,0.18), TF);
+      float mid_grey = mid_grey_f3.x;
+      //float pxlX = (float)X;
+      //float pxlY = (float)Y;
+
+      //mid_grey = 0.18;
+      
+
+      float Lo_min = mid_grey * _exp2f(LoThreshold - 0.5 * LoFeather);
+      float Lo_max = mid_grey * _exp2f(LoThreshold + 0.5 * LoFeather);
+      float Hi_min = mid_grey * _exp2f(HiThreshold - 0.5 * HiFeather);
+      float Hi_max = mid_grey * _exp2f(HiThreshold + 0.5 * HiFeather);            
+      float input_metric = _fmaxf(_fmaxf(base.x, base.y), base.z);
+
+      float input_metric_log = _log2f(_fmaxf(input_metric, 0.0));
+      float Hi_min_log = _log2f(Hi_min);
+      float Hi_max_log = _log2f(Hi_max);
+      float Lo_min_log = _log2f(Lo_min);
+      float Lo_max_log = _log2f(Lo_max);
+
+      float shadow_mask;
+          if (input_metric < Lo_min) {
+              shadow_mask = 1.0;
+          } else if (Lo_max < input_metric) {
+              shadow_mask = 0.0;
+          } else {
+              shadow_mask = _mix(1.0, 0.0, smoothstep((input_metric_log - Lo_min_log) / (Lo_max_log - Lo_min_log)));
+          }
+      
+
+      float highlight_mask;
+          if (input_metric < Hi_min) {
+              highlight_mask = 1.0;
+           } 
+          else if (Hi_max < input_metric) {
+              highlight_mask = 0.0;
+          } 
+          else {
+              highlight_mask = _mix(1.0, 0.0, smoothstep((input_metric_log - Hi_min_log) / (Hi_max_log - Hi_min_log)));
+
+           }
+                 highlight_mask = 1- highlight_mask;       
+
+          float HiLo_mask = shadow_mask + highlight_mask;
+           HiLo_mask = 1- _saturatef(HiLo_mask);
 
 
-//A function to mix saturation channel of HSV between image state before and after applying contrast
 
-__DEVICE__ float3 mix_sat (float3 in_1, float3 in_2, float p_mix_sat, float contrast, float pivot) { 
+         float3 pinends = _mix(base,in,HiLo_mask);
 
-in_2 = RGBtoCHEN(in_2);
-in_2.z = apply_rolling_contrast (in_2.z, contrast, pivot);
-in_2 = CHENtoRGB(in_2);
+         float3 output = _mix(in, pinends, factor);
 
- float3 new_sat = _mix(in_1, in_2, p_mix_sat);
-return new_sat;
- }
+
+
+            float highlight_r = 0.0;
+            float highlight_g = 0.4;
+            float highlight_b = 0.35;
+            float3 Checker = make_float3(highlight_r, highlight_g, highlight_b);
+            float checker_size = 5;
+            if (((int)(X / checker_size) + (int)(Y / checker_size)) % 2 == 0) {Checker = make_float3(1.0 - highlight_r, 1.0 - highlight_g, 1.0 - highlight_b);}
+
+         if (alpha) {
+
+            return _mix(Checker,output,_saturatef(HiLo_mask));
+           }
+
+         
+         return output;
+
+
+
+      }
+
+//A function that applies contrast to only the luma channel in a CHEN color model image state before mixing it with the contrast applied to RGB
+
+ __DEVICE__ float3 mix_sat (float3 in_1, float3 in_2, float p_mix_sat, float contrast, float pivot) { 
  
-__DEVICE__ float3 mix_sat_lincon (float3 in_1, float3 in_2, float p_mix_sat, float contrast, float pivot) { 
+ in_2 = RGBtoCHEN(in_2);
+ in_2.z = apply_rolling_contrast (in_2.z, contrast, pivot);
+ in_2 = CHENtoRGB(in_2);
+ 
+  float3 new_sat = _mix(in_1, in_2, p_mix_sat);
+ return new_sat;
+  }
+  
+ __DEVICE__ float3 mix_sat_lincon (float3 in_1, float3 in_2, float p_mix_sat, float contrast, float pivot) { 
+ 
+ in_2 = RGBtoCHEN(in_2);
+ in_2.z = apply_linear_contrast (in_2.z, contrast, pivot);
+ in_2 = CHENtoRGB(in_2);
+ 
+  float3 new_sat = _mix(in_1, in_2, p_mix_sat);
+ return new_sat;
+  }
 
-in_2 = RGBtoCHEN(in_2);
-in_2.z = apply_linear_contrast (in_2.z, contrast, pivot);
-in_2 = CHENtoRGB(in_2);
-
- float3 new_sat = _mix(in_1, in_2, p_mix_sat);
-return new_sat;
- }
 
 
 
-
-DEFINE_UI_PARAMS(P_exposure,  Exposure 🌞, DCTLUI_SLIDER_FLOAT, 0.0f, -0.955f, 4.0f, 0.001f)
-DEFINE_UI_PARAMS(contrast, Contrast 🌓 , DCTLUI_SLIDER_FLOAT, 0.0, -0.5, 2, 0.001)
+DEFINE_UI_PARAMS(P_exposure,  Exposure 🌞, DCTLUI_SLIDER_FLOAT, 0.0f, -4f, 4.0f, 0.001f)
+DEFINE_UI_PARAMS(contrast, Contrast 🌓 , DCTLUI_SLIDER_FLOAT, 0.0, -0.5, 1, 0.0001f)
 DEFINE_UI_PARAMS(pivot, Relative Pivot 📌, DCTLUI_SLIDER_FLOAT, 0.0, -1, 1, 0.001)
 
 
 DEFINE_UI_PARAMS(p_white_point, ⚪ White Point  :⚪, DCTLUI_SLIDER_FLOAT, 1.015f, 0.0f, 1.018f, 0.0001f)
 DEFINE_UI_PARAMS(p_w_p_pivot, ├ Shoulder  ╭, DCTLUI_SLIDER_FLOAT, 0.6, 0.2, .997f, 0.1)
-DEFINE_UI_PARAMS(p_shoulder_str,└ Fall off ╭   , DCTLUI_SLIDER_FLOAT, 5, 0.0, 10.0, 0.001)
+DEFINE_UI_PARAMS(p_shoulder_str,└ Fall off ╭   , DCTLUI_SLIDER_FLOAT, 6, 0.0, 9, 0.001)
 
 DEFINE_UI_PARAMS(p_black_point, ⚫ Black Point  :⚫, DCTLUI_SLIDER_FLOAT, 0.0001, 0.0001, .5, 0.0001)
 DEFINE_UI_PARAMS(p_b_p_pivot, ├ Toe     ⌣  , DCTLUI_SLIDER_FLOAT, 0.5, 0.0, 0.8, 0.001)
@@ -901,13 +980,18 @@ DEFINE_UI_PARAMS(p_toe_str, └ Fall off   ⌣   , DCTLUI_SLIDER_FLOAT, 2.
 
 
 DEFINE_UI_PARAMS(p_mix_contrast, Linear / S curve: , DCTLUI_SLIDER_FLOAT, 1.0f, 0.0f, 1.0f, 0.01f)
-DEFINE_UI_PARAMS(p_mix_sat, Original saturation 🖍️, DCTLUI_SLIDER_FLOAT, .5f, 0.0f, 1.0f, 0.01f)
+DEFINE_UI_PARAMS(p_mix_sat, Preserve Color 🖍️, DCTLUI_SLIDER_FLOAT, .5f, 0.0f, 1.0f, 0.01f)
+DEFINE_UI_PARAMS(p_mix_pin, Pin Hi-LO Ends, DCTLUI_SLIDER_FLOAT, 0.0f, 0.0f, 1.0f, 0.01f)
 
 
 DEFINE_UI_PARAMS(bypass, 🚫 Bypass, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(opt_showcurve, 📈 Show Curve, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(opt_ramp, 📏 Show Ramp, DCTLUI_CHECK_BOX, 0)
-DEFINE_UI_PARAMS(opt_ramp_scope, :  Wide aspect overlays :, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_PARAMS(opt_ramp_scope, =Wide aspect overlays =, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_PARAMS(exp_toggle, Tone-mapped exposure, DCTLUI_CHECK_BOX, 0)
+
+DEFINE_UI_PARAMS(preservemidgray_toggle, Preserve Mid-gray, DCTLUI_CHECK_BOX, 1)
+DEFINE_UI_PARAMS(alpha_toggle, Show Pin Range, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(p_transfer_f, Transfer function, DCTLUI_COMBO_BOX, 2, {logc3, logc4, di, aces_cct, log3g10, slog3, bmd_f5, clog3, dlog, fLog, fLog2, vlog, g22, g24, g26, linear}, {ARRI LogC3, ARRI LogC4,  DaVinci Intermediate, ACEScct, RED Log3G10, Sony S-Log3, BMD Film Gen 5, Canon Log 3, DJI D-Log, FujiFilm F-Log, FujiFilm F-Log2, Panasonic V-Log, Gamma 2.2, Gamma 2.4, Gamma 2.6, Linear})
 
 
@@ -922,109 +1006,175 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
 
 
     //create a linear ramp to enable the view graph control
-    float width = (float)p_Width;
-    float height = (float)p_Height;
-    if (opt_ramp_scope) {height = height*0.64f; }
-    float X = (float)p_X;
-    float Y = height - (float)p_Y;
-    if (opt_ramp_scope) { Y = height*1.28f - (float)p_Y; }
-    //Relative X,Y 
-    float rY = Y / height;
-    float rX = X / width;
-    float3 ramp = {rX, rX, rX};
+     float width = (float)p_Width;
+     float height = (float)p_Height;
+     if (opt_ramp_scope) {height = height*0.64f; }
+     float X = (float)p_X;
+     float Y = height - (float)p_Y;
+     if (opt_ramp_scope) { Y = height*1.28f - (float)p_Y; }
+     //Relative X,Y 
+     float rY = Y / height;
+     float rX = X / width;
+     float3 ramp = {rX, rX, rX};
+     float3 clean_ramp = ramp;
 
-    
-    //sanitize black and white points
-    if (p_transfer_f == 15) {p_shoulder_str += 5;}
-    p_w_p_pivot = _fminf(p_white_point, p_w_p_pivot );
-    p_shoulder_str= _fmaxf((10 - p_shoulder_str), 0.3f);
-    p_toe_str= _fmaxf((10 - p_toe_str), 0.135f);
+     
+     //sanitize black and white points
+     if (p_transfer_f == 15) {p_shoulder_str += 5;}
+     p_w_p_pivot = _fminf(p_white_point, p_w_p_pivot );
+     p_shoulder_str= _fmaxf((10 - p_shoulder_str), 0.3f);
+     p_toe_str= _fmaxf((10 - p_toe_str), 0.17f);
 
-    p_black_point = 1.0f - p_black_point;
-    p_b_p_pivot = _fminf((p_black_point - 0.05f) , p_b_p_pivot );
-    p_white_point = _fmaxf(p_white_point*.5f + 0.49f,0.5f);
-    //p_white_point = _fmaxf(p_white_point , 0.5f);
-    p_black_point = _fmaxf(p_black_point , 0.69f);
+     p_black_point = p_black_point*.4;
+     p_black_point = 1.0f - p_black_point;
 
-    
+     p_b_p_pivot = _fminf((p_black_point - 0.05f) , p_b_p_pivot );
+     p_white_point = _fmaxf(p_white_point*.5f + 0.49f,0.5f);
+     //p_white_point = _fmaxf(p_white_point , 0.5f);
+     p_black_point = _fmaxf(p_black_point , 0.69f);
+
+   //preserve mid-gray mode that limits ranges of tone mapping
+     float rememberPivot = pivot;
+     if (preservemidgray_toggle == 1) {
+       
+       pivot = _fminf(0.90, _fmaxf(0.05, pivot));
+       p_white_point = _fmaxf(p_white_point, _fmaxf((pivot*1.1f), .7f));
+       p_w_p_pivot = _fmaxf(_fmaxf(pivot*1.015f, p_w_p_pivot),p_w_p_pivot );
+       p_b_p_pivot = _fmaxf((1- _fmaxf(_fminf(0.6,(1-p_b_p_pivot)), pivot)), pivot);
+       if (pivot > 0.7) {
+         p_b_p_pivot = _fminf(pivot, (1 - p_b_p_pivot) * pivot+0.5);
+         }
+       p_black_point = p_black_point* 0.45 +.55;
+       p_toe_str = p_toe_str*.15 + (10*.15);
+       p_toe_str -= .05;
+
+     } else {pivot = rememberPivot;}
+
+
+
+     //flip preserve color slider for negative contrast for more intutive results
+
+    if (contrast < 0) {p_mix_sat = 1-p_mix_sat;}
 
 //bypass option that outputs untouched image when activated
     if (bypass ==1 ) {
         //float3 clean = {p_R, p_G, p_B};
 
      out = clean;
+
+    //option to overlay a grayscale ramp on the bottom edge of the frame
+       if (opt_ramp) {
+         if (opt_ramp_scope){ 
+               if( rY < 0.05f  && rY > -0.02) {out = ramp;}
+            }  
+         if( rY < 0.1f) {out = ramp;}
+    
+         }
+     
     //Optional show curve functionality
      if (opt_showcurve == 1) {
     
-        float overlayR = ramp.x >= (Y - 5.0f) / height && ramp.x <= (Y + 5.0f) / height ? 1.0f : 0.0f;
-        float overlayG = ramp.y >= (Y - 5.0f) / height && ramp.y <= (Y + 5.0f) / height ? 1.0f : 0.0f;
-        float overlayB = ramp.z >= (Y - 5.0f) / height && ramp.z <= (Y + 5.0f) / height ? 1.0f : 0.0f;
+     float3 scopeY = LinToGamma(make_float3(.9f,.9f,.9f), p_transfer_f);
+
+
+        float overlayR = ramp.x >= (Y - 5.0f) / height && ramp.x <= (Y + 5.0f) / height ? scopeY.x : 0.0f;
+        float overlayG = ramp.y >= (Y - 5.0f) / height && ramp.y <= (Y + 5.0f) / height ? scopeY.y : 0.0f;
+        float overlayB = ramp.z >= (Y - 5.0f) / height && ramp.z <= (Y + 5.0f) / height ? scopeY.z : 0.0f;
         out.x = overlayR == 0.0f ? out.x : overlayR;
         out.y = overlayG == 0.0f ? out.y : overlayG;
         out.z = overlayB == 0.0f ? out.z : overlayB;
+            
+
                     //Wide aspect mode
        if (opt_ramp_scope) {
 
                         if (rX < pivot+0.0025f && rX > pivot- 0.0025f && rY > 0.0f  && rY< 1.1f) {
-                        out.x = .8f;
-                        out.y = .8f;
-                        out.z = .8f;
+                        float3 scopeR = LinToGamma(make_float3(.8f,.8f,.8f), p_transfer_f);
+                        float3 scopeG = LinToGamma(make_float3(.8f,.8f,.8f), p_transfer_f);
+                        float3 scopeB = LinToGamma(make_float3(.8f,.8f,.8f), p_transfer_f);
+
+                        out.x = scopeR.x;
+                        out.y = scopeG.x;
+                        out.z = scopeB.x;
+
                          }  
 
-                        if (rX < p_w_p_pivot+0.001f && rX > p_w_p_pivot- 0.001f && rY > 0.0f && rY< 1.1f) {
-                        out.x = 0.8f;
-                        out.y = 0.1f;
-                        out.z = 0.01f;
-                            }
+                      //if (rX < p_w_p_pivot+0.001f && rX > p_w_p_pivot- 0.001f && rY > 0.0f && rY< 1.1f) {
+                      //float3 scopeR = LinToGamma(make_float3(.8f,.8f,.8f), p_transfer_f);
+                      //float3 scopeG = LinToGamma(make_float3(.1f,.1f,.1f), p_transfer_f);
+                      //float3 scopeB = LinToGamma(make_float3(.01f,.01f,.01f), p_transfer_f);
+                      //
+                      //out.x = scopeR.x;
+                      //out.y = scopeG.x;
+                      //out.z = scopeB.x;
+                      //    }
     
-                        if (rX < p_b_p_pivot+0.001f && rX > p_b_p_pivot- 0.001f && rY > 0.0f && rY< 1.1f) {
-                        out.x = 0.01f;
-                        out.y = 0.3f;
-                        out.z = 0.7f;
-                        }
+                      //if (rX < p_b_p_pivot+0.001f && rX > p_b_p_pivot- 0.001f && rY > 0.0f && rY< 1.1f) {
+                      //float3 scopeR = LinToGamma(make_float3(.01f,.01f,.01f), p_transfer_f);
+                      //float3 scopeG = LinToGamma(make_float3(.3f,.3f,.3f), p_transfer_f);
+                      //float3 scopeB = LinToGamma(make_float3(.7f,.7f,.7f), p_transfer_f);
+
+                      //out.x = scopeR.x;
+                      //out.y = scopeG.x;
+                      //out.z = scopeB.x;
+                      //}
 
                     } 
                     //wide aspect mode off
         else{
 
                     if (rX < pivot+0.0025f && rX > pivot- 0.0025f) {
-                        out.x = .8f;
-                        out.y = .8f;
-                        out.z = .8f;
+                        float3 scopeR = LinToGamma(make_float3(.8f,.8f,.8f), p_transfer_f);
+                        float3 scopeG = LinToGamma(make_float3(.8f,.8f,.8f), p_transfer_f);
+                        float3 scopeB = LinToGamma(make_float3(.8f,.8f,.8f), p_transfer_f);
+
+                        out.x = scopeR.x;
+                        out.y = scopeG.x;
+                        out.z = scopeB.x;
                          }   
 
-                    if (rX < p_w_p_pivot+0.001f && rX > p_w_p_pivot- 0.001f) {
-                        out.x = 0.8f;
-                        out.y = 0.1f;
-                        out.z = 0.01f;
-                         }
+                  //if (rX < p_w_p_pivot+0.001f && rX > p_w_p_pivot- 0.001f) {
+                  //    float3 scopeR = LinToGamma(make_float3(.8f,.8f,.8f), p_transfer_f);
+                  //    float3 scopeG = LinToGamma(make_float3(.1f,.1f,.1f), p_transfer_f);
+                  //    float3 scopeB = LinToGamma(make_float3(.01f,.01f,.01f), p_transfer_f);
 
-                    if (rX < p_b_p_pivot+0.001f && rX > p_b_p_pivot- 0.001f) {
-                        out.x = 0.01f;
-                        out.y = 0.3f;
-                        out.z = 0.7f;
-                        }
+                  //    out.x = scopeR.x;
+                  //    out.y = scopeG.x;
+                  //    out.z = scopeB.x;
+                  //     }
+
+                  //if (rX < p_b_p_pivot+0.001f && rX > p_b_p_pivot- 0.001f) {
+                  //    float3 scopeR = LinToGamma(make_float3(.01f,.01f,.01f), p_transfer_f);
+                  //    float3 scopeG = LinToGamma(make_float3(.3f,.3f,.3f), p_transfer_f);
+                  //    float3 scopeB = LinToGamma(make_float3(.7f,.7f,.7f), p_transfer_f);
+
+                  //    out.x = scopeR.x;
+                  //    out.y = scopeG.x;
+                  //    out.z = scopeB.x;
+                  //    }
                     
                 }
-    }
-
-    //option to overlay a grayscale ramp on the bottom edge of the frame
-        if (opt_ramp) {
-         if (opt_ramp_scope){ 
-                if( rY < 0.05f  && rY > -0.02) {out = ramp;}
-            return out;
-            }  
-         if( rY < 0.1f) {out = ramp;}
-         
+      }
 
     
-    }
 
     return out;
     }
 
-
-              
+// exposure slider that works in linear
+ if(exp_toggle == 1){
+    P_exposure = powf(2.0, P_exposure);
+    in_RGB = GammaToLin(in_RGB, p_transfer_f);
+    ramp = GammaToLin(ramp, p_transfer_f);
+    
+    
+        // Apply linear gain
+           in_RGB = in_RGB * P_exposure;
+           ramp = ramp * P_exposure;
+    
+    in_RGB = LinToGamma(in_RGB, p_transfer_f);
+    ramp = LinToGamma(ramp, p_transfer_f);
+         }     
 
 //apply compression to the white and black points
      in_RGB = apply_white_point(in_RGB, p_white_point, p_w_p_pivot, p_shoulder_str);
@@ -1056,13 +1206,12 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
 
 
 
-
- // exposure slider that works in linear
-    P_exposure = P_exposure + 1.0f;
+// exposure slider that works in linear
+   if (exp_toggle == 0) {
+    P_exposure = powf(2.0, P_exposure );
     in_RGB = GammaToLin(in_RGB, p_transfer_f);
     ramp = GammaToLin(ramp, p_transfer_f);
     
-     //if (P_exposure == 1) { return LinToGamma(make_float3 (0.18f, .18f, .18f), p_transfer_f);}
     
         // Apply linear gain
            in_RGB = in_RGB * P_exposure;
@@ -1070,68 +1219,23 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
     
     in_RGB = LinToGamma(in_RGB, p_transfer_f);
     ramp = LinToGamma(ramp, p_transfer_f);
+   }
 
     out = in_RGB;
    
 
+out = HiLoLumaMask (in_RGB, clean, 0.85, 1.0, -4.0, 6, p_transfer_f, p_mix_pin,alpha_toggle, p_X, p_Y);
+ramp= HiLoLumaMask (ramp, clean_ramp, 0.85, 1.0, -4.0, 6, p_transfer_f, p_mix_pin,alpha_toggle, p_X, p_Y);
     
+//hide curve overlay when showing the pinned range
+ float opt_mem = opt_showcurve;
 
-//Optional show curve functionality
-    if (opt_showcurve == 1) {
-    
-        float overlayR = ramp.x >= (Y - 5.0f) / height && ramp.x <= (Y + 5.0f) / height ? 1.0f : 0.0f;
-        float overlayG = ramp.y >= (Y - 5.0f) / height && ramp.y <= (Y + 5.0f) / height ? 1.0f : 0.0f;
-        float overlayB = ramp.z >= (Y - 5.0f) / height && ramp.z <= (Y + 5.0f) / height ? 1.0f : 0.0f;
-        out.x = overlayR == 0.0f ? out.x : overlayR;
-        out.y = overlayG == 0.0f ? out.y : overlayG;
-        out.z = overlayB == 0.0f ? out.z : overlayB;
-            
+   if (alpha_toggle)
+      { 
+         opt_showcurve = 0;
 
-                    //Wide aspect mode
-       if (opt_ramp_scope) {
+    } else if (alpha_toggle = 0){opt_showcurve = opt_mem; }
 
-                        if (rX < pivot+0.0025f && rX > pivot- 0.0025f && rY > 0.0f  && rY< 1.1f) {
-                        out.x = .8f;
-                        out.y = .8f;
-                        out.z = .8f;
-                         }  
-
-                        if (rX < p_w_p_pivot+0.001f && rX > p_w_p_pivot- 0.001f && rY > 0.0f && rY< 1.1f) {
-                        out.x = 0.8f;
-                        out.y = 0.1f;
-                        out.z = 0.01f;
-                            }
-    
-                        if (rX < p_b_p_pivot+0.001f && rX > p_b_p_pivot- 0.001f && rY > 0.0f && rY< 1.1f) {
-                        out.x = 0.01f;
-                        out.y = 0.3f;
-                        out.z = 0.7f;
-                        }
-
-                    } 
-                    //wide aspect mode off
-        else{
-
-                    if (rX < pivot+0.0025f && rX > pivot- 0.0025f) {
-                        out.x = .8f;
-                        out.y = .8f;
-                        out.z = .8f;
-                         }   
-
-                    if (rX < p_w_p_pivot+0.001f && rX > p_w_p_pivot- 0.001f) {
-                        out.x = 0.8f;
-                        out.y = 0.1f;
-                        out.z = 0.01f;
-                         }
-
-                    if (rX < p_b_p_pivot+0.001f && rX > p_b_p_pivot- 0.001f) {
-                        out.x = 0.01f;
-                        out.y = 0.3f;
-                        out.z = 0.7f;
-                        }
-                    
-                }
-    }
 
 //option to overlay a grayscale ramp on the bottom edge of the frame
     if (opt_ramp) {
@@ -1143,6 +1247,95 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
                 
     
     }
+
+//Optional show curve functionality
+    if (opt_showcurve == 1) {
+    
+   float3 scopeY = LinToGamma(make_float3(.9f,.9f,.9f), p_transfer_f);
+
+
+        float overlayR = ramp.x >= (Y - 5.0f) / height && ramp.x <= (Y + 5.0f) / height ? scopeY.x : 0.0f;
+        float overlayG = ramp.y >= (Y - 5.0f) / height && ramp.y <= (Y + 5.0f) / height ? scopeY.y : 0.0f;
+        float overlayB = ramp.z >= (Y - 5.0f) / height && ramp.z <= (Y + 5.0f) / height ? scopeY.z : 0.0f;
+        out.x = overlayR == 0.0f ? out.x : overlayR;
+        out.y = overlayG == 0.0f ? out.y : overlayG;
+        out.z = overlayB == 0.0f ? out.z : overlayB;
+            
+
+                    //Wide aspect mode
+       if (opt_ramp_scope) {
+
+                        if (rX < pivot+0.0025f && rX > pivot- 0.0025f && rY > 0.0f  && rY< 1.1f) {
+                        float3 scopeR = LinToGamma(make_float3(.8f,.8f,.8f), p_transfer_f);
+                        float3 scopeG = LinToGamma(make_float3(.8f,.8f,.8f), p_transfer_f);
+                        float3 scopeB = LinToGamma(make_float3(.8f,.8f,.8f), p_transfer_f);
+
+                        out.x = scopeR.x;
+                        out.y = scopeG.x;
+                        out.z = scopeB.x;
+
+                         }  
+
+                     // if (rX < p_w_p_pivot+0.001f && rX > p_w_p_pivot- 0.001f && rY > 0.0f && rY< 1.1f) {
+                     // float3 scopeR = LinToGamma(make_float3(.8f,.8f,.8f), p_transfer_f);
+                     // float3 scopeG = LinToGamma(make_float3(.1f,.1f,.1f), p_transfer_f);
+                     // float3 scopeB = LinToGamma(make_float3(.01f,.01f,.01f), p_transfer_f);
+
+                     // out.x = scopeR.x;
+                     // out.y = scopeG.x;
+                     // out.z = scopeB.x;
+                     //     }
+    
+                     // if (rX < p_b_p_pivot+0.001f && rX > p_b_p_pivot- 0.001f && rY > 0.0f && rY< 1.1f) {
+                     // float3 scopeR = LinToGamma(make_float3(.01f,.01f,.01f), p_transfer_f);
+                     // float3 scopeG = LinToGamma(make_float3(.3f,.3f,.3f), p_transfer_f);
+                     // float3 scopeB = LinToGamma(make_float3(.7f,.7f,.7f), p_transfer_f);
+
+                     // out.x = scopeR.x;
+                     // out.y = scopeG.x;
+                     // out.z = scopeB.x;
+                     // }
+
+                    } 
+                    //wide aspect mode off
+        else{
+
+                    if (rX < pivot+0.0025f && rX > pivot- 0.0025f) {
+                        float3 scopeR = LinToGamma(make_float3(.8f,.8f,.8f), p_transfer_f);
+                        float3 scopeG = LinToGamma(make_float3(.8f,.8f,.8f), p_transfer_f);
+                        float3 scopeB = LinToGamma(make_float3(.8f,.8f,.8f), p_transfer_f);
+
+                        out.x = scopeR.x;
+                        out.y = scopeG.x;
+                        out.z = scopeB.x;
+                         }   
+
+                  //if (rX < p_w_p_pivot+0.001f && rX > p_w_p_pivot- 0.001f) {
+                  //    float3 scopeR = LinToGamma(make_float3(.8f,.8f,.8f), p_transfer_f);
+                  //    float3 scopeG = LinToGamma(make_float3(.1f,.1f,.1f), p_transfer_f);
+                  //    float3 scopeB = LinToGamma(make_float3(.01f,.01f,.01f), p_transfer_f);
+
+                  //    out.x = scopeR.x;
+                  //    out.y = scopeG.x;
+                  //    out.z = scopeB.x;
+                  //     }
+
+                  //if (rX < p_b_p_pivot+0.001f && rX > p_b_p_pivot- 0.001f) {
+                  //    float3 scopeR = LinToGamma(make_float3(.01f,.01f,.01f), p_transfer_f);
+                  //    float3 scopeG = LinToGamma(make_float3(.3f,.3f,.3f), p_transfer_f);
+                  //    float3 scopeB = LinToGamma(make_float3(.7f,.7f,.7f), p_transfer_f);
+
+                  //    out.x = scopeR.x;
+                  //    out.y = scopeG.x;
+                  //    out.z = scopeB.x;
+                  //    }
+                    
+                }
+    }
+
+
+
+
 
     
 return out;
