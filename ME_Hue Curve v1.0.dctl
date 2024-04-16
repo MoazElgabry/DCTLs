@@ -1,6 +1,7 @@
 #line 2
 // ME_Hue curve ver 1.0
 //Made by Moaz Elgabry code adapted from the Hue Curve developed by Thatcher Freeman
+// Lab color models code by Jan Karow
 
 
 
@@ -681,7 +682,7 @@ DEFINE_UI_PARAMS(yellow_adjustment_amt, Yellow 🟨, DCTLUI_SLIDER_FLOAT, 0.0, -
 DEFINE_UI_PARAMS(skin_adjustment_amt, Skin 👩🏻‍🦲, DCTLUI_SLIDER_FLOAT, 0.0, -0.25, .25, 0.001)
 DEFINE_UI_PARAMS(adjustment_amt, Custom Hue, DCTLUI_SLIDER_FLOAT, 0.0, -1, 1, 0.001)
 DEFINE_UI_PARAMS(selected_hue, Select Hue Angle, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 360.0, 0.001)
-DEFINE_UI_PARAMS(complementary_fade, Opposite hue change, DCTLUI_SLIDER_FLOAT, 1.0, 0.0, 1.0, 0.01)
+DEFINE_UI_PARAMS(complementary_fade, Opposite Hue Change, DCTLUI_SLIDER_FLOAT, 1.0, 0.0, 1.0, 0.01)
 
 
 DEFINE_UI_PARAMS(bypass, 🚫 Bypass, DCTLUI_CHECK_BOX, 0)
