@@ -59,52 +59,6 @@
     return make_float3(r, g, b);
     } //by Kaur Hendrikson
   
-   __DEVICE__ float3 RGB_to_HSV(float3 RGB) {
-    float3 HSV;
-    float min = _fminf(_fminf(RGB.x, RGB.y), RGB.z);
-    float max = _fmaxf(_fmaxf(RGB.x, RGB.y), RGB.z);
-    HSV.z = max;
-    float delta = max - min;
-    if (max != 0.0f) {
-    HSV.y = delta / max;
-    } else {
-    HSV.y = 0.0f;
-    HSV.x = 0.0f;
-    return HSV;
-    }
-    if (delta == 0.0f) {
-    HSV.x = 0.0f;
-    } else if (RGB.x == max) {
-    HSV.x = (RGB.y - RGB.z) / delta;
-    } else if (RGB.y == max) {
-    HSV.x = 2.0f + (RGB.z - RGB.x) / delta;
-    } else {
-    HSV.x = 4.0f + (RGB.x - RGB.y) / delta;
-    }
-    HSV.x *= 1.0f / 6.0f;
-    if (HSV.x < 0.0f)
-    HSV.x += 1.0f;
-    return HSV;
-      } //Convert to HSV
-   
-   __DEVICE__ float3 HSV_to_RGB(float3 HSV) {
-    float3 RGB;
-    if (HSV.y == 0.0f) {
-    RGB.x = RGB.y = RGB.z = HSV.z;
-    } else {
-    HSV.x *= 6.0f;
-    int i = floor(HSV.x);
-    float f = HSV.x - i;
-    i = (i >= 0) ? (i % 6) : (i % 6) + 6;
-    float p = HSV.z * (1.0f - HSV.y);
-    float q = HSV.z * (1.0f - HSV.y * f);
-    float t = HSV.z * (1.0f - HSV.y * (1.0f - f));
-    RGB.x = i == 0 ? HSV.z : i == 1 ? q : i == 2 ? p : i == 3 ? p : i == 4 ? t : HSV.z;
-    RGB.y = i == 0 ? t : i == 1 ? HSV.z : i == 2 ? HSV.z : i == 3 ? q : i == 4 ? p : p;
-    RGB.z = i == 0 ? p : i == 1 ? p : i == 2 ? t : i == 3 ? HSV.z : i == 4 ? HSV.z : q;
-    }
-    return RGB;
-      } //Convert from HSV to RGB
   
   __DEVICE__ float3 rgb_to_cone(float3 rgb) {
     const float pi= 3.14159265359f;
@@ -182,142 +136,7 @@
     return rgb;
      }
  
- //normalized conical coordinate
-  #define PI 3.1415926535897932384626
-    __DEVICE__ float normalize_gain(float3 in) {
 
-    float3 out = in;
-    
-    float chroma = in.y;
-    float angle = (in.x)*2*PI;
-    angle = angle - PI/6;
-
-    chroma = chroma*_atan2f(_sqrtf(2.0f),1.0f);
-    out.y = _tanf(chroma)/_sqrtf(2.0f);
-    float chroma_gain = 1/(2*_cosf((_acosf(_sinf(3*(angle))))/3));
-
-
-     return chroma_gain;
-    
-    }
-    
-   
-   __DEVICE__ float3 rgb_to_spherical(float3 x) {
-    
-    float3 in = x;
-    float norm = _fmaxf(in.x,_fmaxf(in.y,in.z));
-    float rot_mat[3][3] = {{_sqrtf(6.0f)/3.0f, -_sqrtf(6.0f)/6.0f, -_sqrtf(6.0f)/6.0f}, {0.0, _sqrtf(2.0f)/2.0f,-_sqrtf(2.0f)/2.0f}, {_sqrtf(3.0f)/3.0f, _sqrtf(3.0f)/3.0f, _sqrtf(3.0f)/3.0f}};
-
-    float3 rotated_color = mv_33_3(rot_mat, x);
-    float theta = _atan2f(rotated_color.y, rotated_color.x) / (2.0 * PI);
-
-    
-    float3 spherical = make_float3(0.0, 0.0, 0.0);
-   
-   spherical.x = theta < 0.0 ? theta + 1.0 : theta;
-   spherical.y = _sqrtf((rotated_color.x)*(rotated_color.x) + (rotated_color.y)*(rotated_color.y));
-   spherical.y = _atan2f(spherical.y,rotated_color.z)/_atan2f(_sqrtf(2.0f),1.0f);
-   spherical.z = norm;
-
-    
-    return spherical;
-   }
-   
-   
-   __DEVICE__ float3 spherical_to_cone(float3 in) {
-
-   float3 out = in;
-   
-   float chroma = in.y;
-   float angle = (in.x)*2*PI;
-   angle = angle - PI/6;
-
-   chroma = chroma*_atan2f(_sqrtf(2.0f),1.0f);
-   out.y = _tanf(chroma)/_sqrtf(2.0f);
-   float chroma_gain = normalize_gain(in);
-
-   out.y = out.y/chroma_gain;
-
-
-    return out;
-   }
-   
-   
-   __DEVICE__ float3 cone_to_spherical(float3 in) {
-
-   float3 out = in;
-   
-   float chroma = in.y;
-   float angle = (in.x)*2*PI;
-   angle = angle - PI/6;
-
-   chroma = chroma*_atan2f(_sqrtf(2.0f),1.0f);
-   out.y = _tanf(chroma)/_sqrtf(2.0f);
-   float chroma_gain = normalize_gain(in);
-
-   out.y = out.y*chroma_gain;
-
-
-    return out;
-   }
-   
-   __DEVICE__ float3 cone_to_RGB(float3 in) {
-
-   float3 copy = in;
-   copy.x = copy.x + 0.5f;
-
-   float chroma_gain1 = normalize_gain(in);
-   float chroma_gain2 = normalize_gain(copy);
-
-   float norm_gain = (chroma_gain2+chroma_gain1*in.y)/chroma_gain2;
-
-   in.z = in.z/norm_gain;
-   in.y = in.y*chroma_gain1;
-
-   float3 out = in;
-
-   out.x = _cosf(in.x*2*PI)*in.y*in.z*_sqrtf(3)/(_sqrtf(2)/2);
-   out.y = _sinf(in.x*2*PI)*in.y*in.z*_sqrtf(3)/(_sqrtf(2)/2);
-   out.z = in.z*_sqrtf(3);
-
-   float rot_mat[3][3] = {{_sqrtf(6.0f)/3.0f, 0.0, _sqrtf(3.0f)/3.0f}, {-_sqrtf(6.0f)/6.0f, _sqrtf(2.0f)/2.0f,_sqrtf(3.0f)/3.0f}, {-_sqrtf(6.0f)/6.0f, -_sqrtf(2.0f)/2.0f, _sqrtf(3.0f)/3.0f}};
-
-    out = mv_33_3(rot_mat, out);
-
-
-    return out;
-   }
-   
-   __DEVICE__ float3 spherical_to_rgb(float3 in) {
-
-   float3 copy = in;
-   copy.x = copy.x + 0.5f;
-
-   float chroma_gain1 = normalize_gain(in);
-   float chroma_gain2 = normalize_gain(copy);
-
-   in.y = _tanf(in.y*_atan2f(_sqrtf(2.0f),1.0f));
-   in.y = in.y/_sqrtf(2);
-   in.y = in.y/chroma_gain1;
-
-   float norm_gain = (chroma_gain2+chroma_gain1*in.y)/chroma_gain2;
-
-   in.z = in.z/norm_gain;
-   in.y = in.y*chroma_gain1;
-
-   float3 out = in;
-
-   out.x = _cosf(in.x*2*PI)*in.y*in.z*_sqrtf(3)/(_sqrtf(2)/2);
-   out.y = _sinf(in.x*2*PI)*in.y*in.z*_sqrtf(3)/(_sqrtf(2)/2);
-   out.z = in.z*_sqrtf(3);
-
-   float rot_mat[3][3] = {{_sqrtf(6.0f)/3.0f, 0.0, _sqrtf(3.0f)/3.0f}, {-_sqrtf(6.0f)/6.0f, _sqrtf(2.0f)/2.0f,_sqrtf(3.0f)/3.0f}, {-_sqrtf(6.0f)/6.0f, -_sqrtf(2.0f)/2.0f, _sqrtf(3.0f)/3.0f}};
-
-    out = mv_33_3(rot_mat, out);
-
-
-    return out;
-   }
 
 //=========================
 //-------------------------
@@ -695,19 +514,14 @@ __DEVICE__ float complementary_hue_curve(float complementary_fade, float x, cont
     
     if (colorModel == 0 && direction == 1) {out = RGBtoCHEN(out);}
     if (colorModel == 0 && direction == 0) {out = CHENtoRGB(out);}
-    if (colorModel == 1 && direction == 1) {out = RGB_to_HSV(out);}
-    if (colorModel == 1 && direction == 0) {out = HSV_to_RGB(out);}
-    if (colorModel == 2 && direction == 1) {out = rgb_to_cone(out);}
-    if (colorModel == 2 && direction == 0) {out = cone_to_rgb(out);}
-    if (colorModel == 3 && direction == 1) {
-      out = spherical_to_cone(rgb_to_spherical(out));
-      out.x = out.y<0.0001f?0:out.x;}
-    if (colorModel == 3 && direction == 0) {out = cone_to_RGB(out);}
-    if (colorModel == 4 && direction == 1) {out = rgb_to_reuleaux(out);}
-    if (colorModel == 4 && direction == 0) {out = reuleaux_to_rgb(out);}
+
+    if (colorModel == 1 && direction == 1) {out = rgb_to_cone(out);}
+    if (colorModel == 1 && direction == 0) {out = cone_to_rgb(out);}
+    if (colorModel == 2&& direction == 1) {out = rgb_to_reuleaux(out);}
+    if (colorModel == 2&& direction == 0) {out = reuleaux_to_rgb(out);}
 
     // RGB to CIE Lab
-    if (colorModel == 5 && direction == 1) {
+    if (colorModel == 3 && direction == 1) {
 
         RGB = in;
         switch (colorspace) {
@@ -728,7 +542,7 @@ __DEVICE__ float complementary_hue_curve(float complementary_fade, float x, cont
      }
 
     //CIE Lab to RGB
-    if (colorModel == 5 && direction == 0) {
+    if (colorModel == 3 && direction == 0) {
       Lab = LCH_to_Lab(in);
 
         XYZ = CIELab_to_XYZ(Lab, offset, scale); 
@@ -751,7 +565,7 @@ __DEVICE__ float complementary_hue_curve(float complementary_fade, float x, cont
      }
 
     // RGB to OKLab
-    if (colorModel == 6 && direction == 1) {
+    if (colorModel == 4 && direction == 1) {
                 RGB = in;
         switch (colorspace) {
             case 0:
@@ -771,7 +585,7 @@ __DEVICE__ float complementary_hue_curve(float complementary_fade, float x, cont
      }
 
      // OKLab to RGB
-    if (colorModel == 6 && direction == 0) {
+    if (colorModel == 4 && direction == 0) {
         Lab = LCH_to_Lab(in);
 
         XYZ = OKLab_to_XYZ(Lab, offset, scale);  
@@ -794,7 +608,7 @@ __DEVICE__ float complementary_hue_curve(float complementary_fade, float x, cont
     }
 
     // RGB to ProLab
-    if (colorModel == 7 && direction == 1) {
+    if (colorModel == 5 && direction == 1) {
         RGB = in;
         switch (colorspace) {
             case 0:
@@ -814,7 +628,7 @@ __DEVICE__ float complementary_hue_curve(float complementary_fade, float x, cont
      }
 
     // ProLab to RGB
-    if (colorModel == 7 && direction == 0) {
+    if (colorModel == 5 && direction == 0) {
         Lab = LCH_to_Lab(in);
 
         XYZ = ProLab_to_XYZ(Lab, offset, scale);  
@@ -845,15 +659,13 @@ __DEVICE__ float complementary_hue_curve(float complementary_fade, float x, cont
   __DEVICE__ int setChannel (int color_model) {
    int channel;
   if (color_model == 0) {channel = 1;}
-  if (color_model == 1) {channel = 1;}
-  if (color_model == 2) {channel = 2;}
-  if (color_model == 3) {channel = 1;}
-  if (color_model == 4) {channel = 1;}
+  if (color_model == 1) {channel = 2;}
+  if (color_model == 2) {channel = 1;}
+  if (color_model == 3) {channel = 3;}
+  if (color_model == 4) {channel = 3;}
   if (color_model == 5) {channel = 3;}
-  if (color_model == 6) {channel = 3;}
-  if (color_model == 7) {channel = 3;}
-  return channel;
-  }
+  return channel;     
+  }                      
  
  
 
@@ -865,7 +677,7 @@ DEFINE_UI_PARAMS(green_adjustment_amt, Green 🟩, DCTLUI_SLIDER_FLOAT, 0.0, -0.
 DEFINE_UI_PARAMS(blue_adjustment_amt, Blue 🟦, DCTLUI_SLIDER_FLOAT, 0.0, -0.6, .6, 0.001)
 DEFINE_UI_PARAMS(cyan_adjustment_amt, Cyan ⬜️, DCTLUI_SLIDER_FLOAT, 0.0, -0.7, .7, 0.001)
 DEFINE_UI_PARAMS(magenta_adjustment_amt, Magenta 🟪, DCTLUI_SLIDER_FLOAT, 0.0, -0.57, .57, 0.001)
-DEFINE_UI_PARAMS(yellow_adjustment_amt, Yellow 🟨, DCTLUI_SLIDER_FLOAT, 0.0, -0.6, .6, 0.001)
+DEFINE_UI_PARAMS(yellow_adjustment_amt, Yellow 🟨, DCTLUI_SLIDER_FLOAT, 0.0, -0.5, .5, 0.001)
 DEFINE_UI_PARAMS(skin_adjustment_amt, Skin 👩🏻‍🦲, DCTLUI_SLIDER_FLOAT, 0.0, -0.25, .25, 0.001)
 DEFINE_UI_PARAMS(adjustment_amt, Custom Hue, DCTLUI_SLIDER_FLOAT, 0.0, -1, 1, 0.001)
 DEFINE_UI_PARAMS(selected_hue, Select Hue Angle, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 360.0, 0.001)
@@ -876,7 +688,7 @@ DEFINE_UI_PARAMS(bypass, 🚫 Bypass, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(draw_curve, 📈 Draw Curve, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(complementary_curve, Affect Opposite Hues, DCTLUI_CHECK_BOX, 0)
 
-DEFINE_UI_PARAMS(color_model, Color model, DCTLUI_COMBO_BOX, 0, {chen, hsv, cone, norm_cone, reuleaux, cie, ok, pro}, {Chen, HSV, Cone, Normalized Conical, Reuleaux, CIE LAB LCH, OKLab LCH, Pro Lab})
+DEFINE_UI_PARAMS(color_model, Color model, DCTLUI_COMBO_BOX, 0, {chen, cone, reuleaux, cie, ok, pro}, {Chen, Cone,  Reuleaux, CIELab , OKLab , ProLab })
 
 DEFINE_UI_PARAMS(colorspace, Colorspace, DCTLUI_COMBO_BOX, 3, {XYZg, rec2020, ccg, dwg, awg3}, {XYZ, Rec2020, Cinema Gamut, DaVinci WG, AWG3})
 
@@ -897,7 +709,7 @@ float curr_pos_y = 1.0 - (float)p_Y / (float)(p_Height - 1);
 
 control_params_t no_params = {0, 0, 0.01f, 0.01f};
 control_params_t red_params = {0, red_adjustment_amt*-1, 0.01f, 0.01f};
-control_params_t green_params = {0.33333f, green_adjustment_amt*-1, 0.01f, 0.01f};
+control_params_t green_params = {0.338f, green_adjustment_amt*-1, 0.01f, 0.01f};
 control_params_t blue_params = {.70, blue_adjustment_amt*-1, 0.1f, 0.1f};
 control_params_t cyan_params = {0.4833, cyan_adjustment_amt*-1, 0.3f, 0.3f};
 control_params_t magenta_params = {.85, magenta_adjustment_amt*-1, 0.2f, 0.2f};
