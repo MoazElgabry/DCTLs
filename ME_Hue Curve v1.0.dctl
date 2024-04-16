@@ -441,9 +441,9 @@ DEFINE_UI_PARAMS(complementary_fade, Opposite hue change, DCTLUI_SLIDER_FLOAT, 1
 
 DEFINE_UI_PARAMS(color_model, Color model, DCTLUI_COMBO_BOX, 2, {chen, hsv, cone, norm_cone, reuleaux}, {Chen, HSV, Cone, Normalized Conical, Reuleaux})
 
-DEFINE_UI_PARAMS(complementary_curve, Affect Opposite Hues, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(bypass, 🚫 Bypass, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(draw_curve, 📈 Draw Curve, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_PARAMS(complementary_curve, Affect Opposite Hues, DCTLUI_CHECK_BOX, 0)
 
 
 __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p_R, float p_G, float p_B) {
