@@ -118,7 +118,7 @@
     const float spht = art < 0.0f ? art + 2.0f * 3.141592653589f : art;
     const float sphp = _atan2f(_sqrtf(rtr*rtr + rtg*rtg), rtb);
 
- //This is to modify the lum component which is the main reason why the saturation component has a different behavior 
+  //This is to modify the lum component which is the main reason why the saturation component has a different behavior 
     const float huecoef1= 1.0f/(2.0f-(0.78539816f/0.61547971f));
     const float huecoef2 = 2.0f*sphp*_sinf((2.0f*pi/3.0f)-_fmod(spht,(pi/3.0f)))/1.7320508075688f;
     const float huemag =((_acosf(_cosf(3.0f*spht+pi)))/(pi*huecoef1)+(((0.78539816f/0.61547971f))-1.0f))*huecoef2;
@@ -183,7 +183,7 @@
      }
  
  //normalized conical coordinate
-      #define PI 3.1415926535897932384626
+  #define PI 3.1415926535897932384626
     __DEVICE__ float normalize_gain(float3 in) {
 
     float3 out = in;
@@ -319,6 +319,256 @@
     return out;
    }
 
+//=========================
+//-------------------------
+//LAB color model
+//-------------------------
+//=========================
+
+
+
+// illuminant
+#define D65_xyY make_float3( 0.3127, 0.329, 1.0)
+
+__DEVICE__ float spowf(float base, float exp)
+{
+    return _copysignf(_powf(_fabs(base), exp), base);
+}
+
+__DEVICE__ float3 v_x_mtx_3x3(float3 v, float mtx[3][3])
+{
+    return make_float3(mtx[0][0] * v.x + mtx[0][1] * v.y + mtx[0][2] * v.z,
+                       mtx[1][0] * v.x + mtx[1][1] * v.y + mtx[1][2] * v.z,
+                       mtx[2][0] * v.x + mtx[2][1] * v.y + mtx[2][2] * v.z);
+}
+
+__DEVICE__ float3 v_x_mtx_4x4(float3 v, float mtx[4][4])
+{
+    float4 v_h = make_float4(v.x, v.y, v.z, 1.0f);
+    float4 out = make_float4(mtx[0][0] * v_h.x + mtx[0][1] * v_h.y + mtx[0][2] * v_h.z + mtx[0][3] * v_h.w,
+                             mtx[1][0] * v_h.x + mtx[1][1] * v_h.y + mtx[1][2] * v_h.z + mtx[1][3] * v_h.w,
+                             mtx[2][0] * v_h.x + mtx[2][1] * v_h.y + mtx[2][2] * v_h.z + mtx[2][3] * v_h.w,
+                             mtx[3][0] * v_h.x + mtx[3][1] * v_h.y + mtx[3][2] * v_h.z + mtx[3][3] * v_h.w);
+    out /= out.w;
+    float3 out_n = make_float3(out.x, out.y, out.z);
+    return out_n;
+}
+
+// XYZ to xyY
+__DEVICE__ float3 XYZ_to_xyY(float3 XYZ)
+{
+    float3 xyY;
+    float divisor = (_fabs(XYZ.x) + _fabs(XYZ.y) + _fabs(XYZ.z));
+    if (divisor == 0.0f) divisor = 1e-10f;
+    xyY.x =_fabs(XYZ.x) / divisor;
+    xyY.y = _fabs(XYZ.y)/ divisor;
+    xyY.z = _fabs(XYZ.y);
+    return xyY;
+}
+
+// xyY to XYZ
+__DEVICE__ float3 xyY_to_XYZ(float3 xyY)
+{
+    float3 XYZ;
+    XYZ.x = xyY.x * xyY.z / _fmaxf( xyY.y, 1e-10f);
+    XYZ.y = xyY.z;
+    XYZ.z = (1.0f - xyY.x - xyY.y) * xyY.z / _fmaxf( xyY.y, 1e-10f);
+    return XYZ;
+}
+
+/////////////////////////
+// CIELab
+/////////////////////////
+
+
+__DEVICE__ float3 XYZ_to_CIELab(float3 XYZ, float offset, float scale)
+{
+    float Xr = 95.047f;
+    float Yr = 100.0f;
+    float Zr = 108.883f;
+    float E = 216.0f / 24389.0f;
+    float K = 24389.0f / 27.0f;
+
+    // XYZ to Lab
+    float xr = 100.0f * XYZ.x / Xr;
+    float yr = 100.0f * XYZ.y / Yr;
+    float zr = 100.0f * XYZ.z / Zr;
+
+    float fx = xr > E ? spowf(xr, 1.0f / 3.0f) : (K * xr + 16.0f) / 116.0f;
+    float fy = yr > E ? spowf(yr, 1.0f / 3.0f) : (K * yr + 16.0f) / 116.0f;
+    float fz = zr > E ? spowf(zr, 1.0f / 3.0f) : (K * zr + 16.0f) / 116.0f;
+
+    float L = 116.0f * fy - 16.0f;
+    float a = 500.0f * (fx - fy);
+    float b = 200.0f * (fy - fz);
+
+    // scaling and offset
+    L = L * .01f;
+    a = a * .01f * .25f * scale + offset;
+    b = b * .01f * .25f * scale + offset;
+
+    return make_float3(L, a, b);
+}
+
+__DEVICE__ float3 CIELab_to_XYZ(float3 Lab, float offset, float scale)
+{
+    float Xr = 95.047f;
+    float Yr = 100.0f;
+    float Zr = 108.883f;
+    float E = 216.0f / 24389.0f;
+    float K = 24389.0f / 27.0f;
+
+    float L = Lab.x, a = Lab.y, b = Lab.z;
+
+    // scaling and offset
+    L = L * 100.0f;
+    a = (a - offset) * 4.0f / scale * 100.0f;
+    b = (b - offset) * 4.0f / scale * 100.0f;
+
+    // Lab to XYZ
+    float fy = (L + 16.0f) / 116.0f;
+    float fx = a / 500.0f + fy;
+    float fz = fy - b / 200.0f;
+
+    float xr = spowf(fx, 3.0f) > E ? spowf(fx, 3.0f) : (116.0f * fx - 16.0f) / K;
+    float yr = L > (K * E) ? spowf((L + 16.0f) / 116.0f, 3.0f) : L / K;
+    float zr = spowf(fz, 3.0f) > E ? spowf(fz, 3.0f) : (116.0f * fz - 16.0f) / K;
+
+    float X = xr * Xr / 100.0f;
+    float Y = yr * Yr / 100.0f;
+    float Z = zr * Zr / 100.0f;
+
+    return make_float3(X, Y, Z);
+}
+
+/////////////////////////
+// OKLab
+/////////////////////////
+
+__DEVICE__ float3 XYZ_to_OKLab(float3 XYZ, float offset, float scale)
+{
+    const float X = XYZ.x;
+    const float Y = XYZ.y;
+    const float Z = XYZ.z;
+
+    // CIE 1931 XYZ To LMS
+    const float l = (X * 0.8189330101f) + (Y * 0.3618667424f) + (Z * -0.1288597137f);
+    const float m = (X * 0.0329845436f) + (Y * 0.9293118715f) + (Z * 0.0361456387f);
+    const float s = (X * 0.0482003018f) + (Y * 0.2643662691f) + (Z * 0.6338517070f);
+
+    // LMS Non-Linearity
+    const float l_prime = spowf(l, 1.0f / 3.0f);
+    const float m_prime = spowf(m, 1.0f / 3.0f);
+    const float s_prime = spowf(s, 1.0f / 3.0f);
+
+    // LMS Non-Linearity To OKLAB
+    const float L = (l_prime * 0.2104542553f) + (m_prime * 0.7936177850f) + (s_prime * -0.0040720468f);
+    const float a = (l_prime * 1.9779984951f) + (m_prime * -2.4285922050f) + (s_prime * 0.4505937099f);
+    const float b = (l_prime * 0.0259040371f) + (m_prime * 0.7827717662f) + (s_prime * -0.8086757660f);
+
+    // scaling and offset
+    return make_float3(L, a * scale + offset, b * scale + offset);
+}
+
+__DEVICE__ float3 OKLab_to_XYZ(float3 Lab, float offset, float scale)
+{
+    // scaling and offset
+    const float L = Lab.x;
+    const float a = (Lab.y - offset) / scale;
+    const float b = (Lab.z - offset) / scale;
+
+    // OKLAB To LMS Non-Linearity
+    const float l_prime = (L * 1.00000000f) + (a * 0.39633784f) + (b * 0.21580376f);
+    const float m_prime = (L * 1.00000000f) + (a * -0.10556135f) + (b * -0.06385418f);
+    const float s_prime = (L * 1.00000000f) + (a * -0.08948418f) + (b * -1.29148555f);
+
+    // LMS Non-Linearity To LMS
+    const float l = spowf(l_prime, 3.0f);
+    const float m = spowf(m_prime, 3.0f);
+    const float s = spowf(s_prime, 3.0f);
+
+    // LMS To CIE 1931 XYZ
+    const float X = (l * 1.2270138511f) + (m * -0.55779998065f) + (s * 0.2812561489f);
+    const float Y = (l * -0.0405801784f) + (m * 1.1122568696f) + (s * -0.0716766786f);
+    const float Z = (l * -0.0763812845f) + (m * -0.4214819784f) + (s * 1.5861632204f);
+
+    return make_float3(X, Y, Z);
+}
+
+///////////////////////
+// Prolab
+///////////////////////
+
+__DEVICE__ float3 XYZ_to_ProLab(float3 XYZ, float offset, float scale)
+{
+    float3 XYZ_n = xyY_to_XYZ(D65_xyY);
+
+    float MATRIX_Q[4][4] = {{  75.54f,  486.66f,  167.39f, 0.0f},
+                            { 617.72f, -595.45f,  -22.27f, 0.0f},
+                            {  48.34f,  194.94f, -243.28f, 0.0f},
+                            { 0.7554f,  3.8666f,  1.6739f, 1.0f}};
+
+    XYZ *= 1.0 / XYZ_n;
+
+    float3 Lab = v_x_mtx_4x4(XYZ, MATRIX_Q);
+
+    Lab *= 0.01f;
+
+    Lab.y = Lab.y * 0.5f * scale + offset;
+    Lab.z = Lab.z * 0.5f * scale + offset;
+
+    return Lab;
+}
+
+__DEVICE__ float3 ProLab_to_XYZ(float3 Lab, float offset, float scale)
+{
+    float3 XYZ_n = xyY_to_XYZ(D65_xyY);
+
+    float MATRIX_INVERSE_Q[4][4] = {{ 0.0013706f,  0.0013874f,  0.0008161f, 0.0f},
+                                    { 0.0013706f, -0.0002432f,  0.0009653f, 0.0f},
+                                    { 0.0013706f,  0.0000808f, -0.0031748f, 0.0f},
+                                    {-0.0086294f, -0.0002432f,  0.0009653f, 1.0f}};
+
+    Lab.y = (Lab.y - offset) * 2.0f / scale;
+    Lab.z = (Lab.z - offset) * 2.0f / scale;
+
+    Lab *= 100.0f;
+
+    float3 XYZ = v_x_mtx_4x4(Lab, MATRIX_INVERSE_Q);
+
+    XYZ *= XYZ_n;
+
+    return XYZ;
+}
+
+/////////////////////////
+// LCH
+/////////////////////////
+
+__DEVICE__ float3 Lab_to_LCH(float3 Lab)
+{
+    float3 LCH;
+    LCH.x = Lab.x;
+    LCH.y = _sqrtf(Lab.y * Lab.y + Lab.z * Lab.z);
+    LCH.z = _atan2f(Lab.z, Lab.y) * 180.0f / PI;
+    LCH.z = LCH.z < 0.0f ? LCH.z + 360.0f : LCH.z;
+
+    LCH.z /= 360.0f;
+
+    return LCH;
+}
+
+__DEVICE__ float3 LCH_to_Lab(float3 LCH)
+{
+    LCH.z *= 360.0f;
+
+    float3 Lab;
+    Lab.x = LCH.x;
+    Lab.y = LCH.y * _cosf(LCH.z * PI / 180.0f);
+    Lab.z = LCH.y * _sinf(LCH.z * PI / 180.0f);
+
+    return Lab;
+}
 
     
 
@@ -390,10 +640,60 @@ __DEVICE__ float complementary_hue_curve(float complementary_fade, float x, cont
 
 
 
- __DEVICE__ float3 ColorModel(float3 in, int colorModel, bool direction) {
+ __DEVICE__ float3 ColorModel(float3 in, int colorModel, bool direction, int colorspace) {
+  
+   float3 out, RGB, XYZ, Lab;
+    out = in;
 
-   float3 out = in;
-        if (colorModel == 0 && direction == 1) {out = RGBtoCHEN(out);}
+ //=================================
+ // Prepare for lab models
+ //=================================
+
+    // XYZ
+    float mtx_xyz_xyz[3][3] = {{1.0, 0.0, 0.0},
+                               {0.0, 1.0, 0.0},
+                               {0.0, 0.0, 1.0}};
+
+    // Rec2020
+    float mtx_2020_xyz[3][3] = {{ 0.63695805f,  0.14461690f,  0.16888098f},
+                                { 0.26270021f,  0.67799807f,  0.05930172f},
+                                { 0.00000000f,  0.02807269f,  1.06098506f}};
+    float mtx_xyz_2020[3][3] = {{ 1.71665119f, -0.35567078f, -0.25336628f},
+                                {-0.66668435f,  1.61648124f,  0.01576855f},
+                                { 0.01763986f, -0.04277061f,  0.94210312f}};
+
+    // Cinema Gamut
+    float mtx_ccg_xyz[3][3] =  {{ 0.71604965f,  0.12968348f,  0.10472280f},
+                                { 0.26126136f,  0.86964215f, -0.13090350f},
+                                {-0.00967635f, -0.23648164f,  1.33521573f}};
+    float mtx_xyz_ccg[3][3] =  {{ 1.48981827f, -0.26089590f, -0.14242652f},
+                                {-0.45816657f,  1.26162778f,  0.15962363f},
+                                {-0.07034967f,  0.22155767f,  0.77618160f}};
+
+    // DaVinci WG
+    float mtx_dwg_xyz[3][3] =  {{ 0.70062239f,  0.14877482f,  0.10105872f},
+                                { 0.27411851f,  0.87363190f, -0.14775041f},
+                                {-0.09896291f, -0.13789533f,  1.32591599f}};
+    float mtx_xyz_dwg[3][3] =  {{ 1.51667204f, -0.28147805f, -0.14696363f},
+                                {-0.46491710f,  1.25142378f,  0.17488461f},
+                                { 0.06484905f,  0.10913934f,  0.76141462f}};
+
+    // ARRI WG3
+    float mtx_awg3_xyz[3][3] = {{ 0.63800800f,  0.21470400f,  0.09774400f},
+                                { 0.29195400f,  0.82384100f, -0.11579500f},
+                                { 0.00279800f, -0.06703400f,  1.15329400f}};
+    float mtx_xyz_awg3[3][3] = {{ 1.78906600f, -0.48253400f, -0.20007600f},
+                                {-0.63984900f,  1.39640000f,  0.19443200f},
+                                {-0.04153200f,  0.08233500f,  0.87886800f}};
+
+    float offset= 0.0f;
+    float scale= 2.0f;
+
+    //==============================
+    //color model convert functions
+    //===============================
+    
+    if (colorModel == 0 && direction == 1) {out = RGBtoCHEN(out);}
     if (colorModel == 0 && direction == 0) {out = CHENtoRGB(out);}
     if (colorModel == 1 && direction == 1) {out = RGB_to_HSV(out);}
     if (colorModel == 1 && direction == 0) {out = HSV_to_RGB(out);}
@@ -405,6 +705,135 @@ __DEVICE__ float complementary_hue_curve(float complementary_fade, float x, cont
     if (colorModel == 3 && direction == 0) {out = cone_to_RGB(out);}
     if (colorModel == 4 && direction == 1) {out = rgb_to_reuleaux(out);}
     if (colorModel == 4 && direction == 0) {out = reuleaux_to_rgb(out);}
+
+    // RGB to CIE Lab
+    if (colorModel == 5 && direction == 1) {
+
+        RGB = in;
+        switch (colorspace) {
+            case 0:
+                XYZ = v_x_mtx_3x3(RGB, mtx_xyz_xyz); break;
+            case 1 :
+                XYZ = v_x_mtx_3x3(RGB, mtx_2020_xyz); break;
+            case 2 :
+                XYZ = v_x_mtx_3x3(RGB, mtx_ccg_xyz); break;
+            case 3 :
+                XYZ = v_x_mtx_3x3(RGB, mtx_dwg_xyz); break;
+            case 4 :
+                XYZ = v_x_mtx_3x3(RGB, mtx_awg3_xyz); break;
+        }
+
+        Lab = XYZ_to_CIELab(XYZ, offset, scale); 
+        out = Lab_to_LCH(Lab);
+     }
+
+    //CIE Lab to RGB
+    if (colorModel == 5 && direction == 0) {
+      Lab = LCH_to_Lab(in);
+
+        XYZ = CIELab_to_XYZ(Lab, offset, scale); 
+
+        switch (colorspace) {
+            case 0:
+                RGB = v_x_mtx_3x3(XYZ, mtx_xyz_xyz); break;
+            case 1 :
+                RGB = v_x_mtx_3x3(XYZ, mtx_xyz_2020); break;
+            case 2 :
+                RGB = v_x_mtx_3x3(XYZ, mtx_xyz_ccg); break;
+            case 3 :
+                RGB = v_x_mtx_3x3(XYZ, mtx_xyz_dwg); break;
+            case 4 :
+                RGB = v_x_mtx_3x3(XYZ, mtx_xyz_awg3); break;
+        }
+
+        out = RGB;
+
+     }
+
+    // RGB to OKLab
+    if (colorModel == 6 && direction == 1) {
+                RGB = in;
+        switch (colorspace) {
+            case 0:
+                XYZ = v_x_mtx_3x3(RGB, mtx_xyz_xyz); break;
+            case 1 :
+                XYZ = v_x_mtx_3x3(RGB, mtx_2020_xyz); break;
+            case 2 :
+                XYZ = v_x_mtx_3x3(RGB, mtx_ccg_xyz); break;
+            case 3 :
+                XYZ = v_x_mtx_3x3(RGB, mtx_dwg_xyz); break;
+            case 4 :
+                XYZ = v_x_mtx_3x3(RGB, mtx_awg3_xyz); break;
+        }
+
+        Lab = XYZ_to_OKLab(XYZ, offset, scale);
+        out = Lab_to_LCH(Lab);
+     }
+
+     // OKLab to RGB
+    if (colorModel == 6 && direction == 0) {
+        Lab = LCH_to_Lab(in);
+
+        XYZ = OKLab_to_XYZ(Lab, offset, scale);  
+
+        switch (colorspace) {
+            case 0:
+                RGB = v_x_mtx_3x3(XYZ, mtx_xyz_xyz); break;
+            case 1 :
+                RGB = v_x_mtx_3x3(XYZ, mtx_xyz_2020); break;
+            case 2 :
+                RGB = v_x_mtx_3x3(XYZ, mtx_xyz_ccg); break;
+            case 3 :
+                RGB = v_x_mtx_3x3(XYZ, mtx_xyz_dwg); break;
+            case 4 :
+                RGB = v_x_mtx_3x3(XYZ, mtx_xyz_awg3); break;
+        }
+
+        out = RGB;
+
+    }
+
+    // RGB to ProLab
+    if (colorModel == 7 && direction == 1) {
+        RGB = in;
+        switch (colorspace) {
+            case 0:
+                XYZ = v_x_mtx_3x3(RGB, mtx_xyz_xyz); break;
+            case 1 :
+                XYZ = v_x_mtx_3x3(RGB, mtx_2020_xyz); break;
+            case 2 :
+                XYZ = v_x_mtx_3x3(RGB, mtx_ccg_xyz); break;
+            case 3 :
+                XYZ = v_x_mtx_3x3(RGB, mtx_dwg_xyz); break;
+            case 4 :
+                XYZ = v_x_mtx_3x3(RGB, mtx_awg3_xyz); break;
+        }
+               
+        Lab = XYZ_to_ProLab(XYZ, offset, scale); 
+        out =  Lab_to_LCH(Lab);
+     }
+
+    // ProLab to RGB
+    if (colorModel == 7 && direction == 0) {
+        Lab = LCH_to_Lab(in);
+
+        XYZ = ProLab_to_XYZ(Lab, offset, scale);  
+
+        switch (colorspace) {
+            case 0:
+                RGB = v_x_mtx_3x3(XYZ, mtx_xyz_xyz); break;
+            case 1 :
+                RGB = v_x_mtx_3x3(XYZ, mtx_xyz_2020); break;
+            case 2 :
+                RGB = v_x_mtx_3x3(XYZ, mtx_xyz_ccg); break;
+            case 3 :
+                RGB = v_x_mtx_3x3(XYZ, mtx_xyz_dwg); break;
+            case 4 :
+                RGB = v_x_mtx_3x3(XYZ, mtx_xyz_awg3); break;
+        }
+
+        out = RGB;
+    }
     
    
    //else { out = make_float3(1,0,0);} //red on error
@@ -420,6 +849,9 @@ __DEVICE__ float complementary_hue_curve(float complementary_fade, float x, cont
   if (color_model == 2) {channel = 2;}
   if (color_model == 3) {channel = 1;}
   if (color_model == 4) {channel = 1;}
+  if (color_model == 5) {channel = 3;}
+  if (color_model == 6) {channel = 3;}
+  if (color_model == 7) {channel = 3;}
   return channel;
   }
  
@@ -439,11 +871,15 @@ DEFINE_UI_PARAMS(adjustment_amt, Custom Hue, DCTLUI_SLIDER_FLOAT, 0.0, -1, 1, 0.
 DEFINE_UI_PARAMS(selected_hue, Select Hue Angle, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 360.0, 0.001)
 DEFINE_UI_PARAMS(complementary_fade, Opposite hue change, DCTLUI_SLIDER_FLOAT, 1.0, 0.0, 1.0, 0.01)
 
-DEFINE_UI_PARAMS(color_model, Color model, DCTLUI_COMBO_BOX, 0, {chen, hsv, cone, norm_cone, reuleaux}, {Chen, HSV, Cone, Normalized Conical, Reuleaux})
 
 DEFINE_UI_PARAMS(bypass, 🚫 Bypass, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(draw_curve, 📈 Draw Curve, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(complementary_curve, Affect Opposite Hues, DCTLUI_CHECK_BOX, 0)
+
+DEFINE_UI_PARAMS(color_model, Color model, DCTLUI_COMBO_BOX, 0, {chen, hsv, cone, norm_cone, reuleaux, cie, ok, pro}, {Chen, HSV, Cone, Normalized Conical, Reuleaux, CIE LAB LCH, OKLab LCH, Pro Lab})
+
+DEFINE_UI_PARAMS(colorspace, Colorspace, DCTLUI_COMBO_BOX, 3, {XYZg, rec2020, ccg, dwg, awg3}, {XYZ, Rec2020, Cinema Gamut, DaVinci WG, AWG3})
+
 
 
 __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p_R, float p_G, float p_B) {
@@ -469,6 +905,11 @@ control_params_t yellow_params = {.172222, yellow_adjustment_amt*-1, 0.2f, 0.2f}
 control_params_t skin_params = {.04444, skin_adjustment_amt*-1, 0.1f, 0.1f};
 control_params_t params = {selected_hue, adjustment_amt*-1, 0.3, 0.3};
 
+if (color_model == cie || color_model == ok  || color_model == pro ) {skin_params.selected_hue = .15444; skin_params.adjustment_amt = skin_adjustment_amt*-1.2;}
+if (color_model == cie || color_model == ok  || color_model == pro ) {yellow_params.selected_hue = .24; }
+if (color_model == cie || color_model == ok  || color_model == pro ) {magenta_params.selected_hue = .88; }
+if (color_model == cie || color_model == ok  || color_model == pro ) {cyan_params.selected_hue = .6; cyan_params.adjustment_amt = cyan_adjustment_amt*-.9;}
+
 float3 curr_color = make_float3(p_R, p_G, p_B);
 float3 clean_color = make_float3(p_R, p_G, p_B);
 float3 output_color = curr_color;
@@ -479,9 +920,11 @@ float curve_pos_y;
 
 
 
+
+
 //move to the working color model for adjusting hue
 
-   curr_color = ColorModel(curr_color,color_model,1);
+   curr_color = ColorModel(curr_color,color_model,1,colorspace);
    int channel= setChannel(color_model);
 
 
@@ -651,7 +1094,7 @@ float curve_pos_y;
 
 
 // move back to the orignal color space
- output_color = ColorModel(output_color,color_model,0);
+ output_color = ColorModel(output_color,color_model,0,colorspace);
 
 //bypass option
 if  (bypass) { output_color = clean_color;}
