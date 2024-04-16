@@ -439,7 +439,7 @@ DEFINE_UI_PARAMS(adjustment_amt, Custom Hue, DCTLUI_SLIDER_FLOAT, 0.0, -1, 1, 0.
 DEFINE_UI_PARAMS(selected_hue, Select Hue Angle, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 360.0, 0.001)
 DEFINE_UI_PARAMS(complementary_fade, Opposite hue change, DCTLUI_SLIDER_FLOAT, 1.0, 0.0, 1.0, 0.01)
 
-DEFINE_UI_PARAMS(color_model, Color model, DCTLUI_COMBO_BOX, 2, {chen, hsv, cone, norm_cone, reuleaux}, {Chen, HSV, Cone, Normalized Conical, Reuleaux})
+DEFINE_UI_PARAMS(color_model, Color model, DCTLUI_COMBO_BOX, 0, {chen, hsv, cone, norm_cone, reuleaux}, {Chen, HSV, Cone, Normalized Conical, Reuleaux})
 
 DEFINE_UI_PARAMS(bypass, 🚫 Bypass, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(draw_curve, 📈 Draw Curve, DCTLUI_CHECK_BOX, 0)
