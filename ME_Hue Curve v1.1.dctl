@@ -13,7 +13,7 @@
      return out;
  }
 
- 
+
  __DEVICE__ float mod(float x, float y) {
      if (x < 0) {
          return y + _fmod(x, y);
@@ -773,6 +773,7 @@ control_params_t skin_params = {.04444, skin_adjustment_amt*-1, 0.1f, 0.1f};
 control_params_t params = {selected_hue, adjustment_amt*-1, 0.3, 0.3};
 
 if (color_model == cie || color_model == ok  || color_model == pro ) {skin_params.selected_hue = .15444; skin_params.adjustment_amt = skin_adjustment_amt*-1.2;}
+if (color_model == cie || color_model == ok  || color_model == pro ) {red_params.selected_hue = .083; }
 if (color_model == cie || color_model == ok  || color_model == pro ) {yellow_params.selected_hue = .24; }
 if (color_model == cie || color_model == ok  || color_model == pro ) {magenta_params.selected_hue = .88; }
 if (color_model == cie || color_model == ok  || color_model == pro ) {cyan_params.selected_hue = .6; cyan_params.adjustment_amt = cyan_adjustment_amt*-.9;}

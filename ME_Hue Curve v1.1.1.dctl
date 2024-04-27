@@ -13,7 +13,7 @@
      return out;
  }
 
- 
+
  __DEVICE__ float mod(float x, float y) {
      if (x < 0) {
          return y + _fmod(x, y);
@@ -728,12 +728,12 @@ __DEVICE__ float complementary_hue_curve(float complementary_fade, float x, cont
 
 
 DEFINE_UI_PARAMS(red_adjustment_amt, Red 🟥, DCTLUI_SLIDER_FLOAT, 0.0, -.6, .6, 0.001)
-DEFINE_UI_PARAMS(green_adjustment_amt, Green 🟩, DCTLUI_SLIDER_FLOAT, 0.0, -0.7, .7, 0.001)
-DEFINE_UI_PARAMS(blue_adjustment_amt, Blue 🟦, DCTLUI_SLIDER_FLOAT, 0.0, -0.6, .6, 0.001)
-DEFINE_UI_PARAMS(cyan_adjustment_amt, Cyan ⬜️, DCTLUI_SLIDER_FLOAT, 0.0, -0.7, .7, 0.001)
-DEFINE_UI_PARAMS(magenta_adjustment_amt, Magenta 🟪, DCTLUI_SLIDER_FLOAT, 0.0, -0.57, .57, 0.001)
-DEFINE_UI_PARAMS(yellow_adjustment_amt, Yellow 🟨, DCTLUI_SLIDER_FLOAT, 0.0, -0.5, .5, 0.001)
 DEFINE_UI_PARAMS(skin_adjustment_amt, Skin 👩🏻‍🦲, DCTLUI_SLIDER_FLOAT, 0.0, -0.25, .25, 0.001)
+DEFINE_UI_PARAMS(yellow_adjustment_amt, Yellow 🟨, DCTLUI_SLIDER_FLOAT, 0.0, -0.5, .5, 0.001)
+DEFINE_UI_PARAMS(green_adjustment_amt, Green 🟩, DCTLUI_SLIDER_FLOAT, 0.0, -0.7, .7, 0.001)
+DEFINE_UI_PARAMS(cyan_adjustment_amt, Cyan ⬜️, DCTLUI_SLIDER_FLOAT, 0.0, -0.7, .7, 0.001)
+DEFINE_UI_PARAMS(blue_adjustment_amt, Blue 🟦, DCTLUI_SLIDER_FLOAT, 0.0, -0.6, .6, 0.001)
+DEFINE_UI_PARAMS(magenta_adjustment_amt, Magenta 🟪, DCTLUI_SLIDER_FLOAT, 0.0, -0.57, .57, 0.001)
 DEFINE_UI_PARAMS(adjustment_amt, Custom Hue, DCTLUI_SLIDER_FLOAT, 0.0, -1, 1, 0.001)
 DEFINE_UI_PARAMS(selected_hue, Select Hue Angle, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 360.0, 0.001)
 DEFINE_UI_PARAMS(complementary_fade, Opposite Hue Change, DCTLUI_SLIDER_FLOAT, 1.0, 0.0, 1.0, 0.01)
@@ -773,6 +773,7 @@ control_params_t skin_params = {.04444, skin_adjustment_amt*-1, 0.1f, 0.1f};
 control_params_t params = {selected_hue, adjustment_amt*-1, 0.3, 0.3};
 
 if (color_model == cie || color_model == ok  || color_model == pro ) {skin_params.selected_hue = .15444; skin_params.adjustment_amt = skin_adjustment_amt*-1.2;}
+if (color_model == cie || color_model == ok  || color_model == pro ) {red_params.selected_hue = .087; }
 if (color_model == cie || color_model == ok  || color_model == pro ) {yellow_params.selected_hue = .24; }
 if (color_model == cie || color_model == ok  || color_model == pro ) {magenta_params.selected_hue = .88; }
 if (color_model == cie || color_model == ok  || color_model == pro ) {cyan_params.selected_hue = .6; cyan_params.adjustment_amt = cyan_adjustment_amt*-.9;}
