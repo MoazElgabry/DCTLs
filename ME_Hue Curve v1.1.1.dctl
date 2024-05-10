@@ -70,54 +70,6 @@
     } //by Kaur Hendrikson
   
   
-  __DEVICE__ float3 rgb_to_cone(float3 rgb) {
-    const float pi= 3.14159265359f;
-    const float rtr = rgb.x * 0.81649658f + rgb.y * -0.40824829f + rgb.z * -0.40824829f;
-    const float rtg = rgb.x * 0.0f + rgb.y * 0.70710678f + rgb.z * -0.70710678f;
-    const float rtb = rgb.x * 0.57735027f + rgb.y * 0.57735027f + rgb.z * 0.57735027f;
-
-    const float art = _atan2f(rtg, rtr);
-
-    const float sphr = _sqrtf(rtr*rtr + rtg*rtg + rtb*rtb);
-    const float spht = art < 0.0f ? art + 2.0f * 3.141592653589f : art;
-    const float sphp = _atan2f(_sqrtf(rtr*rtr + rtg*rtg), rtb);
-
-  //This is to modify the lum component which is the main reason why the saturation component has a different behavior 
-    const float huecoef1= 1.0f/(2.0f-(0.78539816f/0.61547971f));
-    const float huecoef2 = 2.0f*sphp*_sinf((2.0f*pi/3.0f)-_fmod(spht,(pi/3.0f)))/1.7320508075688f;
-    const float huemag =((_acosf(_cosf(3.0f*spht+pi)))/(pi*huecoef1)+(((0.78539816f/0.61547971f))-1.0f))*huecoef2;
-    const float satmag = _sinf(huemag+0.61547971f);
-
-
-
-    return make_float3(
-        sphr*satmag,
-        spht * 0.15915494309189535f,
-        sphp * 1.0467733744265997f
-    );
-      } //Convert to cone cordinates by Juan Pablo Zambrano
-  
-  __DEVICE__ float3 cone_to_rgb(float3 sph) {
-    
-    const float pi= 3.14159265359f;
-    sph.y *= 6.283185307179586f;
-    sph.z *= 0.9553166181245093f;
-    const float huecoef1= 1.0f/(2.0f-(0.78539816f/0.61547971f));
-    const float huecoef2 = 2.0f*sph.z*_sinf((2.0f*pi/3.0f)- _fmod(sph.y,(pi/3.0f)))/1.7320508075688f;
-    const float huemag =((_acosf(_cosf(3.0f*sph.y+pi)))/(pi*huecoef1)+(((0.78539816f/0.61547971f))-1.0f))*huecoef2;
-    const float satmagsp = _sinf(huemag+0.61547971f);
-    sph.x *= 1.0f/satmagsp;
-
-    const float ctr = sph.x * _sinf(sph.z) * _cosf(sph.y);
-    const float ctg = sph.x * _sinf(sph.z) * _sinf(sph.y);
-    const float ctb = sph.x * _cosf(sph.z);
-
-    return make_float3(
-        ctr * 0.81649658f + ctg * 0.0f + ctb * 0.57735027f,
-        ctr * -0.40824829f + ctg * 0.70710678f + ctb * 0.57735027f,
-        ctr * -0.40824829f + ctg * -0.70710678f + ctb * 0.57735027f
-    );
-      } // convert from cone to RGB
   
   __DEVICE__ float3 rgb_to_reuleaux(float3 rgb) {
     #define PI 3.1415926535897932384626
@@ -191,7 +143,52 @@
     return hsl;
  }
  
-
+ __DEVICE__ float3 RGB_to_HSV(float3 RGB) {
+    float3 HSV;
+    float min = _fminf(_fminf(RGB.x, RGB.y), RGB.z);
+    float max = _fmaxf(_fmaxf(RGB.x, RGB.y), RGB.z);
+    HSV.z = max;
+    float delta = max - min;
+    if (max != 0.0f) {
+    HSV.y = delta / max;
+    } else {
+    HSV.y = 0.0f;
+    HSV.x = 0.0f;
+    return HSV;
+    }
+    if (delta == 0.0f) {
+    HSV.x = 0.0f;
+    } else if (RGB.x == max) {
+    HSV.x = (RGB.y - RGB.z) / delta;
+    } else if (RGB.y == max) {
+    HSV.x = 2.0f + (RGB.z - RGB.x) / delta;
+    } else {
+    HSV.x = 4.0f + (RGB.x - RGB.y) / delta;
+    }
+    HSV.x *= 1.0f / 6.0f;
+    if (HSV.x < 0.0f)
+    HSV.x += 1.0f;
+    return HSV;
+    } //Convert to HSV
+ 
+ __DEVICE__ float3 HSV_to_RGB(float3 HSV) {
+    float3 RGB;
+    if (HSV.y == 0.0f) {
+    RGB.x = RGB.y = RGB.z = HSV.z;
+    } else {
+    HSV.x *= 6.0f;
+    int i = floor(HSV.x);
+    float f = HSV.x - i;
+    i = (i >= 0) ? (i % 6) : (i % 6) + 6;
+    float p = HSV.z * (1.0f - HSV.y);
+    float q = HSV.z * (1.0f - HSV.y * f);
+    float t = HSV.z * (1.0f - HSV.y * (1.0f - f));
+    RGB.x = i == 0 ? HSV.z : i == 1 ? q : i == 2 ? p : i == 3 ? p : i == 4 ? t : HSV.z;
+    RGB.y = i == 0 ? t : i == 1 ? HSV.z : i == 2 ? HSV.z : i == 3 ? q : i == 4 ? p : p;
+    RGB.z = i == 0 ? p : i == 1 ? p : i == 2 ? t : i == 3 ? HSV.z : i == 4 ? HSV.z : q;
+    }
+    return RGB;
+    } //Convert from HSV to RGB
 
 //=========================
 //-------------------------
@@ -560,15 +557,15 @@ __DEVICE__ float complementary_hue_curve(float complementary_fade, float x, cont
     float offset= 0.0f;
     float scale= 2.0f;
 
-    //==============================
-    //color model convert functions
-    //===============================
+ //==============================
+ //color model convert functions
+ //===============================
     
     if (colorModel == 0 && direction == 1) {out = RGBtoCHEN(out);}
     if (colorModel == 0 && direction == 0) {out = CHENtoRGB(out);}
 
-    if (colorModel == 1 && direction == 1) {out = rgb_to_cone(out);}
-    if (colorModel == 1 && direction == 0) {out = cone_to_rgb(out);}
+    if (colorModel == 1 && direction == 1) {out = RGB_to_HSV(out);}
+    if (colorModel == 1 && direction == 0) {out = HSV_to_RGB(out);}
     if (colorModel == 2&& direction == 1) {out = rgb_to_reuleaux(out);}
     if (colorModel == 2&& direction == 0) {out = reuleaux_to_rgb(out);}
     if (colorModel == 3&& direction == 1) {out = rgb_to_cylindrical(out);}
@@ -713,7 +710,7 @@ __DEVICE__ float complementary_hue_curve(float complementary_fade, float x, cont
   __DEVICE__ int setChannel (int color_model) {
    int channel;
   if (color_model == 0) {channel = 1;}
-  if (color_model == 1) {channel = 2;}
+  if (color_model == 1) {channel = 1;}
   if (color_model == 2) {channel = 1;}
   if (color_model == 3) {channel = 1;}
   if (color_model == 4) {channel = 3;}
@@ -743,7 +740,7 @@ DEFINE_UI_PARAMS(bypass, 🚫 Bypass, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(draw_curve, 📈 Draw Curve, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(complementary_curve, Affect Opposite Hues, DCTLUI_CHECK_BOX, 0)
 
-DEFINE_UI_PARAMS(color_model, Color model, DCTLUI_COMBO_BOX, 0, {chen, cone, reuleaux, cylinderical,cie, ok, pro}, {Chen, Cone,  Reuleaux, Cylindrical, CIELab , OKLab , ProLab })
+DEFINE_UI_PARAMS(color_model, Color model, DCTLUI_COMBO_BOX, 0, {chen, HSV, reuleaux, cylinderical,cie, ok, pro}, {Chen, HSV,  Reuleaux, Cylindrical, CIELab , OKLab , ProLab })
 
 DEFINE_UI_PARAMS(colorspace, Colorspace, DCTLUI_COMBO_BOX, 3, {XYZg, rec2020, ccg, dwg, awg3}, {XYZ, Rec2020, Cinema Gamut, DaVinci WG, AWG3})
 
