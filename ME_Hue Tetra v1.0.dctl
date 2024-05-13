@@ -11,7 +11,7 @@ https://github.com/hotgluebanjo/TetraInterp-DCTL/blob/master/TetraInterpHSV.dctl
 
 
 
-// matrix multiplication 
+
  __DEVICE__ float3 mv_33_3(float mat[3][3], float3 v) {
      float3 out = make_float3(mat[0][0] * v.x + mat[0][1] * v.y + mat[0][2] * v.z,
                               mat[1][0] * v.x + mat[1][1] * v.y + mat[1][2] * v.z,
@@ -225,6 +225,7 @@ https://github.com/hotgluebanjo/TetraInterp-DCTL/blob/master/TetraInterpHSV.dctl
 
 
 DEFINE_UI_PARAMS(RED, Red 🟥, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
+DEFINE_UI_PARAMS(SKIN, Skin 👩🏻‍🦲, DCTLUI_SLIDER_FLOAT, 0.0, -.5, .5, 0.001)
 DEFINE_UI_PARAMS(YEL, Yellow 🟨, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
 DEFINE_UI_PARAMS(GRN, Green 🟩, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
 DEFINE_UI_PARAMS(CYN, Cyan ⬜️, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
@@ -242,7 +243,7 @@ DEFINE_UI_PARAMS(color_model, Preservation model, DCTLUI_COMBO_BOX, 1, {chen, HS
 __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p_R, float p_G, float p_B) {
     float3 rgb;
     float3 in_rgb = make_float3(p_R, p_G, p_B);
-    in_rgb = ColorModel(in_rgb,color_model,1);
+
 
     float BLK_RGB = 0;
     float WHT_RGB = 1;
@@ -333,9 +334,7 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
      float3 mag = make_float3(MAG_HUE, MAG_SAT, MAG_VAL);
      float3 yel = make_float3(YEL_HUE, YEL_SAT, YEL_VAL);
 
-    // NOTE: The normal operators are overloaded for their float3 struct
-    // but this absolutely still works with only individual RGB access.
-    // Check out the Nuke expression.
+
     if (p_R > p_G) {
         if (p_G > p_B) {
             rgb = p_R * (red - blk) + blk + p_G * (yel - red) + p_B * (wht - yel);
@@ -354,6 +353,9 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
         }
     }
 
+
+
+    in_rgb = ColorModel(in_rgb,color_model,1);
     float3 output = ColorModel(rgb, color_model,1);
 
 
@@ -368,5 +370,111 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
     output.z = output.z*(1-mixerz)+in_rgb.z*mixerz;
 
     output = ColorModel(output, color_model,0);
-    return output;
+
+
+    //a branch to adjust the skin slider
+
+    float3 skin;
+
+    in_rgb = make_float3(p_R, p_G, p_B);
+
+
+
+    params_t skin_t_P;
+
+    skin_t_P.r_hue = SKIN*.6;
+    skin_t_P.r_sat = _fminf(0,skin_t_P.r_hue);
+    skin_t_P.r_val = 0;
+    skin_t_P.g_hue = 0;
+    skin_t_P.g_sat = _fminf(0,skin_t_P.g_hue);
+    skin_t_P.g_val = 0;
+    skin_t_P.b_hue = 0;
+    skin_t_P.b_sat = _fminf(0,skin_t_P.b_hue);
+    skin_t_P.b_val = 0;
+    skin_t_P.c_hue = 0;
+    skin_t_P.c_sat = skin_t_P.c_hue>0 ? skin_t_P.c_hue*-1 : 0;
+    skin_t_P.c_val = skin_t_P.c_hue>0 ? skin_t_P.c_hue*-1 : 0;
+    skin_t_P.m_hue = 0;
+    skin_t_P.m_sat = skin_t_P.m_hue>0 ? skin_t_P.m_hue*-1 : 0;
+    skin_t_P.m_val = skin_t_P.m_hue>0 ? skin_t_P.m_hue*-1 : 0;
+    skin_t_P.y_hue = SKIN*1.1;
+    skin_t_P.y_sat = skin_t_P.y_hue>0 ? skin_t_P.y_hue*-1 : 0;
+    skin_t_P.y_val = skin_t_P.y_hue>0 ? skin_t_P.y_hue*-1 : 0;
+
+
+
+
+    float s_RED_HUE = skin_t_P.r_val + 1.0f;
+    float s_RED_SAT = skin_t_P.r_val - skin_t_P.r_sat;
+    float s_RED_VAL = skin_t_P.r_val + skin_t_P.r_hue - skin_t_P.r_sat;
+
+    float s_GRN_HUE = skin_t_P.g_val - skin_t_P.g_sat;
+    float s_GRN_SAT = skin_t_P.g_val + 1.0f;
+    float s_GRN_VAL = skin_t_P.g_val + skin_t_P.g_hue - skin_t_P.g_sat;
+
+    float s_BLU_HUE = skin_t_P.b_val + skin_t_P.b_hue - skin_t_P.b_sat;
+    float s_BLU_SAT = skin_t_P.b_val - skin_t_P.b_sat;
+    float s_BLU_VAL = skin_t_P.b_val + 1.0f;
+
+    float s_CYN_HUE = skin_t_P.c_val - skin_t_P.c_sat;
+    float s_CYN_SAT = skin_t_P.c_val + 1.0f + skin_t_P.c_hue;
+    float s_CYN_VAL = skin_t_P.c_val + 1.0f;
+
+    float s_MAG_HUE = skin_t_P.m_val + 1.0f;
+    float s_MAG_SAT = skin_t_P.m_val - skin_t_P.m_sat;
+    float s_MAG_VAL = skin_t_P.m_val + 1.0f + skin_t_P.m_hue;
+
+    float s_YEL_HUE = skin_t_P.y_val + 1.0f + skin_t_P.y_hue;
+    float s_YEL_SAT = skin_t_P.y_val + 1.0f;
+    float s_YEL_VAL = skin_t_P.y_val - skin_t_P.y_sat;
+
+
+    float3 s_red = make_float3(s_RED_HUE, s_RED_SAT, s_RED_VAL); 
+    float3 s_grn = make_float3(s_GRN_HUE, s_GRN_SAT, s_GRN_VAL);
+    float3 s_blu = make_float3(s_BLU_HUE, s_BLU_SAT, s_BLU_VAL);
+    float3 s_cyn = make_float3(s_CYN_HUE, s_CYN_SAT, s_CYN_VAL);
+    float3 s_mag = make_float3(s_MAG_HUE, s_MAG_SAT, s_MAG_VAL);
+    float3 s_yel = make_float3(s_YEL_HUE, s_YEL_SAT, s_YEL_VAL);
+
+
+    if (p_R > p_G) {
+        if (p_G > p_B) {
+            skin = p_R * (s_red - blk) + blk + p_G * (s_yel - s_red) + p_B * (wht - s_yel);
+        } else if (p_R > p_B) {
+            skin = p_R * (s_red - blk) + blk + p_G * (wht - s_mag) + p_B * (s_mag - s_red);
+        } else {
+            skin = p_R * (s_mag - s_blu) + p_G * (wht - s_mag) + p_B * (s_blu - blk) + blk;
+        }
+    } else {
+        if (p_B > p_G) {
+            skin = p_R * (wht - s_cyn) + p_G * (s_cyn - s_blu) + p_B * (s_blu - blk) + blk;
+        } else if (p_B > p_R) {
+            skin = p_R * (wht - s_cyn) + p_G * (s_grn - blk) + blk + p_B * (s_cyn - s_grn);
+        } else {
+            skin = p_R * (s_yel - s_grn) + p_G * (s_grn - blk) + blk + p_B * (wht - s_yel);
+        }
+    }
+
+
+
+    in_rgb = ColorModel(in_rgb,color_model,1);
+    skin = ColorModel(skin, color_model,1);
+
+
+
+    if (mixback ==1 || mixback == 3) { mixery = 1;}
+    if (mixback ==2 || mixback == 3) { mixerz = 1;}
+    if (mixback ==1 && color_model == 1|| mixback == 3 && color_model == 1) { mixery = 1;}
+    if (mixback ==2 && color_model == 1|| mixback == 3 && color_model == 1) { mixerz = 1;}
+
+    skin.y = skin.y*(1-mixery)+in_rgb.y*mixery;
+    skin.z = skin.z*(1-mixerz)+in_rgb.z*mixerz;
+
+    skin = ColorModel(skin, color_model,0);
+    in_rgb = ColorModel(in_rgb,color_model,0);
+
+    //-----------------
+    float3 out = in_rgb + (output- in_rgb) + (skin - in_rgb);
+
+    return out;
 }
