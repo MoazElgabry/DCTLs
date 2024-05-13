@@ -1,0 +1,372 @@
+#line 2
+
+/*Made by Moaz Elgabry 
+
+ME_Hue Tetra V 1.0.0
+
+Original code is based on this DCTL
+https://github.com/hotgluebanjo/TetraInterp-DCTL/blob/master/TetraInterpHSV.dctl
+
+*/
+
+
+
+// matrix multiplication 
+ __DEVICE__ float3 mv_33_3(float mat[3][3], float3 v) {
+     float3 out = make_float3(mat[0][0] * v.x + mat[0][1] * v.y + mat[0][2] * v.z,
+                              mat[1][0] * v.x + mat[1][1] * v.y + mat[1][2] * v.z,
+                              mat[2][0] * v.x + mat[2][1] * v.y + mat[2][2] * v.z);
+     return out;
+ }
+
+
+ __DEVICE__ float mod(float x, float y) {
+     if (x < 0) {
+         return y + _fmod(x, y);
+     } else {
+         return _fmod(x, y);
+     }
+ }
+
+//color models
+   __DEVICE__ float3 RGBtoCHEN(float3 in) {
+    float r = in.x;
+    float g = in.y;
+    float b = in.z;
+
+    float h;
+    float c;
+    float l;
+
+    const float rtr = r * 0.81649658f + g * -0.40824829f + b * -0.40824829f;
+    const float rtg = r * 0.0f + g * 0.70710678f + b * -0.70710678f;
+    const float rtb = r * 0.57735027f + g * 0.57735027f + b * 0.57735027f;
+
+    const float art = _atan2f(rtg, rtr);
+
+    const float sphr = _sqrtf(rtr*rtr + rtg*rtg + rtb*rtb);
+    const float spht = art < 0.0f ? art + 2.0f * 3.141592653589f : art;
+    const float sphp = _atan2f(_sqrtf(rtr*rtr + rtg*rtg), rtb);
+
+    l = sphr * 0.5773502691896258f;
+    h = spht * 0.15915494309189535f;
+    c = sphp * 1.0467733744265997f;
+
+    return make_float3(h, c, l);
+    } //by Kaur Hendrikson
+   
+   __DEVICE__ float3 CHENtoRGB(float3 in) {
+    float h = in.x * 6.283185307179586f;
+    float c = in.y * 0.9553166181245093f;
+    float l = in.z * 1.7320508075688772f;
+    
+   float r = 0;
+   float g = 0;
+   float b = 0;
+
+    const float ctr = l * _sinf(c) * _cosf(h);
+    const float ctg = l * _sinf(c) * _sinf(h);
+    const float ctb = l * _cosf(c);
+
+    r = ctr * 0.81649658f + ctg * 0.0f + ctb * 0.57735027f;
+    g = ctr * -0.40824829f + ctg * 0.70710678f + ctb * 0.57735027f;
+    b = ctr * -0.40824829f + ctg * -0.70710678f + ctb * 0.57735027f;
+
+    return make_float3(r, g, b);
+    } //by Kaur Hendrikson
+  
+  __DEVICE__ float3 rgb_to_reuleaux(float3 rgb) {
+    #define PI 3.1415926535897932384626
+
+    float3 NORM_MULTS = make_float3(2.0f * PI, _sqrtf(2.0f), 1.0f);
+    float3 rot = {  _sqrtf(2.0f) / 6.0f * (2.0f * rgb.x - rgb.y - rgb.z),
+                    (rgb.y - rgb.z) / _sqrtf(6.0f),
+                    (rgb.x + rgb.y + rgb.z) / 3.0f};
+    float3 rlx = {  PI - _atan2f(rot.y, -rot.x),
+                    rot.z == 0.0f ? 0.0f : _hypotf(rot.x, rot.y) / rot.z,
+                    _fmaxf(rgb.x, _fmaxf(rgb.y, rgb.z))};
+    return rlx / NORM_MULTS;
+     }
+  
+  __DEVICE__ float3 reuleaux_to_rgb(float3 rlx) {
+    #define PI 3.1415926535897932384626
+    float3 NORM_MULTS = make_float3(2.0f * PI, _sqrtf(2.0f), 1.0f);
+    rlx *= NORM_MULTS;
+    float m = NORM_MULTS.y * _fmaxf(_cosf(rlx.x), _fmaxf(_cosf(rlx.x + NORM_MULTS.x / 3.0f), _cosf(rlx.x - NORM_MULTS.x / 3.0f))) + 1.0f/rlx.y;
+    float3 ocs = {  rlx.z * _cosf(rlx.x) / m,
+                    rlx.z * _sinf(rlx.x) / m,
+                    rlx.z};
+    float3 rgb = {  ocs.z - _sqrtf(3.0f / 2.0f) * _fmaxf(_fabs(ocs.y) - _sqrtf(3.0f) * ocs.x, 0.0f),
+                    ocs.z - _sqrtf(3.0f / 2.0f) * (_fmaxf(_fabs(ocs.y), _sqrtf(3.0f) * ocs.x) - ocs.y),
+                    ocs.z - _sqrtf(3.0f / 2.0f) * (_fmaxf(_fabs(ocs.y), _sqrtf(3.0f) * ocs.x) + ocs.y)};
+    return rgb;
+     }
+ 
+ __DEVICE__ float3 cylindrical_to_rgb(float3 hsv) {
+    // Adapted from Juan Pablo Zambrano's code
+    float3 lsh = make_float3(hsv.z, hsv.y * 3.0, mod(hsv.x, 1.0) * 2.0 * PI);
+
+    float ctr = lsh.x * lsh.y * _cosf(lsh.z);
+    float ctg = lsh.x;
+    float ctb = lsh.x * lsh.y * _sinf(lsh.z);
+    float3 c = make_float3(ctr, ctg, ctb);
+
+    float mat[3][3] = {
+        {2.0 / 3.0, 1.0, 0.0},
+        {-1.0 / 3.0, 1.0, _sqrtf(3.0) / 3.0},
+        {-1.0 / 3.0, 1.0, -_sqrtf(3.0) / 3.0},
+    };
+
+    return mv_33_3(mat, c);
+ }
+ 
+ __DEVICE__ float3 rgb_to_cylindrical(float3 x) {
+
+    // Matrix aligns and scales achromatic white (1, 1, 1) with (0, 1, 0)
+    // Also rotates input (1, 0, 0) above the red axis and ensures that
+    // (1, 0, 0) input ends up having a red channel code value of (1).
+    float mat[3][3] = {
+        {1.0, -1.0 / 2.0, -1.0 / 2.0},
+        {1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0},
+        {0.0, _sqrtf(3.0) / 2.0, -_sqrtf(3.0) / 2.0},
+    };
+
+    float3 rotated_color = mv_33_3(mat, x);
+    float l = rotated_color.y;
+    float3 hsl = make_float3(0.0, 0.0, 0.0);
+
+    float3 normalized_color = rotated_color / l;
+    if (l == 0.0) {
+        hsl = make_float3(0.0, 0.0, l);
+    } else {
+        float theta = _atan2f(normalized_color.z, normalized_color.x);
+        hsl.x = mod(theta, 2.0 * PI) / (2.0 * PI);
+        hsl.y = _hypotf(normalized_color.x, normalized_color.z) / 3.0;
+        hsl.z = l;
+    }
+    return hsl;
+ }
+ 
+ __DEVICE__ float3 RGB_to_HSV(float3 RGB) {
+    float3 HSV;
+    float min = _fminf(_fminf(RGB.x, RGB.y), RGB.z);
+    float max = _fmaxf(_fmaxf(RGB.x, RGB.y), RGB.z);
+    HSV.z = max;
+    float delta = max - min;
+    if (max != 0.0f) {
+    HSV.y = delta / max;
+    } else {
+    HSV.y = 0.0f;
+    HSV.x = 0.0f;
+    return HSV;
+    }
+    if (delta == 0.0f) {
+    HSV.x = 0.0f;
+    } else if (RGB.x == max) {
+    HSV.x = (RGB.y - RGB.z) / delta;
+    } else if (RGB.y == max) {
+    HSV.x = 2.0f + (RGB.z - RGB.x) / delta;
+    } else {
+    HSV.x = 4.0f + (RGB.x - RGB.y) / delta;
+    }
+    HSV.x *= 1.0f / 6.0f;
+    if (HSV.x < 0.0f)
+    HSV.x += 1.0f;
+    return HSV;
+    } //Convert to HSV
+ 
+ __DEVICE__ float3 HSV_to_RGB(float3 HSV) {
+    float3 RGB;
+    if (HSV.y == 0.0f) {
+    RGB.x = RGB.y = RGB.z = HSV.z;
+    } else {
+    HSV.x *= 6.0f;
+    int i = floor(HSV.x);
+    float f = HSV.x - i;
+    i = (i >= 0) ? (i % 6) : (i % 6) + 6;
+    float p = HSV.z * (1.0f - HSV.y);
+    float q = HSV.z * (1.0f - HSV.y * f);
+    float t = HSV.z * (1.0f - HSV.y * (1.0f - f));
+    RGB.x = i == 0 ? HSV.z : i == 1 ? q : i == 2 ? p : i == 3 ? p : i == 4 ? t : HSV.z;
+    RGB.y = i == 0 ? t : i == 1 ? HSV.z : i == 2 ? HSV.z : i == 3 ? q : i == 4 ? p : p;
+    RGB.z = i == 0 ? p : i == 1 ? p : i == 2 ? t : i == 3 ? HSV.z : i == 4 ? HSV.z : q;
+    }
+    return RGB;
+    } //Convert from HSV to RGB
+
+
+
+
+ __DEVICE__ float3 ColorModel(float3 in, int colorModel, bool direction) {
+  
+   float3 out;
+    out = in;
+
+ //==============================
+ //color model convert functions
+ //===============================
+    
+    if (colorModel == 0 && direction == 1) {out = RGBtoCHEN(out);}
+    if (colorModel == 0 && direction == 0) {out = CHENtoRGB(out);}
+
+    if (colorModel == 1 && direction == 1) {out = RGB_to_HSV(out);}
+    if (colorModel == 1 && direction == 0) {out = HSV_to_RGB(out);}
+    if (colorModel == 2&& direction == 1) {out = rgb_to_reuleaux(out);}
+    if (colorModel == 2&& direction == 0) {out = reuleaux_to_rgb(out);}
+    if (colorModel == 3&& direction == 1) {out = rgb_to_cylindrical(out);}
+    if (colorModel == 3&& direction == 0) {out = cylindrical_to_rgb(out);}
+
+   //else { out = make_float3(1,0,0);} //red on error
+
+   return out;
+
+ }
+
+
+
+DEFINE_UI_PARAMS(RED, Red 🟥, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
+DEFINE_UI_PARAMS(YEL, Yellow 🟨, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
+DEFINE_UI_PARAMS(GRN, Green 🟩, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
+DEFINE_UI_PARAMS(CYN, Cyan ⬜️, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
+DEFINE_UI_PARAMS(BLU, Blue 🟦, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
+DEFINE_UI_PARAMS(MAG, Magenta 🟪, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
+
+DEFINE_UI_PARAMS(mixback, Preserve, DCTLUI_COMBO_BOX, 3, { none, sat, luma, both }, { None, Saturation,Luma, Both })
+DEFINE_UI_PARAMS(color_model, Preservation model, DCTLUI_COMBO_BOX, 1, {chen, HSV, reuleaux, cylinderical}, {Chen, HSV,  Reuleaux, Cylindrical })
+
+
+
+
+
+
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p_R, float p_G, float p_B) {
+    float3 rgb;
+    float3 in_rgb = make_float3(p_R, p_G, p_B);
+    in_rgb = ColorModel(in_rgb,color_model,1);
+
+    float BLK_RGB = 0;
+    float WHT_RGB = 1;
+
+    typedef struct {
+            float r_hue,r_sat,r_val;
+            float g_hue,g_sat,g_val;
+            float b_hue,b_sat,b_val;
+            float c_hue,c_sat,c_val;
+            float m_hue,m_sat,m_val;
+            float y_hue,y_sat,y_val;
+    
+    } params_t;
+
+    params_t tetraP;
+
+    tetraP.r_hue = RED;
+    tetraP.r_sat = _fminf(0,tetraP.r_hue);
+    tetraP.r_val = 0;
+    tetraP.g_hue = GRN;
+    tetraP.g_sat = _fminf(0,tetraP.g_hue);
+    tetraP.g_val = 0;
+    tetraP.b_hue = BLU;
+    tetraP.b_sat = _fminf(0,tetraP.b_hue);
+    tetraP.b_val = 0;
+    tetraP.c_hue = CYN;
+    tetraP.c_sat = tetraP.c_hue>0 ? tetraP.c_hue*-1 : 0;
+    tetraP.c_val = tetraP.c_hue>0 ? tetraP.c_hue*-1 : 0;
+    tetraP.m_hue = MAG;
+    tetraP.m_sat = tetraP.m_hue>0 ? tetraP.m_hue*-1 : 0;
+    tetraP.m_val = tetraP.m_hue>0 ? tetraP.m_hue*-1 : 0;
+    tetraP.y_hue = YEL;
+    tetraP.y_sat = tetraP.y_hue>0 ? tetraP.y_hue*-1 : 0;
+    tetraP.y_val = tetraP.y_hue>0 ? tetraP.y_hue*-1 : 0;
+
+    float RED_RED = tetraP.r_hue;
+    float RED_GRN = tetraP.r_sat;
+    float RED_BLU = tetraP.r_val;
+    float GRN_RED = tetraP.g_hue;
+    float GRN_GRN = tetraP.g_sat;
+    float GRN_BLU = tetraP.g_val;
+    float BLU_RED = tetraP.b_hue;
+    float BLU_GRN = tetraP.b_sat;
+    float BLU_BLU = tetraP.b_val;
+    float CYN_RED = tetraP.c_hue;
+    float CYN_GRN = tetraP.c_sat;
+    float CYN_BLU = tetraP.c_val;
+    float MAG_RED = tetraP.m_hue;
+    float MAG_GRN = tetraP.m_sat;
+    float MAG_BLU = tetraP.m_val;
+    float YEL_RED = tetraP.y_hue;
+    float YEL_GRN = tetraP.y_sat;
+    float YEL_BLU = tetraP.y_val;
+
+    
+
+
+    float RED_HUE = RED_BLU + 1.0f;
+    float RED_SAT = RED_BLU - RED_GRN;
+    float RED_VAL = RED_BLU + RED_RED - RED_GRN;
+    
+    float GRN_HUE = GRN_BLU - GRN_GRN;
+    float GRN_SAT = GRN_BLU + 1.0f;
+    float GRN_VAL = GRN_BLU + GRN_RED - GRN_GRN;
+    
+    float BLU_HUE = BLU_BLU + BLU_RED - BLU_GRN;
+    float BLU_SAT = BLU_BLU - BLU_GRN;
+    float BLU_VAL = BLU_BLU + 1.0f;
+    
+    float CYN_HUE = CYN_BLU - CYN_GRN;
+    float CYN_SAT = CYN_BLU + 1.0f + CYN_RED;
+    float CYN_VAL = CYN_BLU + 1.0f;
+    
+    float MAG_HUE = MAG_BLU + 1.0f;
+    float MAG_SAT = MAG_BLU - MAG_GRN;
+    float MAG_VAL = MAG_BLU + 1.0f + MAG_RED;
+    
+    float YEL_HUE = YEL_BLU + 1.0f + YEL_RED;
+    float YEL_SAT = YEL_BLU + 1.0f;
+    float YEL_VAL = YEL_BLU - YEL_GRN;
+
+     float3 blk = make_float3(BLK_RGB, BLK_RGB, BLK_RGB);
+     float3 wht = make_float3(WHT_RGB, WHT_RGB, WHT_RGB);
+     float3 red = make_float3(RED_HUE, RED_SAT, RED_VAL); 
+     float3 grn = make_float3(GRN_HUE, GRN_SAT, GRN_VAL);
+     float3 blu = make_float3(BLU_HUE, BLU_SAT, BLU_VAL);
+     float3 cyn = make_float3(CYN_HUE, CYN_SAT, CYN_VAL);
+     float3 mag = make_float3(MAG_HUE, MAG_SAT, MAG_VAL);
+     float3 yel = make_float3(YEL_HUE, YEL_SAT, YEL_VAL);
+
+    // NOTE: The normal operators are overloaded for their float3 struct
+    // but this absolutely still works with only individual RGB access.
+    // Check out the Nuke expression.
+    if (p_R > p_G) {
+        if (p_G > p_B) {
+            rgb = p_R * (red - blk) + blk + p_G * (yel - red) + p_B * (wht - yel);
+        } else if (p_R > p_B) {
+            rgb = p_R * (red - blk) + blk + p_G * (wht - mag) + p_B * (mag - red);
+        } else {
+            rgb = p_R * (mag - blu) + p_G * (wht - mag) + p_B * (blu - blk) + blk;
+        }
+    } else {
+        if (p_B > p_G) {
+            rgb = p_R * (wht - cyn) + p_G * (cyn - blu) + p_B * (blu - blk) + blk;
+        } else if (p_B > p_R) {
+            rgb = p_R * (wht - cyn) + p_G * (grn - blk) + blk + p_B * (cyn - grn);
+        } else {
+            rgb = p_R * (yel - grn) + p_G * (grn - blk) + blk + p_B * (wht - yel);
+        }
+    }
+
+    float3 output = ColorModel(rgb, color_model,1);
+
+
+    float mixery= 0;
+    float mixerz = 0;
+    if (mixback ==1 || mixback == 3) { mixery = 1;}
+    if (mixback ==2 || mixback == 3) { mixerz = 1;}
+    if (mixback ==1 && color_model == 1|| mixback == 3 && color_model == 1) { mixery = 1;}
+    if (mixback ==2 && color_model == 1|| mixback == 3 && color_model == 1) { mixerz = 1;}
+
+    output.y = output.y*(1-mixery)+in_rgb.y*mixery;
+    output.z = output.z*(1-mixerz)+in_rgb.z*mixerz;
+
+    output = ColorModel(output, color_model,0);
+    return output;
+}
