@@ -1,16 +1,18 @@
 #line 2
 
-/*Made by Moaz Elgabry 
+/*
+Written by Moaz Elgabry 
 
-ME_Hue Tetra V 1.0.0
+ME_Hue Tetra V 1.0.1
 
-Original code is based on this DCTL
+This tool uses the Tetra HSV model to manipulate 6 vectors of hues 
+with the added functionality of mixing back original saturation and luminance.
+by using a couple of different color models to separate the color elements the results can vary in interesting ways.
+
+Tetra HSV code is based on this DCTL
 https://github.com/hotgluebanjo/TetraInterp-DCTL/blob/master/TetraInterpHSV.dctl
 
 */
-
-
-
 
  __DEVICE__ float3 mv_33_3(float mat[3][3], float3 v) {
      float3 out = make_float3(mat[0][0] * v.x + mat[0][1] * v.y + mat[0][2] * v.z,
@@ -234,9 +236,7 @@ DEFINE_UI_PARAMS(MAG, Magenta 🟪, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
 
 DEFINE_UI_PARAMS(bypass, 🚫 Bypass, DCTLUI_CHECK_BOX, 0)
 
-DEFINE_UI_PARAMS(mixback, Preserve, DCTLUI_COMBO_BOX, 3, { none, sat, luma, both }, { None, Saturation,Luma, Sat + Luma })
-DEFINE_UI_PARAMS(color_model, Preservation model, DCTLUI_COMBO_BOX, 1, {chen, HSV, reuleaux, cylinderical}, {Chen, HSV,  Reuleaux, Cylindrical })
-
+DEFINE_UI_PARAMS(Preservation, Preservation model, DCTLUI_COMBO_BOX, 1, {rL, rSL, hsvSL, cylindericalSL,none}, {Reuleaux L, Reuleaux S+L, HSV S+L, Cylindrical S+L, None})
 
 
 
@@ -244,9 +244,22 @@ DEFINE_UI_PARAMS(color_model, Preservation model, DCTLUI_COMBO_BOX, 1, {chen, HS
 
 __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p_R, float p_G, float p_B) {
 
-
-
     float3 rgb;
+
+    int mixback;
+    int color_model;
+
+//numbers below are based on the folowing order
+//mixback:0 none, 1 sat, 2 luma, 3 both 
+//color_model: 0 Chen, 1 HSV,  2 Reuleaux, 3 Cylindrical
+
+if (Preservation == 0) {mixback = 2; color_model = 2;}
+if (Preservation == 1) {mixback = 3; color_model = 2;}
+if (Preservation == 2) {mixback = 3; color_model = 1;}
+if (Preservation == 3) {mixback = 3; color_model = 3;}
+if (Preservation == 4) {mixback = 0; color_model = 2;}
+
+
     float3 in_rgb = make_float3(p_R, p_G, p_B);
 
     //bypass all check box
@@ -271,6 +284,7 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
 
     params_t tetraP;
 
+// setup the tetra hsv parameters to only modify hues
     tetraP.r_hue = RED;
     tetraP.r_sat = _fminf(0,tetraP.r_hue);
     tetraP.r_val = 0;
@@ -288,57 +302,36 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
     tetraP.m_val = tetraP.m_hue>0 ? tetraP.m_hue*-1 : 0;
     tetraP.y_hue = YEL;
     tetraP.y_sat = tetraP.y_hue>0 ? tetraP.y_hue*-1 : 0;
-    //tetraP.y_sat = color_model== 2 &&  tetraP.y_hue>0 ? tetraP.y_hue*-1 * (RED*.3):0;
     tetraP.y_val = tetraP.y_hue>0 ? tetraP.y_hue*-1 : 0;
 
-    float RED_RED = tetraP.r_hue;
-    float RED_GRN = tetraP.r_sat;
-    float RED_BLU = tetraP.r_val;
-    float GRN_RED = tetraP.g_hue;
-    float GRN_GRN = tetraP.g_sat;
-    float GRN_BLU = tetraP.g_val;
-    float BLU_RED = tetraP.b_hue;
-    float BLU_GRN = tetraP.b_sat;
-    float BLU_BLU = tetraP.b_val;
-    float CYN_RED = tetraP.c_hue;
-    float CYN_GRN = tetraP.c_sat;
-    float CYN_BLU = tetraP.c_val;
-    float MAG_RED = tetraP.m_hue;
-    float MAG_GRN = tetraP.m_sat;
-    float MAG_BLU = tetraP.m_val;
-    float YEL_RED = tetraP.y_hue;
-    float YEL_GRN = tetraP.y_sat;
-    float YEL_BLU = tetraP.y_val;
+ // implementation of the tetra HSV
 
+    float RED_HUE = tetraP.r_val + 1.0f;
+    float RED_SAT = tetraP.r_val - tetraP.r_sat;
+    float RED_VAL = tetraP.r_val + tetraP.r_hue - tetraP.r_sat;
     
+    float GRN_HUE = tetraP.g_val - tetraP.g_sat;
+    float GRN_SAT = tetraP.g_val + 1.0f;
+    float GRN_VAL = tetraP.g_val + tetraP.g_hue - tetraP.g_sat;
+    
+    float BLU_HUE = tetraP.b_val + tetraP.b_hue - tetraP.b_sat;
+    float BLU_SAT = tetraP.b_val - tetraP.b_sat;
+    float BLU_VAL = tetraP.b_val + 1.0f;
+    
+    float CYN_HUE = tetraP.c_val - tetraP.c_sat;
+    float CYN_SAT = tetraP.c_val + 1.0f + tetraP.c_hue;
+    float CYN_VAL = tetraP.c_val + 1.0f;
+    
+    float MAG_HUE = tetraP.m_val + 1.0f;
+    float MAG_SAT = tetraP.m_val - tetraP.m_sat;
+    float MAG_VAL = tetraP.m_val + 1.0f + tetraP.m_hue;
+    
+    float YEL_HUE = tetraP.y_val + 1.0f + tetraP.y_hue;
+    float YEL_SAT = tetraP.y_val + 1.0f;
+    float YEL_VAL = tetraP.y_val - tetraP.y_sat;
 
-
-    float RED_HUE = RED_BLU + 1.0f;
-    float RED_SAT = RED_BLU - RED_GRN;
-    float RED_VAL = RED_BLU + RED_RED - RED_GRN;
-    
-    float GRN_HUE = GRN_BLU - GRN_GRN;
-    float GRN_SAT = GRN_BLU + 1.0f;
-    float GRN_VAL = GRN_BLU + GRN_RED - GRN_GRN;
-    
-    float BLU_HUE = BLU_BLU + BLU_RED - BLU_GRN;
-    float BLU_SAT = BLU_BLU - BLU_GRN;
-    float BLU_VAL = BLU_BLU + 1.0f;
-    
-    float CYN_HUE = CYN_BLU - CYN_GRN;
-    float CYN_SAT = CYN_BLU + 1.0f + CYN_RED;
-    float CYN_VAL = CYN_BLU + 1.0f;
-    
-    float MAG_HUE = MAG_BLU + 1.0f;
-    float MAG_SAT = MAG_BLU - MAG_GRN;
-    float MAG_VAL = MAG_BLU + 1.0f + MAG_RED;
-    
-    float YEL_HUE = YEL_BLU + 1.0f + YEL_RED;
-    float YEL_SAT = YEL_BLU + 1.0f;
-    float YEL_VAL = YEL_BLU - YEL_GRN;
-
-     float3 blk = make_float3(BLK_RGB, BLK_RGB, BLK_RGB);
-     float3 wht = make_float3(WHT_RGB, WHT_RGB, WHT_RGB);
+     float3 blk = make_float3(0, 0, 0);
+     float3 wht = make_float3(1, 1, 1);
      float3 red = make_float3(RED_HUE, RED_SAT, RED_VAL); 
      float3 grn = make_float3(GRN_HUE, GRN_SAT, GRN_VAL);
      float3 blu = make_float3(BLU_HUE, BLU_SAT, BLU_VAL);
@@ -366,6 +359,7 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
     }
 
 
+// transform to different color models to separate luminance and saturation for mixing it back afterwards
 
     in_rgb = ColorModel(in_rgb,color_model,1);
     float3 output = ColorModel(rgb, color_model,1);
@@ -375,16 +369,16 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
     float mixlum = 0;
     if (mixback ==1 || mixback == 3) { mixsat = 1;}
     if (mixback ==2 || mixback == 3) { mixlum = 1;}
-    if (mixback ==1 && color_model == 1|| mixback == 3 && color_model == 1) { mixsat = 1;}
-    if (mixback ==2 && color_model == 1|| mixback == 3 && color_model == 1) { mixlum = 1;}
+
 
     output.y = output.y*(1-mixsat)+in_rgb.y*mixsat;
     output.z = output.z*(1-mixlum)+in_rgb.z*mixlum;
 
+//transform back to rgb after mixing original saturation or luminance
     output = ColorModel(output, color_model,0);
 
 
-    //a branch running in parallel to adjust the skin slider
+//a branch running in parallel to adjust the skin slider
 
     float3 skin;
 
@@ -445,8 +439,6 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
 
     if (mixback ==1 || mixback == 3) { mixsat = 1;}
     if (mixback ==2 || mixback == 3) { mixlum = 1;}
-    if (mixback ==1 && color_model == 1|| mixback == 3 && color_model == 1) { mixsat = 1;}
-    if (mixback ==2 && color_model == 1|| mixback == 3 && color_model == 1) { mixlum = 1;}
 
     skin.y = skin.y*(1-mixsat)+in_rgb.y*mixsat;
     skin.z = skin.z*(1-mixlum)+in_rgb.z*mixlum;
