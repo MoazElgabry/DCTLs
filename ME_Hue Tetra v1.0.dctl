@@ -232,7 +232,9 @@ DEFINE_UI_PARAMS(CYN, Cyan ⬜️, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
 DEFINE_UI_PARAMS(BLU, Blue 🟦, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
 DEFINE_UI_PARAMS(MAG, Magenta 🟪, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
 
-DEFINE_UI_PARAMS(mixback, Preserve, DCTLUI_COMBO_BOX, 3, { none, sat, luma, both }, { None, Saturation,Luma, Both })
+DEFINE_UI_PARAMS(bypass, 🚫 Bypass, DCTLUI_CHECK_BOX, 0)
+
+DEFINE_UI_PARAMS(mixback, Preserve, DCTLUI_COMBO_BOX, 3, { none, sat, luma, both }, { None, Saturation,Luma, Sat + Luma })
 DEFINE_UI_PARAMS(color_model, Preservation model, DCTLUI_COMBO_BOX, 1, {chen, HSV, reuleaux, cylinderical}, {Chen, HSV,  Reuleaux, Cylindrical })
 
 
@@ -241,9 +243,18 @@ DEFINE_UI_PARAMS(color_model, Preservation model, DCTLUI_COMBO_BOX, 1, {chen, HS
 
 
 __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p_R, float p_G, float p_B) {
+
+
+
     float3 rgb;
     float3 in_rgb = make_float3(p_R, p_G, p_B);
 
+    //bypass all check box
+    if (bypass) {return in_rgb;}
+
+
+    //start the code here
+    //--------------------
 
     float BLK_RGB = 0;
     float WHT_RGB = 1;
@@ -277,6 +288,7 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
     tetraP.m_val = tetraP.m_hue>0 ? tetraP.m_hue*-1 : 0;
     tetraP.y_hue = YEL;
     tetraP.y_sat = tetraP.y_hue>0 ? tetraP.y_hue*-1 : 0;
+    //tetraP.y_sat = color_model== 2 &&  tetraP.y_hue>0 ? tetraP.y_hue*-1 * (RED*.3):0;
     tetraP.y_val = tetraP.y_hue>0 ? tetraP.y_hue*-1 : 0;
 
     float RED_RED = tetraP.r_hue;
@@ -359,20 +371,20 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
     float3 output = ColorModel(rgb, color_model,1);
 
 
-    float mixery= 0;
-    float mixerz = 0;
-    if (mixback ==1 || mixback == 3) { mixery = 1;}
-    if (mixback ==2 || mixback == 3) { mixerz = 1;}
-    if (mixback ==1 && color_model == 1|| mixback == 3 && color_model == 1) { mixery = 1;}
-    if (mixback ==2 && color_model == 1|| mixback == 3 && color_model == 1) { mixerz = 1;}
+    float mixsat= 0;
+    float mixlum = 0;
+    if (mixback ==1 || mixback == 3) { mixsat = 1;}
+    if (mixback ==2 || mixback == 3) { mixlum = 1;}
+    if (mixback ==1 && color_model == 1|| mixback == 3 && color_model == 1) { mixsat = 1;}
+    if (mixback ==2 && color_model == 1|| mixback == 3 && color_model == 1) { mixlum = 1;}
 
-    output.y = output.y*(1-mixery)+in_rgb.y*mixery;
-    output.z = output.z*(1-mixerz)+in_rgb.z*mixerz;
+    output.y = output.y*(1-mixsat)+in_rgb.y*mixsat;
+    output.z = output.z*(1-mixlum)+in_rgb.z*mixlum;
 
     output = ColorModel(output, color_model,0);
 
 
-    //a branch to adjust the skin slider
+    //a branch running in parallel to adjust the skin slider
 
     float3 skin;
 
@@ -380,49 +392,18 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
 
 
 
-    params_t skin_t_P;
-
+    params_t skin_t_P =  { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
     skin_t_P.r_hue = SKIN*.6;
     skin_t_P.r_sat = _fminf(0,skin_t_P.r_hue);
-    skin_t_P.r_val = 0;
-    skin_t_P.g_hue = 0;
-    skin_t_P.g_sat = _fminf(0,skin_t_P.g_hue);
-    skin_t_P.g_val = 0;
-    skin_t_P.b_hue = 0;
-    skin_t_P.b_sat = _fminf(0,skin_t_P.b_hue);
-    skin_t_P.b_val = 0;
-    skin_t_P.c_hue = 0;
-    skin_t_P.c_sat = skin_t_P.c_hue>0 ? skin_t_P.c_hue*-1 : 0;
-    skin_t_P.c_val = skin_t_P.c_hue>0 ? skin_t_P.c_hue*-1 : 0;
-    skin_t_P.m_hue = 0;
-    skin_t_P.m_sat = skin_t_P.m_hue>0 ? skin_t_P.m_hue*-1 : 0;
-    skin_t_P.m_val = skin_t_P.m_hue>0 ? skin_t_P.m_hue*-1 : 0;
     skin_t_P.y_hue = SKIN*1.1;
     skin_t_P.y_sat = skin_t_P.y_hue>0 ? skin_t_P.y_hue*-1 : 0;
     skin_t_P.y_val = skin_t_P.y_hue>0 ? skin_t_P.y_hue*-1 : 0;
 
 
-
-
-    float s_RED_HUE = skin_t_P.r_val + 1.0f;
+    float s_RED_HUE = 1.0f;
     float s_RED_SAT = skin_t_P.r_val - skin_t_P.r_sat;
     float s_RED_VAL = skin_t_P.r_val + skin_t_P.r_hue - skin_t_P.r_sat;
 
-    float s_GRN_HUE = skin_t_P.g_val - skin_t_P.g_sat;
-    float s_GRN_SAT = skin_t_P.g_val + 1.0f;
-    float s_GRN_VAL = skin_t_P.g_val + skin_t_P.g_hue - skin_t_P.g_sat;
-
-    float s_BLU_HUE = skin_t_P.b_val + skin_t_P.b_hue - skin_t_P.b_sat;
-    float s_BLU_SAT = skin_t_P.b_val - skin_t_P.b_sat;
-    float s_BLU_VAL = skin_t_P.b_val + 1.0f;
-
-    float s_CYN_HUE = skin_t_P.c_val - skin_t_P.c_sat;
-    float s_CYN_SAT = skin_t_P.c_val + 1.0f + skin_t_P.c_hue;
-    float s_CYN_VAL = skin_t_P.c_val + 1.0f;
-
-    float s_MAG_HUE = skin_t_P.m_val + 1.0f;
-    float s_MAG_SAT = skin_t_P.m_val - skin_t_P.m_sat;
-    float s_MAG_VAL = skin_t_P.m_val + 1.0f + skin_t_P.m_hue;
 
     float s_YEL_HUE = skin_t_P.y_val + 1.0f + skin_t_P.y_hue;
     float s_YEL_SAT = skin_t_P.y_val + 1.0f;
@@ -430,10 +411,10 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
 
 
     float3 s_red = make_float3(s_RED_HUE, s_RED_SAT, s_RED_VAL); 
-    float3 s_grn = make_float3(s_GRN_HUE, s_GRN_SAT, s_GRN_VAL);
-    float3 s_blu = make_float3(s_BLU_HUE, s_BLU_SAT, s_BLU_VAL);
-    float3 s_cyn = make_float3(s_CYN_HUE, s_CYN_SAT, s_CYN_VAL);
-    float3 s_mag = make_float3(s_MAG_HUE, s_MAG_SAT, s_MAG_VAL);
+    float3 s_grn = make_float3(0, 1, 0);
+    float3 s_blu = make_float3(0, 0, 1);
+    float3 s_cyn = make_float3(0, 1, 1);
+    float3 s_mag = make_float3(1, 0, 1);
     float3 s_yel = make_float3(s_YEL_HUE, s_YEL_SAT, s_YEL_VAL);
 
 
@@ -462,13 +443,13 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
 
 
 
-    if (mixback ==1 || mixback == 3) { mixery = 1;}
-    if (mixback ==2 || mixback == 3) { mixerz = 1;}
-    if (mixback ==1 && color_model == 1|| mixback == 3 && color_model == 1) { mixery = 1;}
-    if (mixback ==2 && color_model == 1|| mixback == 3 && color_model == 1) { mixerz = 1;}
+    if (mixback ==1 || mixback == 3) { mixsat = 1;}
+    if (mixback ==2 || mixback == 3) { mixlum = 1;}
+    if (mixback ==1 && color_model == 1|| mixback == 3 && color_model == 1) { mixsat = 1;}
+    if (mixback ==2 && color_model == 1|| mixback == 3 && color_model == 1) { mixlum = 1;}
 
-    skin.y = skin.y*(1-mixery)+in_rgb.y*mixery;
-    skin.z = skin.z*(1-mixerz)+in_rgb.z*mixerz;
+    skin.y = skin.y*(1-mixsat)+in_rgb.y*mixsat;
+    skin.z = skin.z*(1-mixlum)+in_rgb.z*mixlum;
 
     skin = ColorModel(skin, color_model,0);
     in_rgb = ColorModel(in_rgb,color_model,0);
