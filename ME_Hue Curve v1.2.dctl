@@ -1,7 +1,9 @@
 #line 2
-// ME_Hue curve ver 1.0
-//Made by Moaz Elgabry code adapted from the Hue Curve developed by Thatcher Freeman
-// Lab color models code by Jan Karow
+// ME_Hue curve ver 1.2
+//Made by Moaz Elgabry 
+// code is based on the Hue curve function written by Thatcher Freeman
+//https://github.com/thatcherfreeman/utility-dctls/blob/main/Effects/Hue%20Curve.dctl
+// The code for Lab color models was adapted from code written by Jan Karow
 
 
 
@@ -734,6 +736,7 @@ DEFINE_UI_PARAMS(magenta_adjustment_amt, Magenta 🟪, DCTLUI_SLIDER_FLOAT, 0.0,
 DEFINE_UI_PARAMS(adjustment_amt, Custom Hue, DCTLUI_SLIDER_FLOAT, 0.0, -1, 1, 0.001)
 DEFINE_UI_PARAMS(selected_hue, Select Hue Angle, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 360.0, 0.001)
 DEFINE_UI_PARAMS(complementary_fade, Opposite Hue Change, DCTLUI_SLIDER_FLOAT, 1.0, 0.0, 1.0, 0.01)
+DEFINE_UI_PARAMS(smoothness, Smooth, DCTLUI_SLIDER_FLOAT, 0, 0.0, 1.0, 0.01)
 
 
 DEFINE_UI_PARAMS(bypass, 🚫 Bypass, DCTLUI_CHECK_BOX, 0)
@@ -759,15 +762,15 @@ selected_hue /= 360.0;
 float curr_pos_x = (float)p_X / (float)(p_Width - 1);
 float curr_pos_y = 1.0 - (float)p_Y / (float)(p_Height - 1);
 
-control_params_t no_params = {0, 0, 0.01f, 0.01f};
-control_params_t red_params = {0, red_adjustment_amt*-1, 0.01f, 0.01f};
-control_params_t green_params = {0.338f, green_adjustment_amt*-1, 0.01f, 0.01f};
-control_params_t blue_params = {.70, blue_adjustment_amt*-1, 0.1f, 0.1f};
-control_params_t cyan_params = {0.4833, cyan_adjustment_amt*-1, 0.3f, 0.3f};
-control_params_t magenta_params = {.85, magenta_adjustment_amt*-1, 0.2f, 0.2f};
-control_params_t yellow_params = {.172222, yellow_adjustment_amt*-1, 0.2f, 0.2f};
-control_params_t skin_params = {.04444, skin_adjustment_amt*-1, 0.1f, 0.1f};
-control_params_t params = {selected_hue, adjustment_amt*-1, 0.3, 0.3};
+control_params_t no_params = {0, 0, 0.01f+smoothness, 0.01f+smoothness};
+control_params_t red_params = {0, red_adjustment_amt*-1*_fmaxf(.8,_fminf(1,(1-smoothness*.8+.2)))              , 0.01f+smoothness*.44+(1-red_adjustment_amt)    *smoothness*2.5, 0.01+smoothness+(1-red_adjustment_amt)*smoothness*2.5};
+control_params_t green_params = {0.338f, green_adjustment_amt*-1*_fmaxf(.8,_fminf(1,(1-smoothness*.8+.2)))     , 0.01f+smoothness*.8+(1-green_adjustment_amt)  *smoothness*2.5, 0.01+smoothness+(1-green_adjustment_amt)*smoothness*2.5};
+control_params_t blue_params = {.70, blue_adjustment_amt*-1*_fmaxf(.8,_fminf(1,(1-smoothness*.8+.2)))          , 0.1f +smoothness+(1-blue_adjustment_amt)   *smoothness*2.5, 0.1 +smoothness+(1-blue_adjustment_amt)*smoothness*2.5};
+control_params_t cyan_params = {0.4833, cyan_adjustment_amt*-1*_fmaxf(.8,_fminf(1,(1-smoothness*.8+.2)))       , 0.3f +smoothness*.5+(1-cyan_adjustment_amt)   *smoothness*2.5, 0.3 +smoothness+(1-cyan_adjustment_amt)*smoothness*2.5};
+control_params_t magenta_params = {.85, magenta_adjustment_amt*-1*_fmaxf(.8,_fminf(1,(1-smoothness*.8+.2)))    , 0.2f +smoothness*.6+(1-magenta_adjustment_amt)*smoothness*2.5, 0.2 +smoothness+(1-magenta_adjustment_amt)*smoothness*2.5};
+control_params_t yellow_params = {.172222, yellow_adjustment_amt*-1*_fmaxf(.8,_fminf(1,(1-smoothness*.8+.2)))  , 0.2f +smoothness*.6+(1-yellow_adjustment_amt) *smoothness*2.5, 0.2 +smoothness+(1-yellow_adjustment_amt)*smoothness*2.5};
+control_params_t skin_params = {.04444, skin_adjustment_amt*-1*_fmaxf(.8,_fminf(1,(1-smoothness*.8+.2)))       , 0.1f +smoothness+(1-skin_adjustment_amt)   *smoothness*2.5, 0.1 +smoothness+(1-skin_adjustment_amt)*smoothness*2.5};
+control_params_t params = {selected_hue, adjustment_amt*-1*_fmaxf(.8,_fminf(1,(1-smoothness*.8+.2)))           , 0.3  +smoothness*.5+(1-adjustment_amt)        *smoothness*2.5, 0.3 +smoothness+(1-adjustment_amt)*smoothness*2.5};
 
 if (color_model == cie || color_model == ok  || color_model == pro ) {skin_params.selected_hue = .15444; skin_params.adjustment_amt = skin_adjustment_amt*-1.2;}
 if (color_model == cie || color_model == ok  || color_model == pro ) {red_params.selected_hue = .087; }

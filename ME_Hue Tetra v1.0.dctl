@@ -236,7 +236,7 @@ DEFINE_UI_PARAMS(MAG, Magenta 🟪, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
 
 DEFINE_UI_PARAMS(bypass, 🚫 Bypass, DCTLUI_CHECK_BOX, 0)
 
-DEFINE_UI_PARAMS(Preservation, Preservation model, DCTLUI_COMBO_BOX, 1, {rL, rSL, hsvSL, cylindericalSL,none}, {Reuleaux L, Reuleaux S+L, HSV S+L, Cylindrical S+L, None})
+DEFINE_UI_PARAMS(Preservation, Preservation model, DCTLUI_COMBO_BOX, 1, {rL,hsvSrL ,rSL, hsvSL, cylinSL, cylinLhsvS,none}, {Reuleaux L,HSV S Reuleaux L, Reuleaux S+L, HSV S+L, Cylindrical S+L,Cylindrical L HSV S, None})
 
 
 
@@ -254,13 +254,17 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
 //color_model: 0 Chen, 1 HSV,  2 Reuleaux, 3 Cylindrical
 
 if (Preservation == 0) {mixback = 2; color_model = 2;}
-if (Preservation == 1) {mixback = 3; color_model = 2;}
-if (Preservation == 2) {mixback = 3; color_model = 1;}
-if (Preservation == 3) {mixback = 3; color_model = 3;}
-if (Preservation == 4) {mixback = 0; color_model = 2;}
+if (Preservation == 1) {mixback = 2; color_model = 2;}
+if (Preservation == 2) {mixback = 3; color_model = 2;}
+if (Preservation == 3) {mixback = 3; color_model = 1;}
+if (Preservation == 4) {mixback = 3; color_model = 3;}
+if (Preservation == 5) {mixback = 3; color_model = 3;}
+if (Preservation == 6) {mixback = 0; color_model = 2;}
 
 
     float3 in_rgb = make_float3(p_R, p_G, p_B);
+    float3 HSV_sat_3 = ColorModel(in_rgb,1,1);
+    float HSV_sat = HSV_sat_3.y;
 
     //bypass all check box
     if (bypass) {return in_rgb;}
@@ -269,8 +273,8 @@ if (Preservation == 4) {mixback = 0; color_model = 2;}
     //start the code here
     //--------------------
 
-    float BLK_RGB = 0;
-    float WHT_RGB = 1;
+   //float BLK_RGB = 0;
+   //float WHT_RGB = 1;
 
     typedef struct {
             float r_hue,r_sat,r_val;
@@ -449,5 +453,14 @@ if (Preservation == 4) {mixback = 0; color_model = 2;}
     //-----------------
     float3 out = in_rgb + (output- in_rgb) + (skin - in_rgb);
 
+    if (Preservation == 1 || Preservation == 5) {
+        out=ColorModel(out,1,1);
+        float mixfactor = 1;
+        HSV_sat = out.y*(1-mixfactor)+HSV_sat*mixfactor;
+        out = make_float3(out.x,HSV_sat,out.z);
+        out=ColorModel(out,1,0);
+     }
+
     return out;
+
 }

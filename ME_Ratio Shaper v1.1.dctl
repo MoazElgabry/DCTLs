@@ -1,5 +1,5 @@
 #line 2
-// ME_Ratio Shaper ver 1.0
+// ME_Ratio Shaper ver 1.1
 //Made by Moaz Elgabry
 
 
@@ -486,15 +486,8 @@
  
  __DEVICE__ float set_pivot (float pivot, int gamma) {
 
-    float midgray;
-
-    
-    float3 get_mid = make_float3(0.18f, 0.18f,0.18f);
-    get_mid = LinToGamma(get_mid, gamma);
-    //get_mid = maxf3(get_mid);
-    midgray = get_mid.x;
-
-    pivot = pivot + midgray;
+    float3 get_mid = LinToGamma(make_float3(0.18f, 0.18f,0.18f), gamma);
+    pivot = pivot + get_mid.x;
     
     return pivot;
     }
@@ -580,6 +573,10 @@
     
     }
 
+
+ __DEVICE__ float powf(float base, float exp) {
+return _copysignf(_powf(_fabs(base), exp), base);
+} 
 
 //color models
  __DEVICE__ float3 RGBtoCHEN(float3 in) {
@@ -692,7 +689,7 @@ __DEVICE__ float3 exposure_low(float3 rgb, float ex, float pv, float fa) {
  } params_t;
 
 // Function to draw transparency overlay based on the given parameters
- __DEVICE__ float3 drawTransparencyOverlay(float3 in, float matte, params_t params) {
+       __DEVICE__ float3 drawTransparencyOverlay(float3 in, float matte, params_t params) {
      float3 out = in;
  
      if (params.matteMode) {
@@ -700,7 +697,7 @@ __DEVICE__ float3 exposure_low(float3 rgb, float ex, float pv, float fa) {
          out = make_float3(matte, matte, matte);
      } else {
          float transparentColor = .3;
-         float squareSize = params.height / 32;
+         float squareSize = params.height / 64;
  
          // Calculate the row and column based on the X and Y coordinates and the square size
          int row = _floorf(params.X / squareSize);
@@ -714,13 +711,13 @@ __DEVICE__ float3 exposure_low(float3 rgb, float ex, float pv, float fa) {
      }
  
      return out;
- }
+         }
  
       __DEVICE__ float smoothstep(float x) {
      x = _clampf(x, 0.0, 1.0);
      return 3.0 * powf(x, 2.0) - 2.0 * powf(x, 3.0);}
  
-    __DEVICE__ float3 HiLoLumaMask (float3 in, float3 base, params_t params)  {
+      __DEVICE__ float3 HiLoLumaMask (float3 in, float3 base, params_t params)  {
        float3 mid_grey_f3 = LinToGamma(make_float3 (0.18,0.18,0.18), params.TF);
        float mid_grey = mid_grey_f3.x;
        //float pxlX = (float)X;
@@ -789,36 +786,36 @@ __DEVICE__ float3 exposure_low(float3 rgb, float ex, float pv, float fa) {
 
 
 
-DEFINE_UI_PARAMS(P_exHI, KEY - Exposure__, DCTLUI_SLIDER_FLOAT, 0.0, -5.99, 5.99, 0.0)
-DEFINE_UI_PARAMS(P_faHI, Key Falloff, DCTLUI_SLIDER_FLOAT, 0.7, 0.0, 1.0, 0.0)
+DEFINE_UI_PARAMS(P_exHI, KEY - Exposure__, DCTLUI_SLIDER_FLOAT, 0.0, -5.99, 5.99, 0.1)
+DEFINE_UI_PARAMS(P_faHI, Key Falloff, DCTLUI_SLIDER_FLOAT, 0.5, 0.0, 1.0, 0.0)
 //DEFINE_UI_PARAMS(invert, invert, DCTLUI_CHECK_BOX, 0)
 
 
-DEFINE_UI_PARAMS(P_exLo, FILL - Exposure__, DCTLUI_SLIDER_FLOAT, 0.0, -5.99, 5.99, 0.0)
-DEFINE_UI_PARAMS(P_faLo, Fill Falloff, DCTLUI_SLIDER_FLOAT, 0.9, 0.0, 1.0, 0.0)
+DEFINE_UI_PARAMS(P_exLo, FILL - Exposure__, DCTLUI_SLIDER_FLOAT, 0.0, -5.99, 5.99, 0.1)
+DEFINE_UI_PARAMS(P_faLo, Fill Falloff, DCTLUI_SLIDER_FLOAT, 0.5, 0.0, 1.0, 0.0)
 
 
 DEFINE_UI_PARAMS(p_save_sat, Preserve Color , DCTLUI_SLIDER_FLOAT, .5f, 0.0f, 1.0f, 0.25f)
 
 
-DEFINE_UI_PARAMS(P_pvHI, HI Pivot, DCTLUI_SLIDER_FLOAT, 0.0, -5.0, 5.0, 0.0)
-DEFINE_UI_PARAMS(P_pvLo, Lo Pivot, DCTLUI_SLIDER_FLOAT, 0.0, -3.0, 2.5, 0.0)
+DEFINE_UI_PARAMS(P_pvHI, HI Pivot, DCTLUI_SLIDER_FLOAT, 0.0, -5.0, 5.0, 0.1)
+DEFINE_UI_PARAMS(P_pvLo, Lo Pivot, DCTLUI_SLIDER_FLOAT, 0.0, -3.0, 3, 0.1)  
 
 //DEFINE_UI_PARAMS(p_mix_pin, Pin Hi-LO Ends, DCTLUI_SLIDER_FLOAT, 1.0f, 0.0f, 1.0f, 0.01f)
-DEFINE_UI_PARAMS(p_Hi_stops, Mask Highlights, DCTLUI_SLIDER_FLOAT, 5.0f, -3.0f, 5.0f, 0.01f)
-DEFINE_UI_PARAMS(p_Lo_stops, Mask Shadows, DCTLUI_SLIDER_FLOAT, -5.0f, -5.0f, 1.0f, 0.01f)
+DEFINE_UI_PARAMS(p_Hi_stops, Mask Highlights, DCTLUI_SLIDER_FLOAT, 5.0f, -3.0f, 5.0f, 0.1f)
+DEFINE_UI_PARAMS(p_Lo_stops, Mask Shadows, DCTLUI_SLIDER_FLOAT, -7.0f, -7.0f, 1.0f, 0.1f)
 
 //DEFINE_UI_PARAMS(p_white_point, Roll High End , DCTLUI_SLIDER_FLOAT, 0.9999f, 0.0f, 0.9999f, 0.0001f)
 //DEFINE_UI_PARAMS(p_black_point, Roll Low End , DCTLUI_SLIDER_FLOAT, 0.0011, 0.0011, 1, 0.0001)
 
 
-DEFINE_UI_PARAMS(bypass, 🚫 Bypass, DCTLUI_CHECK_BOX, 0)
-DEFINE_UI_PARAMS(opt_showcurve, 📈 Show Curve, DCTLUI_CHECK_BOX, 0)
-DEFINE_UI_PARAMS(opt_ramp, 📏 Show Ramp, DCTLUI_CHECK_BOX, 0)
-DEFINE_UI_PARAMS(opt_ramp_scope, =Wide aspect overlays =, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_PARAMS(bypass,  Bypass, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_PARAMS(opt_showcurve,  Show Curve, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_PARAMS(opt_ramp,  Show Ramp, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_PARAMS(opt_ramp_scope, = Wide aspect overlays =, DCTLUI_CHECK_BOX, 0)
 
 DEFINE_UI_PARAMS(alpha_toggle, Show Mask, DCTLUI_CHECK_BOX, 0)
-//DEFINE_UI_PARAMS(alpha_matte, Matte Mode, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_PARAMS(soft, Preserve curve ends, DCTLUI_CHECK_BOX, 1)
 
 
 DEFINE_UI_PARAMS(alpha_matte, Highlight mode, DCTLUI_COMBO_BOX, 0, {overlay, matte}, {Overlay, Matte})
@@ -834,22 +831,27 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
 //--------------------------
 //--------------------------
 
+   bool hi_clamp, lo_clamp;
 
+   // Rec.601 (also Davinci's luma coefficients)
+    const float3 luma_coefficients = {0.29912, 0.58749, 0.11437}; 
+    
     const float3 bypass_RGB = make_float3(p_R, p_G, p_B);
     float3 out;
-    //float3 outRGB0;
+   //float3 outRGB0;
     out = bypass_RGB;
 
-   P_pvLo = 2.9*set_pivot(P_pvLo, 2);
-   P_pvHI = 3 * set_pivot(P_pvHI, 2);
+   P_pvLo = powf(2.0, P_pvLo)*set_pivot(.5, 2);
+   P_pvHI = powf(2.0, P_pvHI)*set_pivot(.5, 2);
+   
    //ensure the shadow mask is not active by default by covering a wider range than what most images can hold
-   if (p_Lo_stops == -5) {p_Lo_stops=-10;}
+  if (soft == 0) {if (p_Lo_stops == -7) {p_Lo_stops=-20;}}
 
 
 
 
 
-//move to working color space which is Davinci Wide gamut Intermediate
+//move to working color space - Davinci Wide gamut Intermediate
 
    out = SetWorkingSpace(out, p_transfer_f);
 
@@ -868,32 +870,31 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
 //a clean version of the ramp to show in the bypass version
      float3 cleanRamp = ramp;
     
-//extract original saturation
-     float3 base_chen_lum;
-     float3 save_sat;
+//extract original luminance
 
-    base_chen_lum = RGBtoCHEN(out);
-    float chen_hue = base_chen_lum.x;
-    float chen_sat= base_chen_lum.y;
-    float base_chen_luma= base_chen_lum.z;
-    //a buffer with only the luminance component in all 3 channels
-    base_chen_lum= make_float3 (base_chen_luma,base_chen_luma,base_chen_luma);
 
+    float luma_in = luma_coefficients.x * out.x + luma_coefficients.y * out.y + luma_coefficients.z * out.z;
+    float3 luma_in_3 = make_float3(luma_in, luma_in, luma_in);
 
 
 // set up the Highlights and shadows masks control parameters
     params_t HiLo_params;
 
+
+
     HiLo_params.HiThreshold = p_Hi_stops;
-    HiLo_params.HiFeather = 1.5;
+    HiLo_params.HiFeather = 1.5 * powf(3 / 1.5,((5-p_Hi_stops) / 8.0));
     HiLo_params.LoThreshold = p_Lo_stops;
-    HiLo_params.LoFeather = 1.5;
+    HiLo_params.LoFeather = 5 * powf(1.5 / 5,((p_Lo_stops-(-7)) / 8.0));
     HiLo_params.TF = p_transfer_f;
     HiLo_params.alpha = alpha_toggle;
     HiLo_params.matteMode = alpha_matte;
     HiLo_params.X = (int)p_X;
     HiLo_params.Y= (int)p_Y;
     HiLo_params.height= (float)p_Height;
+
+
+
 
 
 //--------------------------
@@ -903,30 +904,25 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
 //--------------------------
 
 
-  out = exposure_low(out, P_exLo, P_pvLo, P_faLo);
-  ramp = exposure_low(ramp, P_exLo, P_pvLo, P_faLo);
-  base_chen_lum= exposure_low(base_chen_lum, P_exLo, P_pvLo, P_faLo);
+  float3 fill = exposure_low(out, P_exLo, P_pvLo, P_faLo);
+  float3 ramp_fill = exposure_low(ramp, P_exLo, P_pvLo, P_faLo);
+  float3 luma_fill= exposure_low(luma_in_3, P_exLo, P_pvLo, P_faLo);
 
-    save_sat = make_float3 (chen_hue,chen_sat,base_chen_lum.z);
-    save_sat = CHENtoRGB(save_sat);
-   //out = _mix(out, save_sat, 1-p_save_sat);
-   out = mixFloat3(P_exLo>0?p_save_sat:(1-p_save_sat),out, save_sat);
-    save_sat = RGBtoCHEN(save_sat);
-
-  out = exposure_high(out, P_exHI, P_pvHI, P_faHI, 0);
-  ramp = exposure_high(ramp, P_exHI, P_pvHI, P_faHI, 0);
-  base_chen_lum = exposure_high(base_chen_lum, P_exHI, P_pvHI, P_faHI, 0);
+   float3 luma_fill_out = out- luma_in + luma_fill.x;
 
 
-//implement preserve color functionality
-//prepare an unaffected saturation channel
-  save_sat = make_float3 (save_sat.x,save_sat.y,base_chen_lum.z);
-  save_sat = CHENtoRGB(save_sat);
+   float3 fill_out = mixFloat3(P_exLo<0?p_save_sat:(1-p_save_sat),fill, luma_fill_out);
 
 
-     //out = _mix(out, save_sat, p_save_sat);
-  out = mixFloat3(P_exHI>0?1-p_save_sat:p_save_sat,out,save_sat);
-      
+  float3 key = exposure_high(out, P_exHI, P_pvHI, P_faHI, 0);
+  float3 ramp_key = exposure_high(ramp, P_exHI, P_pvHI, P_faHI, 0);
+  float3 luma_key = exposure_high(luma_in_3, P_exHI, P_pvHI, P_faHI, 0);
+  float3 luma_key_out = out- luma_in + luma_key.x;
+
+float3 key_out = mixFloat3(P_exHI<0?1-p_save_sat:p_save_sat,key, luma_key_out);
+
+out = out + (fill_out - out) + (key_out - out);
+ramp = ramp + (ramp_fill - ramp) + (ramp_key - ramp);    
 
 
 
@@ -935,9 +931,48 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
  out = Inverse_WorkingSpace(out,p_transfer_f);
 
     // remove effect from the selected range of highlights and shadows
-   
+       
+       if (out.x < bypass_RGB.x || out.y < bypass_RGB.y || out.z < bypass_RGB.z){
+          if (out.x < 0.0f || out.y < 0.0f || out.z < 0.0f) {lo_clamp =1;}
+        }
+
+
+
+       if (out.x > bypass_RGB.x || out.y > bypass_RGB.y || out.z > bypass_RGB.z){
+          if (out.x > 1.0f || out.y > 1.0f || out.z > 1.0f) {hi_clamp =1;}
+        }
+       
+
+
+
+       else if (out.x == bypass_RGB.x || out.y == bypass_RGB.y || out.z == bypass_RGB.z){
+         lo_clamp =0;
+         hi_clamp =0;
+       }
+       else if (bypass_RGB.x <= 0 || bypass_RGB.y <= 0 || bypass_RGB.z <= 0) {lo_clamp =0;}
+       else if (bypass_RGB.x >= 1 || bypass_RGB.y >= 1 || bypass_RGB.z >= 1) {hi_clamp =0;}
+
+
+   if (soft) {
+      // add an automatic mask to minimize chances of clipping, but allow the user to still make somewhat big adjustments   
+
+
+             p_Hi_stops = -3 + powf((p_Hi_stops + 3) / 8.0, 0.3) * 3.8;-3 + (0.475 * (p_Hi_stops + 3));
+             //p_Hi_stops = _fminf (p_Hi_stops,0.8f);
+             HiLo_params.HiThreshold = p_Hi_stops;
+             HiLo_params.HiFeather = 1.5 * powf(3 / 1.5,((5-p_Hi_stops) / 8.0));
+
+             p_Lo_stops = -1 + powf(((p_Lo_stops + 7) / 8.0), 1.8) * 2.0;
+             //p_Lo_stops = _fmaxf (p_Lo_stops,-.8f);
+             HiLo_params.LoThreshold = p_Lo_stops;
+             HiLo_params.LoFeather = 5 * powf(1.7 / 5,((p_Lo_stops-(-7)) / 8.0));
+          //}
+   }
+
        out = HiLoLumaMask (out, bypass_RGB, HiLo_params);
        ramp = HiLoLumaMask (ramp, cleanRamp, HiLo_params);
+
+
 
 	// bypass option including a bypass option to the ramp to display an untouched curve
      if (bypass ==1 ) {
@@ -949,27 +984,45 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
 
       //option to overlay a grayscale ramp on the bottom edge of the frame
       if (opt_ramp) {
-          if (opt_ramp_scope){ 
-                  if( rY < 0.05f  && rY > -0.02f) {out = ramp;}
-              return out;
-              }  
-      if( rY < 0.06f ) {out = ramp;}
                   
+      if (opt_ramp_scope){ 
+
+        if( rY < (0.00001f * height)  && rY > (-0.201f * height)) {out = ramp;}
+         }
+
+      //displaying the value of internal variables for debugging
+      //if( rY > (0.0003f * height) ) {out = make_float3( p_Lo_stops,p_Lo_stops, p_Lo_stops);}
       
+      else if( rY < (0.00003f * height) ) {out = ramp;}
+
       }
 
-    //Optional show curve functionality
-     if (opt_showcurve == 1 && alpha_toggle==0) {
+    //Optional show curve functionality   
+     if (opt_showcurve == 1 && alpha_toggle==0 ) {
     
- 		float3 scopeY = LinToGamma(make_float3(.99f,.99f,.99f), 2);
+ 		float3 scopeY = LinToGamma(make_float3(1,1,1), 2);
 
-        float overlayR = ramp.x >= (Y - 5.0f) / height && ramp.x <= (Y + 5.0f) / height ? scopeY.x : 0.0f;
-        float overlayG = ramp.y >= (Y - 5.0f) / height && ramp.y <= (Y + 5.0f) / height ? scopeY.y : 0.0f;
-        float overlayB = ramp.z >= (Y - 5.0f) / height && ramp.z <= (Y + 5.0f) / height ? scopeY.z : 0.0f;
+        float overlayR = ramp.x >= (Y - (0.003f * height)) / height && ramp.x <= (Y + 0.003f * height) / height ? scopeY.x : 0.0f;
+        float overlayG = ramp.y >= (Y - (0.003f * height)) / height && ramp.y <= (Y + 0.003f * height) / height ? scopeY.y : 0.0f;
+        float overlayB = ramp.z >= (Y - (0.003f * height)) / height && ramp.z <= (Y + 0.003f * height) / height ? scopeY.z : 0.0f;
         out.x = overlayR == 0.0f ? out.x : overlayR;
         out.y = overlayG == 0.0f ? out.y : overlayG;
         out.z = overlayB == 0.0f ? out.z : overlayB;
 
+         if (opt_ramp_scope){ 
+
+
+        float overlayR = ramp.x >= (Y - (0.003f * height)) / height && ramp.x <= (Y + 0.003f * height) / height ? scopeY.x : 0.0f;
+        float overlayG = ramp.y >= (Y - (0.003f * height)) / height && ramp.y <= (Y + 0.003f * height) / height ? scopeY.y : 0.0f;
+        float overlayB = ramp.z >= (Y - (0.003f * height)) / height && ramp.z <= (Y + 0.003f * height) / height ? scopeY.z : 0.0f;
+        out.x = overlayR == 0.0f ? out.x : overlayR;
+        out.y = overlayG == 0.0f ? out.y : overlayG;
+        out.z = overlayB == 0.0f ? out.z : overlayB;
+            
+
+
+         }  
+       return out;
 		}
 
 
