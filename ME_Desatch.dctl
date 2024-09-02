@@ -1,8 +1,9 @@
-//DCTL by Juan Pablo Zambrano
+#line 2
+//Cone model code fromby Juan Pablo Zambrano
 //Base transformation to Chen/Spherical coordinates from Quinn Leiho
 //Modifications to convert into 'Cone Coordinates' inspired by Steve Yedlin and Matthias Stoopman
 //Thanks for the help to Jan Karow, Kaur Hendrikson, Nico Wieseneder,and Keidrych Wasley
-#line 6
+
 
 __DEVICE__ float3 rgb_to_cone(float3 rgb) {
     const float pi= 3.14159265359f;
