@@ -486,8 +486,8 @@
  
  __DEVICE__ float set_pivot (float pivot, int gamma) {
 
-    float3 get_mid = LinToGamma(make_float3(0.18f, 0.18f,0.18f), gamma);
-    pivot = pivot + get_mid.x;
+    float3 midgray = LinToGamma(make_float3(0.18f, 0.18f,0.18f), gamma);
+    pivot = pivot + midgray.x;
     
     return pivot;
     }
@@ -578,59 +578,13 @@
 return _copysignf(_powf(_fabs(base), exp), base);
 } 
 
-//color models
- __DEVICE__ float3 RGBtoCHEN(float3 in) {
-    float r = in.x;
-    float g = in.y;
-    float b = in.z;
-
-    float h;
-    float c;
-    float l;
-
-    const float rtr = r * 0.81649658f + g * -0.40824829f + b * -0.40824829f;
-    const float rtg = r * 0.0f + g * 0.70710678f + b * -0.70710678f;
-    const float rtb = r * 0.57735027f + g * 0.57735027f + b * 0.57735027f;
-
-    const float art = _atan2f(rtg, rtr);
-
-    const float sphr = _sqrtf(rtr*rtr + rtg*rtg + rtb*rtb);
-    const float spht = art < 0.0f ? art + 2.0f * 3.141592653589f : art;
-    const float sphp = _atan2f(_sqrtf(rtr*rtr + rtg*rtg), rtb);
-
-    l = sphr * 0.5773502691896258f;
-    h = spht * 0.15915494309189535f;
-    c = sphp * 1.0467733744265997f;
-
-    return make_float3(h, c, l);
-  } //by Kaur Hendrikson
- 
- __DEVICE__ float3 CHENtoRGB(float3 in) {
-    float h = in.x * 6.283185307179586f;
-    float c = in.y * 0.9553166181245093f;
-    float l = in.z * 1.7320508075688772f;
-    
-   float r = 0;
-   float g = 0;
-   float b = 0;
-
-    const float ctr = l * _sinf(c) * _cosf(h);
-    const float ctg = l * _sinf(c) * _sinf(h);
-    const float ctb = l * _cosf(c);
-
-    r = ctr * 0.81649658f + ctg * 0.0f + ctb * 0.57735027f;
-    g = ctr * -0.40824829f + ctg * 0.70710678f + ctb * 0.57735027f;
-    b = ctr * -0.40824829f + ctg * -0.70710678f + ctb * 0.57735027f;
-
-    return make_float3(r, g, b);
-  } //by Kaur Hendrikson
- 
 
 //main tool functions
 
 
 __DEVICE__ float3 exposure_high(float3 rgb, float ex, float pv, float fa, int inv) {
-  // Zoned highlight exposure with falloff : https://www.desmos.com/calculator/ylq5yvkhoq
+ // Zoned highlight exposure with falloff : https://www.desmos.com/calculator/ylq5yvkhoq
+ // Original code written by Jed smith
 
   // Parameter setup
   const float f = 5.0f * _powf(fa, 1.6f) + 1.0f;
@@ -655,6 +609,7 @@ __DEVICE__ float3 exposure_high(float3 rgb, float ex, float pv, float fa, int in
 __DEVICE__ float3 exposure_low(float3 rgb, float ex, float pv, float fa) {
   // Zoned shadow exposure with falloff : https://www.desmos.com/calculator/my116fpnix
   // https://colab.research.google.com/drive/1GAoiqR33U2zlW5fw1byUdZBw7eqJibjN
+ // Original code written by Jed smith
 
   // Parameter setup
   const float f = 6.0f - 5.0f * fa;
@@ -764,50 +719,37 @@ __DEVICE__ float3 exposure_low(float3 rgb, float ex, float pv, float fa) {
            float HiLo_mask = shadow_mask + highlight_mask;
             HiLo_mask = 1- _saturatef(HiLo_mask);
  
- 
- 
           float3 pinends = _mix(base,in,HiLo_mask);
  
-         
          float3 output;
            
          if (params.alpha) {
- 
- 
             output = drawTransparencyOverlay(pinends, HiLo_mask, params);
            } else {output = pinends;}
  
           
           return output;
- 
- 
- 
        }
 
 
 
-DEFINE_UI_PARAMS(P_exHI, KEY - Exposure__, DCTLUI_SLIDER_FLOAT, 0.0, -5.99, 5.99, 0.1)
-DEFINE_UI_PARAMS(P_faHI, Key Falloff, DCTLUI_SLIDER_FLOAT, 0.5, 0.0, 1.0, 0.0)
-//DEFINE_UI_PARAMS(invert, invert, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_PARAMS(P_exHI, KEY - Exposure__, DCTLUI_SLIDER_FLOAT, 0.0f, -5.99f, 5.99f, 0.1f)
+DEFINE_UI_PARAMS(P_faHI, Key Falloff, DCTLUI_SLIDER_FLOAT, 0.5f, 0.0f, 1.0f, 0.0f)
+
+DEFINE_UI_PARAMS(P_exLo, FILL - Exposure__, DCTLUI_SLIDER_FLOAT, 0.0f, -5.99f, 5.99f, 0.1f)
+DEFINE_UI_PARAMS(P_faLo, Fill Falloff, DCTLUI_SLIDER_FLOAT, 0.5f, 0.0f, 1.0f, 0.0f)
 
 
-DEFINE_UI_PARAMS(P_exLo, FILL - Exposure__, DCTLUI_SLIDER_FLOAT, 0.0, -5.99, 5.99, 0.1)
-DEFINE_UI_PARAMS(P_faLo, Fill Falloff, DCTLUI_SLIDER_FLOAT, 0.5, 0.0, 1.0, 0.0)
+DEFINE_UI_PARAMS(P_pvHI, HI Pivot, DCTLUI_SLIDER_FLOAT, 0.0f, -5.0f, 5.0f, 0.1f)
+DEFINE_UI_PARAMS(P_pvLo, Lo Pivot, DCTLUI_SLIDER_FLOAT, 0.0f, -3.0f, 3.0f, 0.1f)  
 
+DEFINE_UI_PARAMS(p_exposure, All  -  Exposure, DCTLUI_SLIDER_FLOAT, 0.0f, -1.0f, 1.0f, 0.1f)
 
-DEFINE_UI_PARAMS(p_save_sat, Preserve Color , DCTLUI_SLIDER_FLOAT, .5f, 0.0f, 1.0f, 0.25f)
+DEFINE_UI_PARAMS(p_save_sat, Preserve Color , DCTLUI_SLIDER_FLOAT, 0.5f, 0.0f, 1.0f, 0.25f)
 
-
-DEFINE_UI_PARAMS(P_pvHI, HI Pivot, DCTLUI_SLIDER_FLOAT, 0.0, -5.0, 5.0, 0.1)
-DEFINE_UI_PARAMS(P_pvLo, Lo Pivot, DCTLUI_SLIDER_FLOAT, 0.0, -3.0, 3, 0.1)  
-
-//DEFINE_UI_PARAMS(p_mix_pin, Pin Hi-LO Ends, DCTLUI_SLIDER_FLOAT, 1.0f, 0.0f, 1.0f, 0.01f)
 DEFINE_UI_PARAMS(p_Hi_stops, Mask Highlights, DCTLUI_SLIDER_FLOAT, 5.0f, -3.0f, 5.0f, 0.1f)
 DEFINE_UI_PARAMS(p_Lo_stops, Mask Shadows, DCTLUI_SLIDER_FLOAT, -7.0f, -7.0f, 1.0f, 0.1f)
-//DEFINE_UI_PARAMS(p_exposure, Exposure, DCTLUI_SLIDER_FLOAT, 0.0f, -1.0f, 1.0f, 0.1f)
 
-//DEFINE_UI_PARAMS(p_white_point, Roll High End , DCTLUI_SLIDER_FLOAT, 0.9999f, 0.0f, 0.9999f, 0.0001f)
-//DEFINE_UI_PARAMS(p_black_point, Roll Low End , DCTLUI_SLIDER_FLOAT, 0.0011, 0.0011, 1, 0.0001)
 
 
 DEFINE_UI_PARAMS(bypass,  Bypass, DCTLUI_CHECK_BOX, 0)
@@ -816,7 +758,7 @@ DEFINE_UI_PARAMS(opt_ramp,  Show Ramp, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(opt_ramp_scope, = Wide aspect overlays =, DCTLUI_CHECK_BOX, 0)
 
 DEFINE_UI_PARAMS(alpha_toggle, Show Mask, DCTLUI_CHECK_BOX, 0)
-DEFINE_UI_PARAMS(soft, Preserve curve ends, DCTLUI_CHECK_BOX, 1)
+DEFINE_UI_PARAMS(opt_soft, Preserve curve ends, DCTLUI_CHECK_BOX, 1)
 
 
 DEFINE_UI_PARAMS(alpha_matte, Highlight mode, DCTLUI_COMBO_BOX, 0, {overlay, matte}, {Overlay, Matte})
@@ -841,13 +783,11 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
    //float3 outRGB0;
     out = bypass_RGB;
 
-   P_pvLo = powf(2.0, P_pvLo)*set_pivot(.5, 2);
-   P_pvHI = powf(2.0, P_pvHI)*set_pivot(.5, 2);
+   P_pvLo = P_pvLo == 0 ?powf(2.0, 0.000001)*set_pivot(.5, 2) : powf(2.0, P_pvLo)*set_pivot(.5, 2);
+   P_pvHI = P_pvHI == 0 ?powf(2.0, 0.000001)*set_pivot(.5, 2) : powf(2.0, P_pvHI)*set_pivot(.5, 2);
    
-   //ensure the shadow mask is not active by default by covering a wider range than what most images can hold if the soft option is off
-  if (soft == 0) {if (p_Lo_stops == -7) {p_Lo_stops=-20;}}
-
-
+   //ensure the shadow mask is not active by default by covering a wider range than what most images can hold if the opt_soft option is off
+  if (opt_soft == 0) {if (p_Lo_stops == -7) {p_Lo_stops=-20;}}
 
 
 
@@ -879,7 +819,6 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
 
 // set up the Highlights and shadows masks control parameters
     params_t HiLo_params;
-
 
 
     HiLo_params.HiThreshold = p_Hi_stops;
@@ -921,12 +860,51 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
    //color preservation behavior
    float3 key_out = mixFloat3(P_exHI<0?1-p_save_sat:p_save_sat,key, luma_key_out);
 
+//Exposure and offset in linear
+   //with increase in exposure I automatically add a slight offset down 
+   //to keep the black levels from getting murcky 
+   //also with negative exposure I add the same amount as linear offset to keep black levels from crashing.
+
+      float minF= -0.01f;
+      float maxF = 0.01f;
+      float flare = 0;
+      if (p_exposure > 0) {
+             flare +=  p_exposure * minF;
+         } else if (p_exposure < 0) {
+             flare +=  p_exposure * (-maxF);
+         } else {
+             flare += 0;
+         }
+      float3 exp_out = GammaToLin(out, 2);
+      float3 ramp_exp = GammaToLin(ramp, 2);
+      float3 luma_exp = GammaToLin(luma_in_3, 2);
+      
+   
+          // Apply linear gain
+            p_exposure = powf(2.0, p_exposure);
+             exp_out = exp_out * p_exposure;
+             ramp_exp = ramp_exp * p_exposure;
+             luma_exp = luma_exp * p_exposure;
+
+          // Apply linear offset
+             exp_out = exp_out + flare;
+             ramp_exp = ramp_exp + flare;
+             luma_exp = luma_exp + flare;
+
+
+      exp_out = LinToGamma(exp_out, 2);
+      ramp_exp = LinToGamma(ramp_exp, 2);
+      luma_exp = LinToGamma(luma_exp, 2);
+      float3 luma_exp_out = out- luma_in + luma_exp.x;
+
+         //color preservation behavior
+    exp_out = mixFloat3(p_exposure<0?1-p_save_sat:p_save_sat,exp_out, luma_exp_out);
+
      
 
 //parellal mixing all adjustment
-      out = out + (fill_out - out) + (key_out - out) ;
-      ramp = ramp + (ramp_fill - ramp) + (ramp_key - ramp) ;    
-
+      out = out + (fill_out - out) + (key_out - out) + (exp_out - out);
+      ramp = ramp + (ramp_fill - ramp) + (ramp_key - ramp) + (ramp_exp - ramp);    
 
 
 
@@ -934,7 +912,7 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
  out = Inverse_WorkingSpace(out,p_transfer_f);
 
 
-   if (soft) {
+   if (opt_soft) {
       // add an automatic mask to minimize chances of clipping, but allow the user to still make somewhat big adjustments   
              p_Hi_stops = -3 + powf((p_Hi_stops + 3) / 8.0, 0.3) * 3.8;-3 + (0.475 * (p_Hi_stops + 3));
              HiLo_params.HiThreshold = p_Hi_stops;
@@ -955,7 +933,6 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
 
    	   	out = bypass_RGB;
    	   	ramp = cleanRamp;
-
    		}
 
       //option to overlay a grayscale ramp on the bottom edge of the frame
@@ -967,7 +944,7 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
          }
 
       //displaying the value of internal variables for debugging
-      //if( rY > (0.0003f * height) ) {out = make_float3( p_Lo_stops,p_Lo_stops, p_Lo_stops);}
+      //if( rY > (0.0003f * height) ) {out = make_float3 (flare, flare,flare);}
       
       else if( rY < (0.00003f * height) ) {out = ramp;}
 
@@ -995,17 +972,9 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
         out.y = overlayG == 0.0f ? out.y : overlayG;
         out.z = overlayB == 0.0f ? out.z : overlayB;
             
-
-
          }  
        return out;
 		}
 
-
-  
-
-
-
   return out;
-
 }
