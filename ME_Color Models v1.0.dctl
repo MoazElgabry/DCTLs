@@ -1,7 +1,27 @@
 #line 2
+/*
+"ME_Color Models"
+version : 1.0.0
+by Moaz Elgabry
+
+This DCTL converts between a set of color models originally made for testing and experimenting purposes 
+either in the color page of Resolve or in fusion.
+a basic setup is to make a sandwitch where you go into one of the color models in one nose 
+and apply the inverse conversion in the second node and apply any adjustments inbetween.
+
+*/
+
 //helper functions
 
 #define PI 3.1415926535897932384626
+ __DEVICE__ float fmod(float x, float y) {
+     if (x < 0) {
+         return y + _fmod(x, y);
+     } else {
+         return _fmod(x, y);
+     }
+ }
+
 
 __DEVICE__ float3 cross_product(float3 a, float3 b) {
     float3 out = make_float3(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x);
@@ -53,114 +73,95 @@ __DEVICE__ void make_rotation_mat_axis_angle(float mat[3][3], float3 axis, float
 
 //color models 
  __DEVICE__ float3 RGB_to_HSL(float3 RGB) {
-    float3 HSL;
+    float R = RGB.x;
+    float G = RGB.y;
+    float B = RGB.z;
 
-    float min = _fminf(_fminf(RGB.x, RGB.y), RGB.z);
-    float max = _fmaxf(_fmaxf(RGB.x, RGB.y), RGB.z);
-    float luminance = RGB.z;
-    luminance = (max+min)/2;
-    float hue = 0.0;
-    float saturation = 0.0;
+    float maxVal = max(R, max(G, B));
+    float minVal = min(R, min(G, B));
+    float delta = maxVal - minVal;
 
-    float delta = max - min;
-    if (delta > 0.0) {
-        if (max == RGB.x) {
-            hue = _fmod((RGB.y - RGB.z) / delta, 6.0);
-        } else if (max == RGB.y) {
-            hue = ((RGB.z - RGB.x) / delta) + 2.0;
+    float H = 0.0, S = 0.0, L = (maxVal + minVal) / 2.0;
+
+    if (delta != 0.0) {
+        S = (L > 0.5) ? delta / (2.0 - maxVal - minVal) : delta / (maxVal + minVal);
+
+        if (maxVal == R) {
+            H = fmod(((G - B) / delta), 6.0);
+        } else if (maxVal == G) {
+            H = ((B - R) / delta) + 2.0;
         } else {
-            hue = ((RGB.x - RGB.y) / delta) + 4.0;
+            H = ((R - G) / delta) + 4.0;
         }
-
-        if (luminance < 0.5) {
-           saturation = delta / (max + min);
-        } else {
-            saturation = delta / (2.0 - max - min);
-        }
+        H /= 6.0;
     }
 
-    HSL = make_float3(hue / 6.0, saturation, luminance);
-    return HSL;
-    } //Convert to HSL
+    return make_float3(H, S, L);
+ } //Convert to HSL
  
  __DEVICE__ float3 HSL_to_RGB(float3 HSL) {
     float3 RGB;
+    float H = HSL.x * 6.0; // Scale hue to [0, 6]
+    float S = HSL.y;
+    float L = HSL.z;
 
-    float hue = HSL.x * 6.0f;
-    float saturation = HSL.y;
-    float luminance = HSL.z;
+    float C = (1 - _fabs(2 * L - 1)) * S; // Chroma
+    float X = C * (1 - _fabs(fmod(H, 2.0) - 1.0)); // Second largest component
+    float m = L - C / 2.0;
 
-    float c = (1.0 - _fabs(2.0 * luminance - 1.0)) * saturation;
-    float x = c * (1.0 - _fabs(_fmod(hue, 2.0) - 1.0));
-    float m = luminance - (c / 2.0);
 
-    if (hue < 1.0) {
-         RGB = make_float3(c, x, 0.0);
-     } else if (hue < 2.0) {
-         RGB = make_float3(x, c, 0.0);
-     } else if (hue < 3.0) {
-         RGB = make_float3(0.0, c, x);
-     } else if (hue < 4.0) {
-         RGB = make_float3(0.0, x, c);
-     } else if (hue < 5.0) {
-         RGB = make_float3(x, 0.0, c);
-     } else {
-         RGB = make_float3(c, 0.0, x);
-     }
- 
-     // Add m to each component to get the final RGB color
-     RGB.x += m;
-     RGB.y += m;
-     RGB.z += m;
- 
-     return RGB;
+    if      (H < 1.0) RGB = make_float3(C, X, 0);
+    else if (H < 2.0) RGB = make_float3(X, C, 0);
+    else if (H < 3.0) RGB = make_float3(0, C, X);
+    else if (H < 4.0) RGB = make_float3(0, X, C);
+    else if (H < 5.0) RGB = make_float3(X, 0, C);
+    else              RGB = make_float3(C, 0, X);
+
+    return RGB + m; // Adjust with lightness
     } //Convert from HSL to RGB
 
  __DEVICE__ float3 RGB_to_HSV(float3 RGB) {
-    float3 HSV;
-    float min = _fminf(_fminf(RGB.x, RGB.y), RGB.z);
-    float max = _fmaxf(_fmaxf(RGB.x, RGB.y), RGB.z);
-    HSV.z = max;
-    float delta = max - min;
-    if (max != 0.0f) {
-    HSV.y = delta / max;
-    } else {
-    HSV.y = 0.0f;
-    HSV.x = 0.0f;
-    return HSV;
+    float R = RGB.x, G = RGB.y, B = RGB.z;
+    float maxVal = max(R, max(G, B));
+    float minVal = min(R, min(G, B));
+    float delta = maxVal - minVal;
+
+    float H = 0.0, S = (maxVal == 0.0) ? 0.0 : delta / maxVal;
+    float V = maxVal;
+
+    if (delta != 0.0) {
+        if (maxVal == R) {
+            H = fmod(((G - B) / delta), 6.0);
+        } else if (maxVal == G) {
+            H = ((B - R) / delta) + 2.0;
+        } else {
+            H = ((R - G) / delta) + 4.0;
+        }
+        H /= 6.0;
+        if (H < 0.0) H += 1.0;
     }
-    if (delta == 0.0f) {
-    HSV.x = 0.0f;
-    } else if (RGB.x == max) {
-    HSV.x = (RGB.y - RGB.z) / delta;
-    } else if (RGB.y == max) {
-    HSV.x = 2.0f + (RGB.z - RGB.x) / delta;
-    } else {
-    HSV.x = 4.0f + (RGB.x - RGB.y) / delta;
-    }
-    HSV.x *= 1.0f / 6.0f;
-    if (HSV.x < 0.0f)
-    HSV.x += 1.0f;
-    return HSV;
+
+    return make_float3(H, S, V);
     } //Convert to HSV
  
  __DEVICE__ float3 HSV_to_RGB(float3 HSV) {
+    float H = HSV.x * 6.0; // Scale hue to [0, 6]
+    float S = HSV.y;
+    float V = HSV.z;
+
+    float C = V * S; // Chroma
+    float X = C * (1.0 - _fabs(fmod(H, 2.0) - 1.0)); // Second largest component
+    float m = V - C;
+
     float3 RGB;
-    if (HSV.y == 0.0f) {
-    RGB.x = RGB.y = RGB.z = HSV.z;
-    } else {
-    HSV.x *= 6.0f;
-    int i = floor(HSV.x);
-    float f = HSV.x - i;
-    i = (i >= 0) ? (i % 6) : (i % 6) + 6;
-    float p = HSV.z * (1.0f - HSV.y);
-    float q = HSV.z * (1.0f - HSV.y * f);
-    float t = HSV.z * (1.0f - HSV.y * (1.0f - f));
-    RGB.x = i == 0 ? HSV.z : i == 1 ? q : i == 2 ? p : i == 3 ? p : i == 4 ? t : HSV.z;
-    RGB.y = i == 0 ? t : i == 1 ? HSV.z : i == 2 ? HSV.z : i == 3 ? q : i == 4 ? p : p;
-    RGB.z = i == 0 ? p : i == 1 ? p : i == 2 ? t : i == 3 ? HSV.z : i == 4 ? HSV.z : q;
-    }
-    return RGB;
+    if      (H < 1.0) RGB = make_float3(C, X, 0);
+    else if (H < 2.0) RGB = make_float3(X, C, 0);
+    else if (H < 3.0) RGB = make_float3(0, C, X);
+    else if (H < 4.0) RGB = make_float3(0, X, C);
+    else if (H < 5.0) RGB = make_float3(X, 0, C);
+    else              RGB = make_float3(C, 0, X);
+
+    return RGB + m;
     } //Convert from HSV to RGB
 
 __DEVICE__ float3 rgb_to_cone(float3 rgb) {
