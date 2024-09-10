@@ -463,12 +463,55 @@ __DEVICE__ float3 RGBtoHSP(float3 rgb) {
 
     return hsp;
 }
+ __DEVICE__ float3 cylindrical_to_rgb(float3 hsv) {
+    // Adapted from Juan Pablo Zambrano's code
+    float3 lsh = make_float3(hsv.z, hsv.y * 3.0, mod(hsv.x, 1.0) * 2.0 * PI);
 
+    float ctr = lsh.x * lsh.y * _cosf(lsh.z);
+    float ctg = lsh.x;
+    float ctb = lsh.x * lsh.y * _sinf(lsh.z);
+    float3 c = make_float3(ctr, ctg, ctb);
+
+    float mat[3][3] = {
+        {2.0 / 3.0, 1.0, 0.0},
+        {-1.0 / 3.0, 1.0, _sqrtf(3.0) / 3.0},
+        {-1.0 / 3.0, 1.0, -_sqrtf(3.0) / 3.0},
+    };
+
+    return mv_33_3(mat, c);
+ }
+ 
+ __DEVICE__ float3 rgb_to_cylindrical(float3 x) {
+
+    // Matrix aligns and scales achromatic white (1, 1, 1) with (0, 1, 0)
+    // Also rotates input (1, 0, 0) above the red axis and ensures that
+    // (1, 0, 0) input ends up having a red channel code value of (1).
+    float mat[3][3] = {
+        {1.0, -1.0 / 2.0, -1.0 / 2.0},
+        {1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0},
+        {0.0, _sqrtf(3.0) / 2.0, -_sqrtf(3.0) / 2.0},
+    };
+
+    float3 rotated_color = mv_33_3(mat, x);
+    float l = rotated_color.y;
+    float3 hsl = make_float3(0.0, 0.0, 0.0);
+
+    float3 normalized_color = rotated_color / l;
+    if (l == 0.0) {
+        hsl = make_float3(0.0, 0.0, l);
+    } else {
+        float theta = _atan2f(normalized_color.z, normalized_color.x);
+        hsl.x = mod(theta, 2.0 * PI) / (2.0 * PI);
+        hsl.y = _hypotf(normalized_color.x, normalized_color.z) / 3.0;
+        hsl.z = l;
+    }
+    return hsl;
+ }
     
 
 
 
-DEFINE_UI_PARAMS(p_model, Color model, DCTLUI_COMBO_BOX, 0, { hsl, hsv, cone, spherical,Chen,Reul,hsp}, { HSL, HSV, Cone, Spherical,Chen,Reuleaux,HSP })
+DEFINE_UI_PARAMS(p_model, Color model, DCTLUI_COMBO_BOX, 0, { hsl, hsv, cone, spherical,Chen,Reul,hsp, cylindrical}, { HSL, HSV, Cone, Spherical,Chen,Reuleaux,HSP,Cylindrical})
 DEFINE_UI_PARAMS(p_inverse, Inverse, DCTLUI_CHECK_BOX, 0)
 
 //DEFINE_UI_PARAMS(p_dir, Direction, DCTLUI_COMBO_BOX, 0, { p_forward, p_inverse }, { Forward, Inverse })
@@ -484,6 +527,7 @@ else if (p_model == 3) { if (p_inverse == 0) {output = rgb_to_spherical(RGB);} e
 else if (p_model == 4) { if (p_inverse == 0) {output = RGBtoCHEN(RGB);} else { output = CHENtoRGB(RGB);}}
 else if (p_model == 5) { if (p_inverse == 0) {output = rgb_to_reuleaux(RGB);} else { output = reuleaux_to_rgb(RGB);}}
 else if (p_model == 6) { if (p_inverse == 0) {output = RGBtoHSP(RGB);} else { output = HSPtoRGB(RGB);}}
+else if (p_model == 7) { if (p_inverse == 0) {output = rgb_to_cylindrical(RGB);} else { output = cylindrical_to_rgb(RGB);}}
 
     return output;
 }

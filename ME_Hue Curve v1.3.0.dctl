@@ -149,8 +149,8 @@
  
  __DEVICE__ float3 RGB_to_HSV(float3 RGB) {
     float R = RGB.x, G = RGB.y, B = RGB.z;
-    float maxVal = max(R, max(G, B));
-    float minVal = min(R, min(G, B));
+    float maxVal = _fmaxf(R, _fmaxf(G, B));
+    float minVal = _fminf(R, _fminf(G, B));
     float delta = maxVal - minVal;
 
     float H = 0.0, S = (maxVal == 0.0) ? 0.0 : delta / maxVal;
@@ -190,8 +190,10 @@
 
     return RGB + m;
     } //Convert from HSV to RGB
- // Convert HSP (Hue, Saturation, Perceived brightness) to RGB
- __DEVICE__ float3 HSPtoRGB(float3 hsp) {
+
+
+// Convert HSP (Hue, Saturation, Perceived brightness) to RGB
+__DEVICE__ float3 HSPtoRGB(float3 hsp) {
     // Constants for the HSP-RGB conversion
     const float Pr = 0.299f;
     const float Pg = 0.587f;
@@ -208,37 +210,37 @@
         if (H < 1.0f / 6.0f) {  // R > G > B
             H = 6.0f * H;
             part = 1.0f + H * (1.0f / minOverMax - 1.0f);
-            rgb.z = P / _sqrtf(Pr / (minOverMax * minOverMax) + Pg * part * part + Pb);
+            rgb.z = P / sqrtf(Pr / (minOverMax * minOverMax) + Pg * part * part + Pb);
             rgb.x = rgb.z / minOverMax;
             rgb.y = rgb.z + H * (rgb.x - rgb.z);
         } else if (H < 2.0f / 6.0f) {  // G > R > B
             H = 6.0f * (2.0f / 6.0f - H);
             part = 1.0f + H * (1.0f / minOverMax - 1.0f);
-            rgb.z = P / _sqrtf(Pg / (minOverMax * minOverMax) + Pr * part * part + Pb);
+            rgb.z = P / sqrtf(Pg / (minOverMax * minOverMax) + Pr * part * part + Pb);
             rgb.y = rgb.z / minOverMax;
             rgb.x = rgb.z + H * (rgb.y - rgb.z);
         } else if (H < 3.0f / 6.0f) {  // G > B > R
             H = 6.0f * (H - 2.0f / 6.0f);
             part = 1.0f + H * (1.0f / minOverMax - 1.0f);
-            rgb.x = P / _sqrtf(Pg / (minOverMax * minOverMax) + Pb * part * part + Pr);
+            rgb.x = P / sqrtf(Pg / (minOverMax * minOverMax) + Pb * part * part + Pr);
             rgb.y = rgb.x / minOverMax;
             rgb.z = rgb.x + H * (rgb.y - rgb.x);
         } else if (H < 4.0f / 6.0f) {  // B > G > R
             H = 6.0f * (4.0f / 6.0f - H);
             part = 1.0f + H * (1.0f / minOverMax - 1.0f);
-            rgb.x = P / _sqrtf(Pb / (minOverMax * minOverMax) + Pg * part * part + Pr);
+            rgb.x = P / sqrtf(Pb / (minOverMax * minOverMax) + Pg * part * part + Pr);
             rgb.z = rgb.x / minOverMax;
             rgb.y = rgb.x + H * (rgb.z - rgb.x);
         } else if (H < 5.0f / 6.0f) {  // B > R > G
             H = 6.0f * (H - 4.0f / 6.0f);
             part = 1.0f + H * (1.0f / minOverMax - 1.0f);
-            rgb.y = P / _sqrtf(Pb / (minOverMax * minOverMax) + Pr * part * part + Pg);
+            rgb.y = P / sqrtf(Pb / (minOverMax * minOverMax) + Pr * part * part + Pg);
             rgb.z = rgb.y / minOverMax;
             rgb.x = rgb.y + H * (rgb.z - rgb.y);
         } else {  // R > B > G
             H = 6.0f * (6.0f / 6.0f - H);
             part = 1.0f + H * (1.0f / minOverMax - 1.0f);
-            rgb.y = P / _sqrtf(Pr / (minOverMax * minOverMax) + Pb * part * part + Pg);
+            rgb.y = P / sqrtf(Pr / (minOverMax * minOverMax) + Pb * part * part + Pg);
             rgb.x = rgb.y / minOverMax;
             rgb.z = rgb.y + H * (rgb.x - rgb.y);
         }
@@ -246,42 +248,42 @@
         // Handle grayscale case when minOverMax == 0
         if (H < 1.0f / 6.0f) {  // R > G > B
             H = 6.0f * H;
-            rgb.x = _sqrtf(P * P / (Pr + Pg * H * H));
+            rgb.x = sqrtf(P * P / (Pr + Pg * H * H));
             rgb.y = rgb.x * H;
             rgb.z = 0.0f;
         } else if (H < 2.0f / 6.0f) {  // G > R > B
             H = 6.0f * (2.0f / 6.0f - H);
-            rgb.y = _sqrtf(P * P / (Pg + Pr * H * H));
+            rgb.y = sqrtf(P * P / (Pg + Pr * H * H));
             rgb.x = rgb.y * H;
             rgb.z = 0.0f;
         } else if (H < 3.0f / 6.0f) {  // G > B > R
             H = 6.0f * (H - 2.0f / 6.0f);
-            rgb.y = _sqrtf(P * P / (Pg + Pb * H * H));
+            rgb.y = sqrtf(P * P / (Pg + Pb * H * H));
             rgb.z = rgb.y * H;
             rgb.x = 0.0f;
         } else if (H < 4.0f / 6.0f) {  // B > G > R
             H = 6.0f * (4.0f / 6.0f - H);
-            rgb.z = _sqrtf(P * P / (Pb + Pg * H * H));
+            rgb.z = sqrtf(P * P / (Pb + Pg * H * H));
             rgb.y = rgb.z * H;
             rgb.x = 0.0f;
         } else if (H < 5.0f / 6.0f) {  // B > R > G
             H = 6.0f * (H - 4.0f / 6.0f);
-            rgb.z = _sqrtf(P * P / (Pb + Pr * H * H));
+            rgb.z = sqrtf(P * P / (Pb + Pr * H * H));
             rgb.x = rgb.z * H;
             rgb.y = 0.0f;
         } else {  // R > B > G
             H = 6.0f * (6.0f / 6.0f - H);
-            rgb.x = _sqrtf(P * P / (Pr + Pb * H * H));
+            rgb.x = sqrtf(P * P / (Pr + Pb * H * H));
             rgb.z = rgb.x * H;
             rgb.y = 0.0f;
         }
     }
 
     return rgb;
- }
- 
- // Convert RGB to HSP (Perceived Brightness, Hue, Saturation)
- __DEVICE__ float3 RGBtoHSP(float3 rgb) {
+}
+
+// Convert RGB to HSP (Perceived Brightness, Hue, Saturation)
+__DEVICE__ float3 RGBtoHSP(float3 rgb) {
     // Constants for the HSP-RGB conversion
     const float Pr = 0.299f;
     const float Pg = 0.587f;
@@ -291,7 +293,7 @@
     float B = rgb.z;
 
     float3 hsp;
-    float P = _sqrtf(R * R * Pr + G * G * Pg + B * B * Pb);  // Perceived brightness
+    float P = sqrtf(R * R * Pr + G * G * Pg + B * B * Pb);  // Perceived brightness
     hsp.z = P;
 
     // Calculate Hue and Saturation
@@ -328,7 +330,9 @@
     }
 
     return hsp;
- }
+}
+
+
 
 
 //=========================
@@ -723,13 +727,18 @@ __DEVICE__ float complementary_hue_curve(float complementary_fade, float x, cont
 
     if (colorModel == 1 && direction == 1) {out = RGB_to_HSV(out);}
     if (colorModel == 1 && direction == 0) {out = HSV_to_RGB(out);}
-    if (colorModel == 2&& direction == 1) {out = rgb_to_reuleaux(out);}
-    if (colorModel == 2&& direction == 0) {out = reuleaux_to_rgb(out);}
-    if (colorModel == 3&& direction == 1) {out = rgb_to_cylindrical(out);}
-    if (colorModel == 3&& direction == 0) {out = cylindrical_to_rgb(out);}
+
+    if (colorModel == 2 && direction == 1) {out = rgb_to_reuleaux(out);}
+    if (colorModel == 2 && direction == 0) {out = reuleaux_to_rgb(out);}
+
+    if (colorModel == 3 && direction == 1) {out = rgb_to_cylindrical(out);}
+    if (colorModel == 3 && direction == 0) {out = cylindrical_to_rgb(out);}
+    
+    if (colorModel == 4 && direction == 1) {out = RGBtoHSP(out);}
+    if (colorModel == 4 && direction == 0) {out = HSPtoRGB(out);}
 
     // RGB to CIE Lab
-    if (colorModel == 4 && direction == 1) {
+    if (colorModel == 5 && direction == 1) {
 
         RGB = rgb_inset(in);
         switch (colorspace) {
@@ -749,7 +758,7 @@ __DEVICE__ float complementary_hue_curve(float complementary_fade, float x, cont
         out = Lab_to_LCH(Lab);
      }
     //CIE Lab to RGB
-    if (colorModel == 4 && direction == 0) {
+    if (colorModel == 5 && direction == 0) {
       Lab = LCH_to_Lab(in);
 
         XYZ = CIELab_to_XYZ(Lab, offset, scale); 
@@ -770,7 +779,7 @@ __DEVICE__ float complementary_hue_curve(float complementary_fade, float x, cont
         out = rgb_outset(RGB);
      }
     // RGB to OKLab
-    if (colorModel == 5 && direction == 1) {
+    if (colorModel == 6 && direction == 1) {
                 RGB = rgb_inset(in);
         switch (colorspace) {
             case 0:
@@ -789,7 +798,7 @@ __DEVICE__ float complementary_hue_curve(float complementary_fade, float x, cont
         out = Lab_to_LCH(Lab);
      }
      // OKLab to RGB
-    if (colorModel == 5 && direction == 0) {
+    if (colorModel == 6 && direction == 0) {
         Lab = LCH_to_Lab(in);
 
         XYZ = OKLab_to_XYZ(Lab, offset, scale);  
@@ -810,7 +819,7 @@ __DEVICE__ float complementary_hue_curve(float complementary_fade, float x, cont
         out = rgb_outset(RGB);
     }
     // RGB to ProLab
-    if (colorModel == 6 && direction == 1) {
+    if (colorModel == 7 && direction == 1) {
         RGB = rgb_inset(in);
         switch (colorspace) {
             case 0:
@@ -829,7 +838,7 @@ __DEVICE__ float complementary_hue_curve(float complementary_fade, float x, cont
         out =  Lab_to_LCH(Lab);
      }
     // ProLab to RGB
-    if (colorModel == 6 && direction == 0) {
+    if (colorModel == 7 && direction == 0) {
         Lab = LCH_to_Lab(in);
 
         XYZ = ProLab_to_XYZ(Lab, offset, scale);  
@@ -849,8 +858,7 @@ __DEVICE__ float complementary_hue_curve(float complementary_fade, float x, cont
 
         out = rgb_outset(RGB);
     }
-    if (colorModel == 7&& direction == 1) {out = RGBtoHSP(out);}
-    if (colorModel == 7&& direction == 0) {out = HSPtoRGB(out);}
+
    //else { out = make_float3(1,0,0);} //red on error
 
    return out;
@@ -863,10 +871,10 @@ __DEVICE__ float complementary_hue_curve(float complementary_fade, float x, cont
   if (color_model == 1) {channel = 1;}
   if (color_model == 2) {channel = 1;}
   if (color_model == 3) {channel = 1;}
-  if (color_model == 4) {channel = 3;}
+  if (color_model == 4) {channel = 1;}
   if (color_model == 5) {channel = 3;}
   if (color_model == 6) {channel = 3;}
-  if (color_model == 7) {channel = 1;}
+  if (color_model == 7) {channel = 3;}
   return channel;     
   }                      
  
@@ -891,9 +899,8 @@ DEFINE_UI_PARAMS(smoothness, Smooth, DCTLUI_SLIDER_FLOAT, 0, 0.0, 1.0, 0.01)
 DEFINE_UI_PARAMS(bypass, 🚫 Bypass, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(draw_curve, 📈 Draw Curve, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(complementary_curve, Affect Opposite Hues, DCTLUI_CHECK_BOX, 0)
-//DEFINE_UI_PARAMS(P_inset, Apply Inset - outset, DCTLUI_CHECK_BOX, 0)
 
-DEFINE_UI_PARAMS(color_model, Color model, DCTLUI_COMBO_BOX, 0, {chen, HSV, reuleaux, cylinderical,cie, ok, pro,HSP}, {Chen, HSV,  Reuleaux, Cylindrical, CIELab , OKLab , ProLab,HSP })
+DEFINE_UI_PARAMS(color_model, Color model, DCTLUI_COMBO_BOX, 0, {chen, HSV, reuleaux, cylinderical,HSP,cie, ok, pro}, {Chen, HSV,  Reuleaux, Cylindrical,HSP, CIELab , OKLab , ProLab })
 
 DEFINE_UI_PARAMS(colorspace, Colorspace, DCTLUI_COMBO_BOX, 3, {XYZg, rec2020, ccg, dwg, awg3}, {XYZ, Rec2020, Cinema Gamut, DaVinci WG, AWG3})
 
