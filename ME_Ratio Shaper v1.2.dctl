@@ -733,22 +733,22 @@ __DEVICE__ float3 exposure_low(float3 rgb, float ex, float pv, float fa) {
 
 
 
-DEFINE_UI_PARAMS(P_exHI, KEY - Exposure__, DCTLUI_SLIDER_FLOAT, 0.0f, -5.99f, 5.99f, 0.1f)
-DEFINE_UI_PARAMS(P_faHI, Key Falloff, DCTLUI_SLIDER_FLOAT, 0.5f, 0.0f, 1.0f, 0.0f)
+DEFINE_UI_PARAMS(P_exHI, KEY - Exposure__, DCTLUI_SLIDER_FLOAT, 0.0, -5.99, 5.99, 0.1)
+DEFINE_UI_PARAMS(P_faHI, Key Falloff, DCTLUI_SLIDER_FLOAT, 0.5, 0.0, 1.0, 0.0)
 
-DEFINE_UI_PARAMS(P_exLo, FILL - Exposure__, DCTLUI_SLIDER_FLOAT, 0.0f, -5.99f, 5.99f, 0.1f)
-DEFINE_UI_PARAMS(P_faLo, Fill Falloff, DCTLUI_SLIDER_FLOAT, 0.5f, 0.0f, 1.0f, 0.0f)
+DEFINE_UI_PARAMS(P_exLo, FILL - Exposure__, DCTLUI_SLIDER_FLOAT, 0.0, -5.99, 5.99, 0.1)
+DEFINE_UI_PARAMS(P_faLo, Fill Falloff, DCTLUI_SLIDER_FLOAT, 0.5, 0.0, 1.0, 0.0)
 
 
-DEFINE_UI_PARAMS(P_pvHI, HI Pivot, DCTLUI_SLIDER_FLOAT, 0.0f, -5.0f, 5.0f, 0.1f)
-DEFINE_UI_PARAMS(P_pvLo, Lo Pivot, DCTLUI_SLIDER_FLOAT, 0.0f, -3.0f, 3.0f, 0.1f)  
+DEFINE_UI_PARAMS(P_pvHI, HI Pivot, DCTLUI_SLIDER_FLOAT, 0.0, -5.0, 5.0, 0.1)
+DEFINE_UI_PARAMS(P_pvLo, Lo Pivot, DCTLUI_SLIDER_FLOAT, 0.0, -3.0, 3.0, 0.1)  
 
-DEFINE_UI_PARAMS(p_exposure, All  -  Exposure, DCTLUI_SLIDER_FLOAT, 0.0f, -1.0f, 1.0f, 0.1f)
+DEFINE_UI_PARAMS(p_exposure, All  -  Exposure, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.1)
 
-DEFINE_UI_PARAMS(p_save_sat, Preserve Color , DCTLUI_SLIDER_FLOAT, 0.5f, 0.0f, 1.0f, 0.25f)
+DEFINE_UI_PARAMS(p_save_sat, Preserve Color , DCTLUI_SLIDER_FLOAT, 0.5, 0.0, 1.0, 0.25)
 
-DEFINE_UI_PARAMS(p_Hi_stops, Mask Highlights, DCTLUI_SLIDER_FLOAT, 5.0f, -3.0f, 5.0f, 0.1f)
-DEFINE_UI_PARAMS(p_Lo_stops, Mask Shadows, DCTLUI_SLIDER_FLOAT, -7.0f, -7.0f, 1.0f, 0.1f)
+DEFINE_UI_PARAMS(p_Hi_stops, Mask Highlights, DCTLUI_SLIDER_FLOAT, 5.0, -3.0, 5.0, 0.1)
+DEFINE_UI_PARAMS(p_Lo_stops, Mask Shadows, DCTLUI_SLIDER_FLOAT, -7.0, -7.0, 1.0, 0.1)
 
 
 

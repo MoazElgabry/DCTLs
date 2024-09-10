@@ -795,15 +795,15 @@ DEFINE_UI_PARAMS(P_exLo, FILL - Exposure__, DCTLUI_SLIDER_FLOAT, 0.0, -5.99, 5.9
 DEFINE_UI_PARAMS(P_faLo, Fill Falloff, DCTLUI_SLIDER_FLOAT, 0.5, 0.0, 1.0, 0.0)
 
 
-DEFINE_UI_PARAMS(p_save_sat, Preserve Color , DCTLUI_SLIDER_FLOAT, .5f, 0.0f, 1.0f, 0.25f)
+DEFINE_UI_PARAMS(p_save_sat, Preserve Color , DCTLUI_SLIDER_FLOAT, .5, 0.0, 1.0, 0.25)
 
 
 DEFINE_UI_PARAMS(P_pvHI, HI Pivot, DCTLUI_SLIDER_FLOAT, 0.0, -5.0, 5.0, 0.1)
 DEFINE_UI_PARAMS(P_pvLo, Lo Pivot, DCTLUI_SLIDER_FLOAT, 0.0, -3.0, 3, 0.1)  
 
 //DEFINE_UI_PARAMS(p_mix_pin, Pin Hi-LO Ends, DCTLUI_SLIDER_FLOAT, 1.0f, 0.0f, 1.0f, 0.01f)
-DEFINE_UI_PARAMS(p_Hi_stops, Mask Highlights, DCTLUI_SLIDER_FLOAT, 5.0f, -3.0f, 5.0f, 0.1f)
-DEFINE_UI_PARAMS(p_Lo_stops, Mask Shadows, DCTLUI_SLIDER_FLOAT, -7.0f, -7.0f, 1.0f, 0.1f)
+DEFINE_UI_PARAMS(p_Hi_stops, Mask Highlights, DCTLUI_SLIDER_FLOAT, 5.0, -3.0, 5.0, 0.1)
+DEFINE_UI_PARAMS(p_Lo_stops, Mask Shadows, DCTLUI_SLIDER_FLOAT, -7.0, -7.0, 1.0, 0.1)
 //DEFINE_UI_PARAMS(p_exposure, Exposure, DCTLUI_SLIDER_FLOAT, 0.0f, -1.0f, 1.0f, 0.1f)
 
 //DEFINE_UI_PARAMS(p_white_point, Roll High End , DCTLUI_SLIDER_FLOAT, 0.9999f, 0.0f, 0.9999f, 0.0001f)

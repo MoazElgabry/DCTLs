@@ -966,13 +966,13 @@
 
 
 
-DEFINE_UI_PARAMS(P_exposure,  Exposure 🌞, DCTLUI_SLIDER_FLOAT, 0.0f, -4f, 4.0f, 0.001f)
-DEFINE_UI_PARAMS(contrast, Contrast 🌓 , DCTLUI_SLIDER_FLOAT, 0.0, -0.5, 1, 0.0001f)
+DEFINE_UI_PARAMS(P_exposure,  Exposure 🌞, DCTLUI_SLIDER_FLOAT, 0.0, -4, 4.0, 0.001)
+DEFINE_UI_PARAMS(contrast, Contrast 🌓 , DCTLUI_SLIDER_FLOAT, 0.0, -0.5, 1, 0.0001)
 DEFINE_UI_PARAMS(pivot, Relative Pivot 📌, DCTLUI_SLIDER_FLOAT, 0.0, -1, 1, 0.001)
 
 
-DEFINE_UI_PARAMS(p_white_point, ⚪ White Point  :⚪, DCTLUI_SLIDER_FLOAT, 1.015f, 0.0f, 1.018f, 0.0001f)
-DEFINE_UI_PARAMS(p_w_p_pivot, ├ Shoulder  ╭, DCTLUI_SLIDER_FLOAT, 0.6, 0.2, .997f, 0.1)
+DEFINE_UI_PARAMS(p_white_point, ⚪ White Point  :⚪, DCTLUI_SLIDER_FLOAT, 1.015, 0.0, 1.018, 0.0001)
+DEFINE_UI_PARAMS(p_w_p_pivot, ├ Shoulder  ╭, DCTLUI_SLIDER_FLOAT, 0.6, 0.2, .997, 0.1)
 DEFINE_UI_PARAMS(p_shoulder_str,└ Fall off ╭   , DCTLUI_SLIDER_FLOAT, 6, 0.0, 9, 0.001)
 
 DEFINE_UI_PARAMS(p_black_point, ⚫ Black Point  :⚫, DCTLUI_SLIDER_FLOAT, 0.0001, 0.0001, .5, 0.0001)
@@ -980,9 +980,9 @@ DEFINE_UI_PARAMS(p_b_p_pivot, ├ Toe     ⌣  , DCTLUI_SLIDER_FLO
 DEFINE_UI_PARAMS(p_toe_str, └ Fall off   ⌣   , DCTLUI_SLIDER_FLOAT, 2.0, 0.0, 10.0, 0.001)
 
 
-DEFINE_UI_PARAMS(p_mix_contrast, Linear / S curve: , DCTLUI_SLIDER_FLOAT, 1.0f, 0.0f, 1.0f, 0.01f)
-DEFINE_UI_PARAMS(p_mix_sat, Preserve Color 🖍️, DCTLUI_SLIDER_FLOAT, .5f, 0.0f, 1.0f, 0.01f)
-DEFINE_UI_PARAMS(p_mix_pin, Pin Hi-LO Ends, DCTLUI_SLIDER_FLOAT, 0.0f, 0.0f, 1.0f, 0.01f)
+DEFINE_UI_PARAMS(p_mix_contrast, Linear / S curve: , DCTLUI_SLIDER_FLOAT, 1.0, 0.0, 1.0, 0.01)
+DEFINE_UI_PARAMS(p_mix_sat, Preserve Color 🖍️, DCTLUI_SLIDER_FLOAT, .5, 0.0, 1.0, 0.01)
+DEFINE_UI_PARAMS(p_mix_pin, Pin Hi-LO Ends, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 1.0, 0.01)
 
 
 DEFINE_UI_PARAMS(bypass, 🚫 Bypass, DCTLUI_CHECK_BOX, 0)
