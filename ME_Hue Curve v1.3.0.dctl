@@ -1,9 +1,11 @@
 #line 2
 /* ME_Hue curve ver 1.2
-    Made by Moaz Elgabry 
+    written by Moaz Elgabry, moazelgabry.com
     The original code is based on the Hue curve function written by Thatcher Freeman
     https://github.com/thatcherfreeman/utility-dctls/blob/main/Effects/Hue%20Curve.dctl
-    The code for Lab color models was adapted from code written by Jan Karow*/
+
+    The code for Lab color models was adapted from code written by Jan Karow and Nico Fink 
+ */
 
 
 
@@ -146,50 +148,47 @@
  }
  
  __DEVICE__ float3 RGB_to_HSV(float3 RGB) {
-    float3 HSV;
-    float min = _fminf(_fminf(RGB.x, RGB.y), RGB.z);
-    float max = _fmaxf(_fmaxf(RGB.x, RGB.y), RGB.z);
-    HSV.z = max;
-    float delta = max - min;
-    if (max != 0.0f) {
-    HSV.y = delta / max;
-    } else {
-    HSV.y = 0.0f;
-    HSV.x = 0.0f;
-    return HSV;
+    float R = RGB.x, G = RGB.y, B = RGB.z;
+    float maxVal = max(R, max(G, B));
+    float minVal = min(R, min(G, B));
+    float delta = maxVal - minVal;
+
+    float H = 0.0, S = (maxVal == 0.0) ? 0.0 : delta / maxVal;
+    float V = maxVal;
+
+    if (delta != 0.0) {
+        if (maxVal == R) {
+            H = mod(((G - B) / delta), 6.0);
+        } else if (maxVal == G) {
+            H = ((B - R) / delta) + 2.0;
+        } else {
+            H = ((R - G) / delta) + 4.0;
+        }
+        H /= 6.0;
+        if (H < 0.0) H += 1.0;
     }
-    if (delta == 0.0f) {
-    HSV.x = 0.0f;
-    } else if (RGB.x == max) {
-    HSV.x = (RGB.y - RGB.z) / delta;
-    } else if (RGB.y == max) {
-    HSV.x = 2.0f + (RGB.z - RGB.x) / delta;
-    } else {
-    HSV.x = 4.0f + (RGB.x - RGB.y) / delta;
-    }
-    HSV.x *= 1.0f / 6.0f;
-    if (HSV.x < 0.0f)
-    HSV.x += 1.0f;
-    return HSV;
+
+    return make_float3(H, S, V);
     } //Convert to HSV
  
  __DEVICE__ float3 HSV_to_RGB(float3 HSV) {
+    float H = HSV.x * 6.0; // Scale hue to [0, 6]
+    float S = HSV.y;
+    float V = HSV.z;
+
+    float C = V * S; // Chroma
+    float X = C * (1.0 - _fabs(mod(H, 2.0) - 1.0)); // Second largest component
+    float m = V - C;
+
     float3 RGB;
-    if (HSV.y == 0.0f) {
-    RGB.x = RGB.y = RGB.z = HSV.z;
-    } else {
-    HSV.x *= 6.0f;
-    int i = floor(HSV.x);
-    float f = HSV.x - i;
-    i = (i >= 0) ? (i % 6) : (i % 6) + 6;
-    float p = HSV.z * (1.0f - HSV.y);
-    float q = HSV.z * (1.0f - HSV.y * f);
-    float t = HSV.z * (1.0f - HSV.y * (1.0f - f));
-    RGB.x = i == 0 ? HSV.z : i == 1 ? q : i == 2 ? p : i == 3 ? p : i == 4 ? t : HSV.z;
-    RGB.y = i == 0 ? t : i == 1 ? HSV.z : i == 2 ? HSV.z : i == 3 ? q : i == 4 ? p : p;
-    RGB.z = i == 0 ? p : i == 1 ? p : i == 2 ? t : i == 3 ? HSV.z : i == 4 ? HSV.z : q;
-    }
-    return RGB;
+    if      (H < 1.0) RGB = make_float3(C, X, 0);
+    else if (H < 2.0) RGB = make_float3(X, C, 0);
+    else if (H < 3.0) RGB = make_float3(0, C, X);
+    else if (H < 4.0) RGB = make_float3(0, X, C);
+    else if (H < 5.0) RGB = make_float3(X, 0, C);
+    else              RGB = make_float3(C, 0, X);
+
+    return RGB + m;
     } //Convert from HSV to RGB
  // Convert HSP (Hue, Saturation, Perceived brightness) to RGB
  __DEVICE__ float3 HSPtoRGB(float3 hsp) {
@@ -209,37 +208,37 @@
         if (H < 1.0f / 6.0f) {  // R > G > B
             H = 6.0f * H;
             part = 1.0f + H * (1.0f / minOverMax - 1.0f);
-            rgb.z = P / sqrtf(Pr / (minOverMax * minOverMax) + Pg * part * part + Pb);
+            rgb.z = P / _sqrtf(Pr / (minOverMax * minOverMax) + Pg * part * part + Pb);
             rgb.x = rgb.z / minOverMax;
             rgb.y = rgb.z + H * (rgb.x - rgb.z);
         } else if (H < 2.0f / 6.0f) {  // G > R > B
             H = 6.0f * (2.0f / 6.0f - H);
             part = 1.0f + H * (1.0f / minOverMax - 1.0f);
-            rgb.z = P / sqrtf(Pg / (minOverMax * minOverMax) + Pr * part * part + Pb);
+            rgb.z = P / _sqrtf(Pg / (minOverMax * minOverMax) + Pr * part * part + Pb);
             rgb.y = rgb.z / minOverMax;
             rgb.x = rgb.z + H * (rgb.y - rgb.z);
         } else if (H < 3.0f / 6.0f) {  // G > B > R
             H = 6.0f * (H - 2.0f / 6.0f);
             part = 1.0f + H * (1.0f / minOverMax - 1.0f);
-            rgb.x = P / sqrtf(Pg / (minOverMax * minOverMax) + Pb * part * part + Pr);
+            rgb.x = P / _sqrtf(Pg / (minOverMax * minOverMax) + Pb * part * part + Pr);
             rgb.y = rgb.x / minOverMax;
             rgb.z = rgb.x + H * (rgb.y - rgb.x);
         } else if (H < 4.0f / 6.0f) {  // B > G > R
             H = 6.0f * (4.0f / 6.0f - H);
             part = 1.0f + H * (1.0f / minOverMax - 1.0f);
-            rgb.x = P / sqrtf(Pb / (minOverMax * minOverMax) + Pg * part * part + Pr);
+            rgb.x = P / _sqrtf(Pb / (minOverMax * minOverMax) + Pg * part * part + Pr);
             rgb.z = rgb.x / minOverMax;
             rgb.y = rgb.x + H * (rgb.z - rgb.x);
         } else if (H < 5.0f / 6.0f) {  // B > R > G
             H = 6.0f * (H - 4.0f / 6.0f);
             part = 1.0f + H * (1.0f / minOverMax - 1.0f);
-            rgb.y = P / sqrtf(Pb / (minOverMax * minOverMax) + Pr * part * part + Pg);
+            rgb.y = P / _sqrtf(Pb / (minOverMax * minOverMax) + Pr * part * part + Pg);
             rgb.z = rgb.y / minOverMax;
             rgb.x = rgb.y + H * (rgb.z - rgb.y);
         } else {  // R > B > G
             H = 6.0f * (6.0f / 6.0f - H);
             part = 1.0f + H * (1.0f / minOverMax - 1.0f);
-            rgb.y = P / sqrtf(Pr / (minOverMax * minOverMax) + Pb * part * part + Pg);
+            rgb.y = P / _sqrtf(Pr / (minOverMax * minOverMax) + Pb * part * part + Pg);
             rgb.x = rgb.y / minOverMax;
             rgb.z = rgb.y + H * (rgb.x - rgb.y);
         }
@@ -247,32 +246,32 @@
         // Handle grayscale case when minOverMax == 0
         if (H < 1.0f / 6.0f) {  // R > G > B
             H = 6.0f * H;
-            rgb.x = sqrtf(P * P / (Pr + Pg * H * H));
+            rgb.x = _sqrtf(P * P / (Pr + Pg * H * H));
             rgb.y = rgb.x * H;
             rgb.z = 0.0f;
         } else if (H < 2.0f / 6.0f) {  // G > R > B
             H = 6.0f * (2.0f / 6.0f - H);
-            rgb.y = sqrtf(P * P / (Pg + Pr * H * H));
+            rgb.y = _sqrtf(P * P / (Pg + Pr * H * H));
             rgb.x = rgb.y * H;
             rgb.z = 0.0f;
         } else if (H < 3.0f / 6.0f) {  // G > B > R
             H = 6.0f * (H - 2.0f / 6.0f);
-            rgb.y = sqrtf(P * P / (Pg + Pb * H * H));
+            rgb.y = _sqrtf(P * P / (Pg + Pb * H * H));
             rgb.z = rgb.y * H;
             rgb.x = 0.0f;
         } else if (H < 4.0f / 6.0f) {  // B > G > R
             H = 6.0f * (4.0f / 6.0f - H);
-            rgb.z = sqrtf(P * P / (Pb + Pg * H * H));
+            rgb.z = _sqrtf(P * P / (Pb + Pg * H * H));
             rgb.y = rgb.z * H;
             rgb.x = 0.0f;
         } else if (H < 5.0f / 6.0f) {  // B > R > G
             H = 6.0f * (H - 4.0f / 6.0f);
-            rgb.z = sqrtf(P * P / (Pb + Pr * H * H));
+            rgb.z = _sqrtf(P * P / (Pb + Pr * H * H));
             rgb.x = rgb.z * H;
             rgb.y = 0.0f;
         } else {  // R > B > G
             H = 6.0f * (6.0f / 6.0f - H);
-            rgb.x = sqrtf(P * P / (Pr + Pb * H * H));
+            rgb.x = _sqrtf(P * P / (Pr + Pb * H * H));
             rgb.z = rgb.x * H;
             rgb.y = 0.0f;
         }
@@ -292,7 +291,7 @@
     float B = rgb.z;
 
     float3 hsp;
-    float P = sqrtf(R * R * Pr + G * G * Pg + B * B * Pb);  // Perceived brightness
+    float P = _sqrtf(R * R * Pr + G * G * Pg + B * B * Pb);  // Perceived brightness
     hsp.z = P;
 
     // Calculate Hue and Saturation
@@ -892,6 +891,7 @@ DEFINE_UI_PARAMS(smoothness, Smooth, DCTLUI_SLIDER_FLOAT, 0, 0.0, 1.0, 0.01)
 DEFINE_UI_PARAMS(bypass, 🚫 Bypass, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(draw_curve, 📈 Draw Curve, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(complementary_curve, Affect Opposite Hues, DCTLUI_CHECK_BOX, 0)
+//DEFINE_UI_PARAMS(P_inset, Apply Inset - outset, DCTLUI_CHECK_BOX, 0)
 
 DEFINE_UI_PARAMS(color_model, Color model, DCTLUI_COMBO_BOX, 0, {chen, HSV, reuleaux, cylinderical,cie, ok, pro,HSP}, {Chen, HSV,  Reuleaux, Cylindrical, CIELab , OKLab , ProLab,HSP })
 
