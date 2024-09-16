@@ -27,6 +27,8 @@
  }
 
 //color models
+//==============
+
    __DEVICE__ float3 RGBtoCHEN(float3 in) {
     float r = in.x;
     float g = in.y;
@@ -191,9 +193,9 @@
     return RGB + m;
     } //Convert from HSV to RGB
 
-
-// Convert HSP (Hue, Saturation, Perceived brightness) to RGB
-__DEVICE__ float3 HSPtoRGB(float3 hsp) {
+ 
+ // Convert HSP (Hue, Saturation, Perceived brightness) to RGB
+ __DEVICE__ float3 HSPtoRGB(float3 hsp) {
     // Constants for the HSP-RGB conversion
     const float Pr = 0.299f;
     const float Pg = 0.587f;
@@ -280,10 +282,10 @@ __DEVICE__ float3 HSPtoRGB(float3 hsp) {
     }
 
     return rgb;
-}
-
-// Convert RGB to HSP (Perceived Brightness, Hue, Saturation)
-__DEVICE__ float3 RGBtoHSP(float3 rgb) {
+ }
+ 
+ // Convert RGB to HSP (Perceived Brightness, Hue, Saturation)
+ __DEVICE__ float3 RGBtoHSP(float3 rgb) {
     // Constants for the HSP-RGB conversion
     const float Pr = 0.299f;
     const float Pg = 0.587f;
@@ -330,16 +332,21 @@ __DEVICE__ float3 RGBtoHSP(float3 rgb) {
     }
 
     return hsp;
-}
+ }
+ 
 
 
 
+/*=========================
 
-//=========================
-//-------------------------
-//LAB color models
-//-------------------------
-//=========================
+LAB color models
+
+Adapted from code writeen by Jan Karow
+
+=========================*/
+
+
+ /* Inset-outset solution adapted from Nico Fink's OkLAB implementation*/
  
  __DEVICE__ float3 rgb_inset (float3 rgb) {
 
@@ -359,7 +366,7 @@ __DEVICE__ float3 RGBtoHSP(float3 rgb) {
      }
  
 
-// illuminant
+ // illuminant
  #define D65_xyY make_float3( 0.3127, 0.329, 1.0)
  
  __DEVICE__ float spowf(float base, float exp)
@@ -407,10 +414,10 @@ __DEVICE__ float3 RGBtoHSP(float3 rgb) {
     XYZ.z = (1.0f - xyY.x - xyY.y) * xyY.z / _fmaxf( xyY.y, 1e-10f);
     return XYZ;
  }
-
-/////////////////////////
-// CIELab
-/////////////////////////
+ 
+ /////////////////////////
+ // CIELab
+ /////////////////////////
  
  
  __DEVICE__ float3 XYZ_to_CIELab(float3 XYZ, float offset, float scale)
@@ -472,13 +479,13 @@ __DEVICE__ float3 RGBtoHSP(float3 rgb) {
 
     return make_float3(X, Y, Z);
  }
+  
+ /////////////////////////
+ // OKLab
+ /////////////////////////
  
-/////////////////////////
-// OKLab
-/////////////////////////
-
- __DEVICE__ float3 XYZ_to_OKLab(float3 XYZ, float offset, float scale)
- {
+  __DEVICE__ float3 XYZ_to_OKLab(float3 XYZ, float offset, float scale)
+  {
     const float X = XYZ.x;
     const float Y = XYZ.y;
     const float Z = XYZ.z;
@@ -500,10 +507,10 @@ __DEVICE__ float3 RGBtoHSP(float3 rgb) {
 
     // scaling and offset
     return make_float3(L, a * scale + offset, b * scale + offset);
- }
- 
- __DEVICE__ float3 OKLab_to_XYZ(float3 Lab, float offset, float scale)
- {
+  }
+  
+  __DEVICE__ float3 OKLab_to_XYZ(float3 Lab, float offset, float scale)
+  {
     // scaling and offset
     const float L = Lab.x;
     const float a = (Lab.y - offset) / scale;
@@ -525,14 +532,14 @@ __DEVICE__ float3 RGBtoHSP(float3 rgb) {
     const float Z = (l * -0.0763812845f) + (m * -0.4214819784f) + (s * 1.5861632204f);
 
     return make_float3(X, Y, Z);
- }
-
-///////////////////////
-// Prolab
-///////////////////////
+  }
  
- __DEVICE__ float3 XYZ_to_ProLab(float3 XYZ, float offset, float scale)
- {
+ ///////////////////////
+ // Prolab
+ ///////////////////////
+  
+  __DEVICE__ float3 XYZ_to_ProLab(float3 XYZ, float offset, float scale)
+  {
     float3 XYZ_n = xyY_to_XYZ(D65_xyY);
 
     float MATRIX_Q[4][4] = {{  75.54f,  486.66f,  167.39f, 0.0f},
@@ -550,10 +557,10 @@ __DEVICE__ float3 RGBtoHSP(float3 rgb) {
     Lab.z = Lab.z * 0.5f * scale + offset;
 
     return Lab;
- }
- 
- __DEVICE__ float3 ProLab_to_XYZ(float3 Lab, float offset, float scale)
- {
+  }
+  
+  __DEVICE__ float3 ProLab_to_XYZ(float3 Lab, float offset, float scale)
+  {
     float3 XYZ_n = xyY_to_XYZ(D65_xyY);
 
     float MATRIX_INVERSE_Q[4][4] = {{ 0.0013706f,  0.0013874f,  0.0008161f, 0.0f},
@@ -571,14 +578,14 @@ __DEVICE__ float3 RGBtoHSP(float3 rgb) {
     XYZ *= XYZ_n;
 
     return XYZ;
- }
-
-/////////////////////////
-// LCH
-/////////////////////////
+  }
  
- __DEVICE__ float3 Lab_to_LCH(float3 Lab)
- {
+ /////////////////////////
+ // LCH
+ /////////////////////////
+  
+  __DEVICE__ float3 Lab_to_LCH(float3 Lab)
+  {
     float3 LCH;
     LCH.x = Lab.x;
     LCH.y = _sqrtf(Lab.y * Lab.y + Lab.z * Lab.z);
@@ -588,10 +595,10 @@ __DEVICE__ float3 RGBtoHSP(float3 rgb) {
     LCH.z /= 360.0f;
 
     return LCH;
- }
- 
- __DEVICE__ float3 LCH_to_Lab(float3 LCH)
- {
+  }
+  
+  __DEVICE__ float3 LCH_to_Lab(float3 LCH)
+  {
     LCH.z *= 360.0f;
 
     float3 Lab;
@@ -600,37 +607,43 @@ __DEVICE__ float3 RGBtoHSP(float3 rgb) {
     Lab.z = LCH.y * _sinf(LCH.z * PI / 180.0f);
 
     return Lab;
- }
+  }
+  
+     
  
-    
-
- 
+  
 
 //main tool functions
+//======================
 
-__DEVICE__ float powf(float base, float exp) {
-    return _copysignf(_powf(_fabs(base), exp), base);
-}
+ __DEVICE__ float powf(float base, float exp) {
+     return _copysignf(_powf(_fabs(base), exp), base);
+ }
+ 
+ __DEVICE__ inline float pow2f(float base) {
+     return base * base;
+ }
+ 
+ __DEVICE__ float smoothstep(float x) {
+     x = _clampf(x, 0.0, 1.0);
+     return 3.0 * powf(x, 2.0) - 2.0 * powf(x, 3.0);
+ }
+ 
+ 
+ 
+ typedef struct {
+         float selected_hue;
+         float adjustment_amt;
+         float left_feather;
+         float right_feather;
+ } control_params_t;
+ 
 
-__DEVICE__ inline float pow2f(float base) {
-    return base * base;
-}
+ //Hue curve is written by Thatcher Freeman
+ //https://github.com/thatcherfreeman/utility-dctls/blob/main/Effects/Hue%20Curve.dctl
 
-__DEVICE__ float smoothstep(float x) {
-    x = _clampf(x, 0.0, 1.0);
-    return 3.0 * powf(x, 2.0) - 2.0 * powf(x, 3.0);
-}
-
-
-
-typedef struct {
-        float selected_hue;
-        float adjustment_amt;
-        float left_feather;
-        float right_feather;
-} control_params_t;
-
-__DEVICE__ float single_hue_curve(float x, control_params_t params) {
+ 
+ __DEVICE__ float single_hue_curve(float x, control_params_t params) {
     // Assume x is a hue between 0 and 1
     // offset x by the amount that brings the selected_hue to 0.5
     params.adjustment_amt *= 0.2;
@@ -647,29 +660,29 @@ __DEVICE__ float single_hue_curve(float x, control_params_t params) {
     }
     float output = mod(curr_hue - offset, 1.0);
     return output;
-}
-
-__DEVICE__ float complementary_hue_curve(float complementary_fade, float x, control_params_t params) {
+ }
+ 
+ __DEVICE__ float complementary_hue_curve(float complementary_fade, float x, control_params_t params) {
     control_params_t complementary_params = {
         mod(params.selected_hue + 0.5, 1.0), complementary_fade * params.adjustment_amt, params.left_feather, params.right_feather};
     float out = x;
     out = single_hue_curve(out, params);
     out = single_hue_curve(out, complementary_params);
     return out;
-}
-
-
-
-
-
- __DEVICE__ float3 mixFloat3(float mix, float3 inA, float3 inB) {
+ }
+ 
+ 
+ 
+ 
+ 
+  __DEVICE__ float3 mixFloat3(float mix, float3 inA, float3 inB) {
     // Note that when a float3 is multiplied by a float, it multiplies each component
     return inA * (1-mix) + inB * mix;
- }
-
-
-
- __DEVICE__ float3 ColorModel(float3 in, int colorModel, bool direction, int colorspace) {
+  }
+ 
+ 
+ 
+  __DEVICE__ float3 ColorModel(float3 in, int colorModel, bool direction, int colorspace) {
   
    float3 out, RGB, XYZ, Lab;
     out = in;
@@ -862,10 +875,10 @@ __DEVICE__ float complementary_hue_curve(float complementary_fade, float x, cont
    //else { out = make_float3(1,0,0);} //red on error
 
    return out;
-
- }
-
-  __DEVICE__ int setChannel (int color_model) {
+ 
+  }
+ 
+   __DEVICE__ int setChannel (int color_model) {
    int channel;
   if (color_model == 0) {channel = 1;}
   if (color_model == 1) {channel = 1;}
@@ -876,9 +889,9 @@ __DEVICE__ float complementary_hue_curve(float complementary_fade, float x, cont
   if (color_model == 6) {channel = 3;}
   if (color_model == 7) {channel = 3;}
   return channel;     
-  }                      
- 
- 
+   }                      
+  
+  
 
 
 
