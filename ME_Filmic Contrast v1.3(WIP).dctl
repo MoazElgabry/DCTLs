@@ -601,6 +601,10 @@
      return make_float3(powf(base.x, exp), powf(base.y, exp), powf(base.z, exp));
      }
      
+ __DEVICE__ float scale_slider(float value, float orig_min, float orig_max, float slidermin, float slidermax) {
+    return slidermin + ((value - orig_min) / (orig_max - orig_min)) * (slidermax - slidermin);
+}
+
 
 //functions to apply transfer function conversions
  
@@ -1001,7 +1005,7 @@ DEFINE_UI_PARAMS(pivot, Relative Pivot 📌, DCTLUI_SLIDER_FLOAT, 0.0, -1, 1, 0.
 
 
 DEFINE_UI_PARAMS(p_white_point, ⚪ White Point  :⚪, DCTLUI_SLIDER_FLOAT, 1.015, 0.0, 1.018, 0.0001)
-DEFINE_UI_PARAMS(p_w_p_pivot, ├ Shoulder  ╭, DCTLUI_SLIDER_FLOAT, 0.6, 0.2, .997, 0.1)
+DEFINE_UI_PARAMS(p_w_p_pivot, ├ Shoulder  ╭, DCTLUI_SLIDER_FLOAT, 0.99, 0.2, .997, 0.1)
 DEFINE_UI_PARAMS(p_shoulder_str,└ Fall off ╭   , DCTLUI_SLIDER_FLOAT, 6, 0.0, 9, 0.001)
 
 DEFINE_UI_PARAMS(p_black_point, ⚫ Black Point  :⚫, DCTLUI_SLIDER_FLOAT, 0.0001, 0.0001, .5, 0.0001)
@@ -1023,7 +1027,7 @@ DEFINE_UI_PARAMS(exp_toggle, Tone-mapped exposure, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(preservemidgray_toggle, Preserve Mid-gray, DCTLUI_CHECK_BOX, 1)
 DEFINE_UI_PARAMS(alpha_toggle, Show Pin Range, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(p_transfer_f, Transfer function, DCTLUI_COMBO_BOX, 2, {logc3, logc4, di, aces_cct, log3g10, slog3, bmd_f5, clog3, dlog, fLog, fLog2, vlog, g22, g24, g26, linear}, {ARRI LogC3, ARRI LogC4,  DaVinci Intermediate, ACEScct, RED Log3G10, Sony S-Log3, BMD Film Gen 5, Canon Log 3, DJI D-Log, FujiFilm F-Log, FujiFilm F-Log2, Panasonic V-Log, Gamma 2.2, Gamma 2.4, Gamma 2.6, Linear})
-DEFINE_UI_PARAMS(p_compress, compress type, DCTLUI_COMBO_BOX, 1, {simple, improved}, {Simple, Improved})
+DEFINE_UI_PARAMS(p_compress, compress type, DCTLUI_COMBO_BOX, 1, {simple, improved}, {2-Slider, 1-Slider})
 
 
 
@@ -1181,6 +1185,13 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
   }
    else if (p_compress == 1){
        // contrast parameters are input,  a-whitepoint, t-shoulder length, b-blackpoint,g- toe length 
+
+      p_white_point = scale_slider(p_white_point,0.0f,1.118f,pivot,1.2f);
+      p_w_p_pivot = scale_slider(p_w_p_pivot,0.2f,0.997f,pivot,p_white_point);
+      p_black_point= scale_slider(p_black_point,0.0,0.5,0.0,pivot);
+      p_b_p_pivot = scale_slider(p_b_p_pivot,0.0f,0.8f,p_black_point,pivot*2.2);
+
+
       in_RGB = compress_curve_f3(in_RGB,p_white_point, p_w_p_pivot, p_black_point, p_b_p_pivot);
       ramp = compress_curve_f3(ramp,p_white_point, p_w_p_pivot, p_black_point, p_b_p_pivot);
 

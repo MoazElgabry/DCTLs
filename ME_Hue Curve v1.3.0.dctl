@@ -613,7 +613,7 @@ Adapted from code writeen by Jan Karow
  
   
 
-//main tool functions
+//Main tool functions
 //======================
 
  __DEVICE__ float powf(float base, float exp) {
@@ -637,7 +637,7 @@ Adapted from code writeen by Jan Karow
          float left_feather;
          float right_feather;
  } control_params_t;
- 
+
 
  //Hue curve is written by Thatcher Freeman
  //https://github.com/thatcherfreeman/utility-dctls/blob/main/Effects/Hue%20Curve.dctl

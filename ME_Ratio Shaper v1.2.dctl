@@ -743,7 +743,7 @@ DEFINE_UI_PARAMS(P_faLo, Fill Falloff, DCTLUI_SLIDER_FLOAT, 0.5, 0.0, 1.0, 0.0)
 DEFINE_UI_PARAMS(P_pvHI, HI Pivot, DCTLUI_SLIDER_FLOAT, 0.0, -5.0, 5.0, 0.1)
 DEFINE_UI_PARAMS(P_pvLo, Lo Pivot, DCTLUI_SLIDER_FLOAT, 0.0, -3.0, 3.0, 0.1)  
 
-DEFINE_UI_PARAMS(p_exposure, All  -  Exposure, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.1)
+DEFINE_UI_PARAMS(p_exposure, Overall  -  Exposure, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.1)
 
 DEFINE_UI_PARAMS(p_save_sat, Preserve Color , DCTLUI_SLIDER_FLOAT, 0.5, 0.0, 1.0, 0.25)
 
