@@ -4,7 +4,21 @@
     The original code is based on the Hue curve function written by Thatcher Freeman
     https://github.com/thatcherfreeman/utility-dctls/blob/main/Effects/Hue%20Curve.dctl
 
-    The code for Lab color models was adapted from code written by Jan Karow and Nico Fink 
+    Original C++ code for OKLab by Björn Ottosson https://bottosson.github.io/posts/oklab/
+    Originally ported to DCTL by Nico Wieseneder, www.demystify-color.com
+    ------------
+    Math for CIELab from http://www.brucelindbloom.com
+    Ported to DCTL by Jan Karow
+    ------------
+    Model for ProLab by:
+    I. A. Konovalenko, A. A. Smagina, D. P. Nikolaev and P. P. Nikolaev, 
+    "ProLab: A Perceptually Uniform Projective Color Coordinate System," 
+    in IEEE Access, vol. 9, pp. 133023-133042, 2021, doi: 10.1109/ACCESS.2021.3115425. 
+    https://ieeexplore.ieee.org/document/9547296/authors#authors
+    Ported to DCTL by Jan Karow
+    ------------
+    Values for reference white from https://de.wikipedia.org/wiki/Lab-Farbraum#Umrechnung_von_XYZ_zu_Lab
+
  */
 
 
