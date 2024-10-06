@@ -219,7 +219,7 @@ Thanks to Thatcher Freeman for the original code to draw the chart and to render
   /* Leica L-Log
       https://leica-camera.com/sites/default/files/pm-65977-210914__L-Log_Reference_Manual_EN.pdf
   */
-const float a = 8.0f;
+ const float a = 8.0f;
     const float b = 0.09f;
     const float c = 0.27f;
     const float d = 1.3f;
@@ -425,14 +425,19 @@ const float a = 8.0f;
 
 
 // UI Parameters
+
 DEFINE_UI_PARAMS(num_steps, Number of Steps, DCTLUI_SLIDER_INT, 17, 1, 36, 1)
 DEFINE_UI_PARAMS(mid_gray, Mid-Gray Value, DCTLUI_SLIDER_FLOAT, 0.18, 0.0, 1.0, 0.001)
 DEFINE_UI_PARAMS(opt_mid, Enable Custom Mid-Gray, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(opt_card, Show Gray Card, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(opt_ramp, Overlay Linear Ramp, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(opt_scope, :: Wide Aspect Mode ::, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_PARAMS(annotation_mode, Annotate, DCTLUI_COMBO_BOX, 0, {ANNOTATE_NONE, ANNOTATE_MIDGRAY_BASELINE, ANNOTATE_START_FROM_ZERO}, {None, Midgray Baseline, Start from Zero})
 DEFINE_UI_PARAMS(p_TF, Transfer Function, DCTLUI_COMBO_BOX, 2, {logc3, logc4, di, aces_cct, log3g10, slog2,slog3, bmd_f5, clog3, dlog, fLog, fLog2, vlog,goprotune, Leicallog, nlog,tlog,cineon, g22, g24, g26, linear}, {ARRI LogC3, ARRI LogC4,  DaVinci Intermediate, ACEScct, RED Log3G10, Sony S-Log2,Sony S-Log3, BMD Film Gen 5, Canon Log 3, DJI D-Log, FujiFilm F-Log, FujiFilm F-Log2, Panasonic V-Log, Gopro protune, Leica - Llog, Nikon Nlog, Filmlight T log,Kodak Cineon,Gamma 2.2, Gamma 2.4, Gamma 2.6, Linear})
 DEFINE_UI_PARAMS(opt_label, Show Label, DCTLUI_CHECK_BOX, 1) // Checkbox to toggle label display
+
+
+
 
 ////////////////
 // FONT STUFF //
@@ -577,32 +582,32 @@ __CONSTANT__ int font[FONT_LENGTH][FONT_HEIGHT] = {{0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 
 
 // Define structures for text rendering
-typedef struct {
-    float x, y;  // Top-left position of a character or string
-    float scale; // Height of the character relative to the image height
-} char_trans_t;
-
-typedef struct {
-    float x, y; // Current pixel position in normalized coordinates
-} curr_pos_t;
-
+ typedef struct {
+     float x, y;  // Top-left position of a character or string
+     float scale; // Height of the character relative to the image height
+ } char_trans_t;
+ 
+ typedef struct {
+     float x, y; // Current pixel position in normalized coordinates
+ } curr_pos_t;
+ 
 // Helper functions
-__DEVICE__ char_trans_t make_char_trans(float x, float y, float scale) {
+ __DEVICE__ char_trans_t make_char_trans(float x, float y, float scale) {
     char_trans_t result = {};
     result.x = x;
     result.y = y;
     result.scale = scale;
     return result;
-}
-
-__DEVICE__ curr_pos_t make_curr_pos(float x, float y) {
+ }
+ 
+ __DEVICE__ curr_pos_t make_curr_pos(float x, float y) {
     curr_pos_t result = {};
     result.x = x;
     result.y = y;
     return result;
-}
-
-__DEVICE__ void draw_char(
+ }
+ 
+ __DEVICE__ void draw_char(
     char c, float3 char_color, __PRIVATE__ char_trans_t* char_trans, __PRIVATE__ curr_pos_t* curr_pos, __PRIVATE__ float3* curr_color) {
     float char_height = char_trans->scale;
     float char_width = char_trans->scale * FONT_WIDTH / FONT_HEIGHT;
@@ -622,9 +627,9 @@ __DEVICE__ void draw_char(
             *curr_color = char_color;
         }
     }
-}
-
-__DEVICE__ void draw_string(
+ }
+ 
+ __DEVICE__ void draw_string(
     char str[], float3 str_color, __PRIVATE__ char_trans_t* char_trans, __PRIVATE__ curr_pos_t* curr_pos, __PRIVATE__ float3* curr_color) {
     int i = 0;
     char c = str[0];
@@ -639,26 +644,26 @@ __DEVICE__ void draw_string(
         // Move to the next character position
         c_trans.x += c_trans.scale * c_width / FONT_HEIGHT;
     }
-}
-
-__DEVICE__ int strlen(char a[]) {
+ }
+ 
+ __DEVICE__ int strlen(char a[]) {
     int i = 0;
     while (a[i] != '\0' && a[i] != 0) {
         ++i;
     }
     return i;
-}
-
-__DEVICE__ void strcpy(char str_src[], char str_dst[]) {
+ }
+ 
+ __DEVICE__ void strcpy(char str_src[], char str_dst[]) {
     int i = 0;
     while (str_src[i] != '\0' && i < 64) {
         str_dst[i] = str_src[i];
         i++;
     }
     str_dst[i] = '\0';
-}
-
-__DEVICE__ void strcat(char a[], char b[], char dest[]) {
+ }
+ 
+ __DEVICE__ void strcat(char a[], char b[], char dest[]) {
     int len_a = strlen(a);
     int len_b = strlen(b);
     for (int i = 0; i < len_a; ++i) {
@@ -668,10 +673,10 @@ __DEVICE__ void strcat(char a[], char b[], char dest[]) {
         dest[len_a + i] = b[i];
     }
     dest[len_a + len_b] = '\0';
-}
-
+ }
+ 
 // Corrected float2str function
-__DEVICE__ void float2str(float f, char output[], int decimal_places) {
+ __DEVICE__ void float2str(float f, char output[], int decimal_places) {
     int runner = 0;
     char inf[] = "inf";
     char nan[] = "NaN";
@@ -717,9 +722,9 @@ __DEVICE__ void float2str(float f, char output[], int decimal_places) {
     }
 
     output[runner] = '\0';
-}
-
-__DEVICE__ float string_width_in_units(char str[], float scale) {
+ }
+ 
+ __DEVICE__ float string_width_in_units(char str[], float scale) {
     float width = 0.0f;
     int i = 0;
     char c = str[i];
@@ -730,10 +735,10 @@ __DEVICE__ float string_width_in_units(char str[], float scale) {
         c = str[i];
     }
     return width;
-}
-
+ }
+ 
 // Function to get the transfer function name based on index
-__DEVICE__ void get_tf_name(int index, char output[]) {
+ __DEVICE__ void get_tf_name(int index, char output[]) {
     switch (index) {
         case 0:
             strcpy("ARRI LogC3", output);
@@ -805,7 +810,80 @@ __DEVICE__ void get_tf_name(int index, char output[]) {
             strcpy("Unknown", output);
             break;
     }
-}
+ }
+
+//  function to convert integer to string with sign
+ __DEVICE__ void strcpy_idx(char str_src[], char str_dst[], int src_start_idx, int dst_start_idx, int num_chars) {
+    for (int i = 0; i < num_chars; ++i) {
+        str_dst[dst_start_idx + i] = str_src[src_start_idx + i];
+    }
+ }
+ __DEVICE__ char digit2char(int i) {
+    return (char)('0' + i);
+ }
+ 
+ __DEVICE__ void int2str(int f, char output[], int num_chars) {
+    int runner = 0;
+
+    // First char is neg sign, if necessary
+    char zero[] = "0";
+
+    if (f < 0) {
+        output[runner] = '-';
+        runner++;
+        f = -f; // Convert to positive for processing
+    }
+    if (f == 0) {
+        strcpy_idx(zero, output, 0, runner, strlen(zero));
+        runner += strlen(zero);
+    } else {
+        // input is positive integer
+        int left_digits = (int)(_log10f((float)f) + 1);
+
+        // Extract left digits
+        for (int i = left_digits; i > 0 && runner < num_chars; --i, ++runner) {
+            float base = _powf(10.0, i - 1);
+            int d = (int)_truncf(f / base);
+            f = _fmod(f, base);
+            output[runner] = digit2char(d);
+        }
+    }
+    output[runner] = '\0';
+ }
+ 
+ __DEVICE__ void int2str_signed(int value, char output[]) {
+    int runner = 0;
+    if (value < 0) {
+        output[runner++] = '-';
+        value = -value;
+    } else if (value > 0) {
+        output[runner++] = '+';
+    } else {
+        output[runner++] = '0';
+        output[runner] = '\0';
+        return;
+    }
+
+    // Convert integer part
+    int digits = 0;
+    int temp = value;
+    do {
+        temp /= 10;
+        digits++;
+    } while (temp != 0);
+
+    for (int i = digits - 1; i >= 0; i--) {
+        int digit = value % 10;
+        output[runner + i] = '0' + digit;
+        value /= 10;
+    }
+    runner += digits;
+    output[runner] = '\0';
+ }
+ 
+ 
+
+
 
 // Main transform function
 __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p_R, float p_G, float p_B) {
@@ -813,9 +891,10 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
     float frame_width = p_Width;
     float frame_height = p_Height;
 
+    
     // Aspect ratio adjustments
-    float x, y;
-    if (opt_scope) {
+     float x, y;
+     if (opt_scope) {
         // Wide Aspect Mode (Aspect Ratio 2.5)
         float target_aspect = 2.5f;
         float current_aspect = frame_width / frame_height;
@@ -845,17 +924,17 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
             x = p_X / frame_width;
             y = (p_Y - pad_height) / new_height;
         }
-    } else {
+     } else {
         // Standard mode
         x = p_X / (frame_width - 1);
         y = p_Y / (frame_height - 1);
-    }
-
-    // Ensure x and y are within [0,1]
-    if (x < 0.0f || x > 1.0f || y < 0.0f || y > 1.0f) {
-        return make_float3(0.0f, 0.0f, 0.0f);
-    }
-
+     }
+ 
+     // Ensure x and y are within [0,1]
+     if (x < 0.0f || x > 1.0f || y < 0.0f || y > 1.0f) {
+         return make_float3(0.0f, 0.0f, 0.0f);
+     }
+ 
     // Determine the mid-gray value to use
     float mid_gray_value;
     int slct_p_TF;
@@ -883,17 +962,20 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
     float middle_box_top = 0.3f;
     float middle_box_bottom = 0.7f;
 
+    // Variables for annotations
+    int curr_step = (int)(x / step_width);
+    float val;
+
     if (middle_box_left <= x && x <= middle_box_right && middle_box_top <= y && y <= middle_box_bottom) {
         // Middle box
         Output = mid_gray_tf;
     } else if (y <= 0.6f) {
         // Top half of chart, make steps
-        int curr_step = (int)(x / step_width);
-        float val = mid_gray_value * _exp2f((float)curr_step - middle_step);
+        val = mid_gray_value * _exp2f((float)curr_step - middle_step);
         Output = LinToTF(make_float3(val, val, val), slct_p_TF);
     } else if (y <= 1.f) {
         // Make exponential ramp
-        float val = mid_gray_value * _exp2f((float)(x / step_width) - 0.5f - middle_step);
+        val = mid_gray_value * _exp2f((float)(x / step_width) - 0.5f - middle_step);
         Output = LinToTF(make_float3(val, val, val), slct_p_TF);
     } else {
         // Outside the chart area, set to black
@@ -902,8 +984,9 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
 
     if (opt_ramp) {
         // Make linear ramp using unaltered x position defined as cleanX 
-      float cleanX = (float)p_X / (float)p_Width;
-        Output = y >= 0.85f ? make_float3(cleanX, cleanX, cleanX) : Output;
+   float cleanX = (float)p_X / ((float)p_Width-1);
+   float3 ramp = make_float3(cleanX, cleanX, cleanX);
+        Output = y >= 0.85f ? ramp: Output;
     }
 
     if (opt_card) {
@@ -914,7 +997,56 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
     // Initialize curr_color
     float3 curr_color = Output;
 
-    // Draw the label if opt_label is true and within the middle box
+    // Current pixel position in normalized coordinates
+    curr_pos_t curr_pos = make_curr_pos(x, y);
+
+    // Annotation for Top Gradation Steps
+    if (y <= 0.2f && y >= 0.09f && annotation_mode != ANNOTATE_NONE) {
+        // Annotation area just below the steps
+        float annotation_y = 0.15f; // Adjust as needed
+        float annotation_scale = 0.035f; // Adjust text size
+
+        // Compute position of current step
+        float step_center = (curr_step + 0.5f) * step_width;
+
+        // Determine if current pixel is within the annotation area for this step
+        float annotation_height = annotation_scale; // Height of the annotation area
+        float annotation_width = step_width; // Width of each step
+
+        // Check if current pixel is within the annotation area
+        if (x >= curr_step * step_width && x < (curr_step + 1) * step_width &&
+            y >= annotation_y && y <= annotation_y + annotation_height) {
+
+            // Prepare the annotation string
+            char annotation_str[16];
+            if (annotation_mode == ANNOTATE_MIDGRAY_BASELINE) {
+                int stops = curr_step - middle_step;
+                int2str_signed(stops, annotation_str);
+            } else if (annotation_mode == ANNOTATE_START_FROM_ZERO) {
+                int2str(curr_step, annotation_str, 3);
+            }
+
+            // Calculate annotation position
+            float string_width = string_width_in_units(annotation_str, annotation_scale);
+            float label_x = (curr_step + 0.5f) * step_width - string_width / 2.0f;
+
+            // Ensure label is within bounds
+            if (label_x < curr_step * step_width) label_x = curr_step * step_width;
+            if (label_x + string_width > (curr_step + 1) * step_width) label_x = (curr_step + 1) * step_width - string_width;
+
+            // Set label color (contrast with background)
+            float lum = (curr_color.x + curr_color.y + curr_color.z) / 3.0f;
+            float3 label_color = lum > 0.5f ? make_float3(0.0f, 0.0f, 0.0f) : make_float3(1.0f, 1.0f, 1.0f);
+
+            // Create character transformation
+            char_trans_t char_trans = make_char_trans(label_x, annotation_y, annotation_scale);
+
+            // Draw the annotation string
+            draw_string(annotation_str, label_color, &char_trans, &curr_pos, &curr_color);
+        }
+    }
+
+    // Draw the label within the middle box if opt_label is true
     if (opt_label == 1 && middle_box_left <= x && x <= middle_box_right && middle_box_top <= y && y <= middle_box_bottom) {
         // Get the transfer function name
         char tf_name[64];
@@ -929,11 +1061,8 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
         strcpy("Mid Gray: ", mid_gray_label);
         strcat(mid_gray_label, mid_gray_str, mid_gray_label);
 
-        // Current pixel position in normalized coordinates
-        curr_pos_t curr_pos = make_curr_pos(x, y);
-
         // Character scales
-        float scale_line1 = 0.053f; // Scale for the first line
+        float scale_line1 = 0.054f; // Scale for the first line
         float scale_line2 = 0.035f; // Smaller scale for the second line
 
         // Compute string widths
