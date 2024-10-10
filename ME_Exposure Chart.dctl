@@ -1051,9 +1051,9 @@ __DEVICE__ float3 quantize (float3 in, int rounding_opt, int bit_depth) {
 DEFINE_UI_PARAMS(num_steps, Number of Steps, DCTLUI_SLIDER_INT, 17, 1, 36, 1)
 DEFINE_UI_PARAMS(mid_gray, Mid-Gray Value, DCTLUI_SLIDER_FLOAT, 0.18, 0.0, 1.0, 0.001)
 DEFINE_UI_PARAMS(opt_mid, Enable Custom Mid-Gray, DCTLUI_CHECK_BOX, 0)
-DEFINE_UI_PARAMS(opt_card, Show Gray Card, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(opt_ramp, Overlay Linear Ramp, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(opt_scope, :: Wide Aspect Mode ::, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_PARAMS(opt_card, Midgray Card Display, DCTLUI_COMBO_BOX, 1, {CARD_FULL_SCREEN, CARD_BOX, CARD_NONE}, {Full Screen, Box, None})
 
 DEFINE_UI_PARAMS(eval, Evaluation mode, DCTLUI_COMBO_BOX, 2, {eval_10, eval_8,eval_off}, {10 bit rounded, 8 bit rounded,Off})
 DEFINE_UI_PARAMS(annotation_mode, Annotation, DCTLUI_COMBO_BOX, 0, {ANNOTATE_NONE, ANNOTATE_MIDGRAY_BASELINE, ANNOTATE_START_FROM_ZERO}, {Off, Midgray Baseline, Start from Zero})
@@ -1586,11 +1586,12 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
     float val;
 
     // Draw chart
-   
-    if (middle_box_left <= x && x <= middle_box_right && middle_box_top <= y && y <= middle_box_bottom) {
+    
+    if (opt_card == 1 && middle_box_left <= x && x <= middle_box_right && middle_box_top <= y && y <= middle_box_bottom) {
         // Middle box
         Output = mid_gray_tf;
-    } else if (y <= 0.6f) {
+      }
+    else if (y <= 0.6f) {
         // Top half of chart, make steps
         val = mid_gray_value * _exp2f((float)curr_step - middle_step);
         Output = LinToTF(make_float3(val, val, val), slct_p_TF);
@@ -1603,7 +1604,7 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
         Output = make_float3(0.0f, 0.0f, 0.0f);
     }
 
-        if (opt_card) {
+        if (opt_card == 0) {
         // Make gray card
         Output = mid_gray_tf;
     }
@@ -1672,13 +1673,19 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
         // Determine whether evaluation mode is active
         int eval_mode_active = (eval != 2) && (opt_mid == 0) && (slct_p_TF != 22);
 
-        if (eval_mode_active) {
+        if (eval_mode_active && opt_card!= 0) {
             // Show "Evaluation mode"
             strcpy(second_line, "Evaluation mode");
-        } else if (eval != 2 && opt_mid == 1 || eval != 2 && slct_p_TF == 22) {
+        } else if (eval != 2 && opt_mid == 1 && opt_card !=0|| eval != 2 && slct_p_TF == 22 && opt_card !=0) {
             // Evaluation is off for linear
             strcpy(second_line, "Evaluation is off for linear");
-        } else {
+        } else if (eval != 2 && opt_mid == 1 && opt_card ==0 || eval != 2 && slct_p_TF == 22 && opt_card == 0) {
+            // Evaluation is off for linear
+            strcpy(second_line, "Evaluation off for linear/full card");
+         }else if (eval != 2 &&  opt_card ==0 ) {
+            // Evaluation is off for linear
+            strcpy(second_line, "Evaluation is off for fullscreen card");
+         }else {
             // Show the mid gray value
             char mid_gray_str[32];
             float2str(mid_gray_tf_value, mid_gray_str, 4); // 4 decimal places
@@ -1728,12 +1735,12 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
     }
 
     // Evaluation mode
-    if (eval != 2 && !(opt_mid == 1 || slct_p_TF == 22)) {
-        if (eval == 0) {
+    if (eval != 2 && !(opt_card== 0) && !(opt_mid == 1 || slct_p_TF == 22) ) {
+        if (eval == 0) {//evaluation mode in 10 bit
             curr_color = quantize(curr_color, 0, 10);
             curr_color = Linearize(curr_color, slct_p_TF);
             curr_color = tlog_curve(curr_color, 0, num_steps);
-        } else if (eval == 1) {
+        } else if (eval == 1) {//evaluation mode in 8 bit
             curr_color = quantize(curr_color, 0, 8);
             curr_color = Linearize(curr_color, slct_p_TF);
             curr_color = tlog_curve(curr_color, 0, num_steps);
