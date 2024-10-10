@@ -1055,7 +1055,7 @@ DEFINE_UI_PARAMS(opt_card, Show Gray Card, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(opt_ramp, Overlay Linear Ramp, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(opt_scope, :: Wide Aspect Mode ::, DCTLUI_CHECK_BOX, 0)
 
-DEFINE_UI_PARAMS(eval, Evaluation mode, DCTLUI_COMBO_BOX, 0, {eval_off, eval_10, eval_8}, {Off, 10 bit rounded, 8 bit rounded})
+DEFINE_UI_PARAMS(eval, Evaluation mode, DCTLUI_COMBO_BOX, 2, {eval_10, eval_8,eval_off}, {10 bit rounded, 8 bit rounded,Off})
 DEFINE_UI_PARAMS(annotation_mode, Annotation, DCTLUI_COMBO_BOX, 0, {ANNOTATE_NONE, ANNOTATE_MIDGRAY_BASELINE, ANNOTATE_START_FROM_ZERO}, {Off, Midgray Baseline, Start from Zero})
 DEFINE_UI_PARAMS(p_TF, Transfer Function, DCTLUI_COMBO_BOX, 2, {logc3, logc4, di, aces_cct, log3g10, slog2,slog3, bmd_f5, clog2, clog3, dlog, fLog, fLog2, vlog,goprotune, Leicallog, nlog,tlog,cineon, g22, g24, g26, linear}, {ARRI LogC3, ARRI LogC4,  DaVinci Intermediate, ACEScct, RED Log3G10, Sony S-Log2,Sony S-Log3, BMD Film Gen 5, Canon Log 2,Canon Log 3, DJI D-Log, FujiFilm F-Log, FujiFilm F-Log2, Panasonic V-Log, Gopro protune, Leica - Llog, Nikon Nlog, Filmlight T log,Kodak Cineon,Gamma 2.2, Gamma 2.4, Gamma 2.6, Linear})
 DEFINE_UI_PARAMS(opt_label, Show Label, DCTLUI_CHECK_BOX, 1) // Checkbox to toggle label display
@@ -1268,36 +1268,35 @@ __CONSTANT__ int font[FONT_LENGTH][FONT_HEIGHT] = {{0, 0, 0, 0, 0, 0, 0, 0, 0, 0
     }
  }
  
- __DEVICE__ int strlen(char a[]) {
+ __DEVICE__ int strlen(const char str[]) {
     int i = 0;
-    while (a[i] != '\0' && a[i] != 0) {
+    while (str[i] != '\0' && str[i] != 0) {
         ++i;
     }
     return i;
  }
  
- __DEVICE__ void strcpy(char str_src[], char str_dst[]) {
+ __DEVICE__ void strcpy(char dest[], const char src[]) {
     int i = 0;
-    while (str_src[i] != '\0' && i < 64) {
-        str_dst[i] = str_src[i];
+    while (src[i] != '\0' && i < 64) {
+        dest[i] = src[i];
         i++;
     }
-    str_dst[i] = '\0';
+    dest[i] = '\0';
  }
  
- __DEVICE__ void strcat(char a[], char b[], char dest[]) {
-    int len_a = strlen(a);
-    int len_b = strlen(b);
-    for (int i = 0; i < len_a; ++i) {
-        dest[i] = a[i];
+ __DEVICE__ void strcat(char dest[], const char src[]) {
+    int len_dest = strlen(dest);
+    int i = 0;
+    while (src[i] != '\0' && (len_dest + i) < 64) {
+        dest[len_dest + i] = src[i];
+        i++;
     }
-    for (int i = 0; i < len_b; ++i) {
-        dest[len_a + i] = b[i];
-    }
-    dest[len_a + len_b] = '\0';
+    dest[len_dest + i] = '\0';
  }
+
  
-// Corrected float2str function
+ // Corrected float2str function
  __DEVICE__ void float2str(float f, char output[], int decimal_places) {
     int runner = 0;
     char inf[] = "inf";
@@ -1309,10 +1308,10 @@ __CONSTANT__ int font[FONT_LENGTH][FONT_HEIGHT] = {{0, 0, 0, 0, 0, 0, 0, 0, 0, 0
     }
 
     if (isinf(f)) {
-        strcpy(inf, output + runner);
+        strcpy(output + runner, inf);
         return;
     } else if (isnan(f)) {
-        strcpy(nan, output + runner);
+        strcpy(output + runner, nan);
         return;
     }
 
@@ -1345,7 +1344,6 @@ __CONSTANT__ int font[FONT_LENGTH][FONT_HEIGHT] = {{0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 
     output[runner] = '\0';
  }
- 
  __DEVICE__ float string_width_in_units(char str[], float scale) {
     float width = 0.0f;
     int i = 0;
@@ -1359,84 +1357,85 @@ __CONSTANT__ int font[FONT_LENGTH][FONT_HEIGHT] = {{0, 0, 0, 0, 0, 0, 0, 0, 0, 0
     return width;
  }
  
-// Function to get the transfer function name based on index
+ // Function to get the transfer function name based on index
  __DEVICE__ void get_tf_name(int index, char output[]) {
     switch (index) {
-        case  0:
-                 strcpy("ARRI LogC3", output);
-                 break;
-        case  1:
-                 strcpy("ARRI LogC4", output);
-                 break;
-        case  2:
-                strcpy("DaVinci Intermediate", output);
-                break;
-        case  3:
-                 strcpy("ACEScct", output);
-                 break;
-        case  4:
-                 strcpy("RED Log3G10", output);
-                 break;
-        case  5:
-                 strcpy("Sony S-Log2", output);
-                 break;
-        case  6:
-                 strcpy("Sony S-Log3", output);
-                 break;        
-        case  7:
-                 strcpy("BMD Film Gen 5", output);
-                 break;
-        case  8:
-                 strcpy("Canon Log 2", output);
-                 break;
-        case  9:
-                 strcpy("Canon Log 3", output);
-                 break;
+        case 0:
+            strcpy(output, "ARRI LogC3");
+            break;
+        case 1:
+            strcpy(output, "ARRI LogC4");
+            break;
+        case 2:
+            strcpy(output, "DaVinci Intermediate");
+            break;
+        case 3:
+            strcpy(output, "ACEScct");
+            break;
+        case 4:
+            strcpy(output, "RED Log3G10");
+            break;
+        case 5:
+            strcpy(output, "Sony S-Log2");
+            break;
+        case 6:
+            strcpy(output, "Sony S-Log3");
+            break;
+        case 7:
+            strcpy(output, "BMD Film Gen 5");
+            break;
+        case 8:
+            strcpy(output, "Canon Log 2");
+            break;
+        case 9:
+            strcpy(output, "Canon Log 3");
+            break;
         case 10:
-                 strcpy("DJI D-Log", output);
-                 break;
+            strcpy(output, "DJI D-Log");
+            break;
         case 11:
-                 strcpy("FujiFilm F-Log", output);
-                 break;
+            strcpy(output, "FujiFilm F-Log");
+            break;
         case 12:
-                 strcpy("FujiFilm F-Log2", output);
-                 break;
+            strcpy(output, "FujiFilm F-Log2");
+            break;
         case 13:
-                 strcpy("Panasonic V-Log", output);
-                 break;
+            strcpy(output, "Panasonic V-Log");
+            break;
         case 14:
-                 strcpy("gopro protune ", output);
-                 break;
+            strcpy(output, "GoPro Protune");
+            break;
         case 15:
-                 strcpy("Leica - Llog", output);
-                 break;
+            strcpy(output, "Leica L-Log");
+            break;
         case 16:
-                 strcpy("Nikon Nlog", output);
-                 break;
+            strcpy(output, "Nikon N-Log");
+            break;
         case 17:
-                 strcpy("Filmlight T log", output);
-                 break;
+            strcpy(output, "Filmlight T-Log");
+            break;
         case 18:
-                 strcpy("Kodak Cineon", output);
-                 break;
+            strcpy(output, "Kodak Cineon");
+            break;
         case 19:
-                 strcpy("Gamma 2.2", output);
-                 break;
+            strcpy(output, "Gamma 2.2");
+            break;
         case 20:
-                 strcpy("Gamma 2.4", output);
-                 break;
+            strcpy(output, "Gamma 2.4");
+            break;
         case 21:
-                 strcpy("Gamma 2.6", output);
-                 break;
+            strcpy(output, "Gamma 2.6");
+            break;
         case 22:
-                 strcpy("Linear", output);
-                 break;
-       default:
-            strcpy("Unknown", output);
+            strcpy(output, "Linear");
+            break;
+        default:
+            strcpy(output, "Unknown");
             break;
     }
  }
-//  function to convert integer to string with sign
+
+ //  function to convert integer to string with sign
  __DEVICE__ void strcpy_idx(char str_src[], char str_dst[], int src_start_idx, int dst_start_idx, int num_chars) {
     for (int i = 0; i < num_chars; ++i) {
         str_dst[dst_start_idx + i] = str_src[src_start_idx + i];
@@ -1445,36 +1444,34 @@ __CONSTANT__ int font[FONT_LENGTH][FONT_HEIGHT] = {{0, 0, 0, 0, 0, 0, 0, 0, 0, 0
  __DEVICE__ char digit2char(int i) {
     return (char)('0' + i);
  }
- 
- __DEVICE__ void int2str(int f, char output[], int num_chars) {
+ __DEVICE__ void int2str(int value, char output[]) {
     int runner = 0;
 
-    // First char is neg sign, if necessary
-    char zero[] = "0";
-
-    if (f < 0) {
-        output[runner] = '-';
-        runner++;
-        f = -f; // Convert to positive for processing
+    if (value < 0) {
+        output[runner++] = '-';
+        value = -value;
+    } else if (value == 0) {
+        output[runner++] = '0';
+        output[runner] = '\0';
+        return;
     }
-    if (f == 0) {
-        strcpy_idx(zero, output, 0, runner, strlen(zero));
-        runner += strlen(zero);
-    } else {
-        // input is positive integer
-        int left_digits = (int)(_log10f((float)f) + 1);
 
-        // Extract left digits
-        for (int i = left_digits; i > 0 && runner < num_chars; --i, ++runner) {
-            float base = _powf(10.0, i - 1);
-            int d = (int)_truncf(f / base);
-            f = _fmod(f, base);
-            output[runner] = digit2char(d);
-        }
+    // Count number of digits
+    int temp = value;
+    int digits = 0;
+    while (temp > 0) {
+        temp /= 10;
+        digits++;
+    }
+
+    // Extract digits
+    for (int i = digits - 1; i >= 0; i--) {
+        int digit = value / (int)_powf(10.0f, i);
+        output[runner++] = '0' + digit;
+        value %= (int)_powf(10.0f, i);
     }
     output[runner] = '\0';
  }
- 
  __DEVICE__ void int2str_signed(int value, char output[]) {
     int runner = 0;
     if (value < 0) {
@@ -1497,24 +1494,24 @@ __CONSTANT__ int font[FONT_LENGTH][FONT_HEIGHT] = {{0, 0, 0, 0, 0, 0, 0, 0, 0, 0
     } while (temp != 0);
 
     for (int i = digits - 1; i >= 0; i--) {
-        int digit = value % 10;
-        output[runner + i] = '0' + digit;
-        value /= 10;
+        int digit = value / (int)_powf(10.0f, i);
+        output[runner++] = '0' + digit;
+        value %= (int)_powf(10.0f, i);
     }
-    runner += digits;
     output[runner] = '\0';
  }
  
 
 
-// Main Transfrm function
+// Main Transform function
 __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p_R, float p_G, float p_B) {
 
- // Frame dimensions
+    // Frame dimensions
     float frame_width = p_Width;
     float frame_height = p_Height;
 
- // Aspect ratio adjustments
+    
+    // Aspect ratio adjustments
      float x, y;
      if (opt_scope) {
         // Wide Aspect Mode (Aspect Ratio 2.5)
@@ -1556,8 +1553,8 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
      if (x < 0.0f || x > 1.0f || y < 0.0f || y > 1.0f) {
          return make_float3(0.0f, 0.0f, 0.0f);
      }
- 
- // Determine the mid-gray value to use
+
+    // Determine the mid-gray value to use
     float mid_gray_value;
     int slct_p_TF;
     if (opt_mid == 1) {
@@ -1578,7 +1575,7 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
     int middle_step = num_steps / 2;
     float3 Output;
 
- // Resolution-agnostic framing for the middle box
+    // Resolution-agnostic framing for the middle box
     float middle_box_left = 0.25f;
     float middle_box_right = 0.75f;
     float middle_box_top = 0.3f;
@@ -1587,8 +1584,9 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
     // Variables for annotations
     int curr_step = (int)(x / step_width);
     float val;
- 
- //Draw chart
+
+    // Draw chart
+   
     if (middle_box_left <= x && x <= middle_box_right && middle_box_top <= y && y <= middle_box_bottom) {
         // Middle box
         Output = mid_gray_tf;
@@ -1605,20 +1603,19 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
         Output = make_float3(0.0f, 0.0f, 0.0f);
     }
 
-
-
-    if (opt_card) {
+        if (opt_card) {
         // Make gray card
         Output = mid_gray_tf;
     }
- 
- // Initialize curr_color
+
+
+  // Initialize curr_color
     float3 curr_color = Output;
 
- // Current pixel position in normalized coordinates
+  // Current pixel position in normalized coordinates
     curr_pos_t curr_pos = make_curr_pos(x, y);
 
- // Annotation for Top Gradation Steps
+// Annotation for Top Gradation Steps
     if (y <= 0.2f && y >= 0.09f && annotation_mode != ANNOTATE_NONE) {
         // Annotation area just below the steps
         float annotation_y = 0.15f; // Adjust as needed
@@ -1629,7 +1626,6 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
 
         // Determine if current pixel is within the annotation area for this step
         float annotation_height = annotation_scale; // Height of the annotation area
-        float annotation_width = step_width; // Width of each step
 
         // Check if current pixel is within the annotation area
         if (x >= curr_step * step_width && x < (curr_step + 1) * step_width &&
@@ -1641,7 +1637,7 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
                 int stops = curr_step - middle_step;
                 int2str_signed(stops, annotation_str);
             } else if (annotation_mode == ANNOTATE_START_FROM_ZERO) {
-                int2str(curr_step, annotation_str, 3);
+                int2str(curr_step, annotation_str);
             }
 
             // Calculate annotation position
@@ -1664,20 +1660,31 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
         }
     }
 
- // Draw the label within the middle box if opt_label is true
+    // Draw the label within the middle box if opt_label is true
     if (opt_label == 1 && middle_box_left <= x && x <= middle_box_right && middle_box_top <= y && y <= middle_box_bottom) {
         // Get the transfer function name
         char tf_name[64];
         get_tf_name(slct_p_TF, tf_name);
 
-        // Convert mid_gray_tf_value to string with 4 decimal places
-        char mid_gray_str[32];
-        float2str(mid_gray_tf_value, mid_gray_str, 4); // 4 decimal places
+        // Decide what to display in the second line
+        char second_line[64];
 
-        // Construct the mid-gray label string
-        char mid_gray_label[64];
-        strcpy("Mid Gray: ", mid_gray_label);
-        strcat(mid_gray_label, mid_gray_str, mid_gray_label);
+        // Determine whether evaluation mode is active
+        int eval_mode_active = (eval != 2) && (opt_mid == 0) && (slct_p_TF != 22);
+
+        if (eval_mode_active) {
+            // Show "Evaluation mode"
+            strcpy(second_line, "Evaluation mode");
+        } else if (eval != 2 && opt_mid == 1 || eval != 2 && slct_p_TF == 22) {
+            // Evaluation is off for linear
+            strcpy(second_line, "Evaluation is off for linear");
+        } else {
+            // Show the mid gray value
+            char mid_gray_str[32];
+            float2str(mid_gray_tf_value, mid_gray_str, 4); // 4 decimal places
+            strcpy(second_line, "Mid Gray: ");
+            strcat(second_line, mid_gray_str);
+        }
 
         // Character scales
         float scale_line1 = 0.054f; // Scale for the first line
@@ -1685,7 +1692,7 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
 
         // Compute string widths
         float width_line1 = string_width_in_units(tf_name, scale_line1);
-        float width_line2 = string_width_in_units(mid_gray_label, scale_line2);
+        float width_line2 = string_width_in_units(second_line, scale_line2);
         float max_width = width_line1 > width_line2 ? width_line1 : width_line2;
 
         // Position the label within the middle box
@@ -1707,43 +1714,39 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
             label_y_line2 -= overflow;
         }
 
-   // Set label color (contrast with background)
+        // Set label color (contrast with background)
         float lum = (curr_color.x + curr_color.y + curr_color.z) / 3.0f;
         float3 label_color = lum > 0.5f ? make_float3(0.0f, 0.0f, 0.0f) : make_float3(1.0f, 1.0f, 1.0f);
 
-   // Draw the first line (Transfer Function Name)
+        // Draw the first line (Transfer Function Name)
         char_trans_t char_trans_line1 = make_char_trans(label_x, label_y_line1, scale_line1);
         draw_string(tf_name, label_color, &char_trans_line1, &curr_pos, &curr_color);
 
-   // Draw the second line (Mid Gray Value) with smaller scale
+        // Draw the second line
         char_trans_t char_trans_line2 = make_char_trans(label_x, label_y_line2, scale_line2);
-        draw_string(mid_gray_label, label_color, &char_trans_line2, &curr_pos, &curr_color);
+        draw_string(second_line, label_color, &char_trans_line2, &curr_pos, &curr_color);
     }
- 
- //Evaluation mode
-    if (eval != 0){
 
-      if( eval == 1){
+    // Evaluation mode
+    if (eval != 2 && !(opt_mid == 1 || slct_p_TF == 22)) {
+        if (eval == 0) {
+            curr_color = quantize(curr_color, 0, 10);
+            curr_color = Linearize(curr_color, slct_p_TF);
+            curr_color = tlog_curve(curr_color, 0, num_steps);
+        } else if (eval == 1) {
+            curr_color = quantize(curr_color, 0, 8);
+            curr_color = Linearize(curr_color, slct_p_TF);
+            curr_color = tlog_curve(curr_color, 0, num_steps);
+        }
+    }
 
-      curr_color = quantize (curr_color, 0, 10);
-      curr_color = Linearize(curr_color, slct_p_TF);
-      curr_color = tlog_curve(curr_color, 0, num_steps);
-    } else if (eval == 2) {
-
-      curr_color = quantize (curr_color, 0, 8);
-      curr_color = Linearize(curr_color, slct_p_TF);
-      curr_color = tlog_curve(curr_color, 0, num_steps);
-    }  
- }
-
-// option to show a linear ramp
+    // Option to show a linear ramp
     if (opt_ramp) {
-        // Make linear ramp using unaltered x position defined as cleanX 
-   float cleanX = (float)p_X / ((float)p_Width-1);
-   float3 ramp = make_float3(cleanX, cleanX, cleanX);
-        curr_color = y >= 0.85f ? ramp: curr_color;
+        // Make linear ramp using unaltered x position defined as cleanX
+        float cleanX = (float)p_X / ((float)p_Width - 1);
+        float3 ramp = make_float3(cleanX, cleanX, cleanX);
+        curr_color = y >= 0.85f ? ramp : curr_color;
     }
 
     return curr_color;
- 
 }
