@@ -8,192 +8,691 @@ Thanks to Thatcher Freeman for the original code to draw the chart and to render
 
 
 */
+
 //functions for Transfer function conversion
+ __DEVICE__ float3 inline oetf_acescct(float3 x, int inv) {
+    /* ACEScct Log
+       S-2016-001 : ACEScct - A Quasi-Logarithmic Encoding of ACES Data for use within Color Grading Systems
+       http://j.mp/S-2016-001_
+    */
+    const float cut1 = 0.0078125f;
+    const float cut2 = 0.155251141552511f;
+    const float A = 10.5402377416545f;
+    const float B = 0.0729055341958355f;
+    const float C = 9.72f;
+    const float D = 17.52f;
 
+    float3 result;
 
- __DEVICE__ float3 inline LinToLogC3 (float3 in) {
-    float3 out;
+    if (inv == 1) {
+        // **Inverse Transformation**
+        // Apply the inverse OETF to each channel
+        if (x.x <= cut2) {
+            result.x = (x.x - B) / A;
+        } else {
+            result.x = _exp2f(x.x * D - C);
+        }
 
-    float cut = 0.010591;
-    float a = 5.555556;
-    float b = 0.052272;
-    float c = 0.247190;
-    float d = 0.385537;
-    float e = 5.367655;
-    float f = 0.092809;
+        if (x.y <= cut2) {
+            result.y = (x.y - B) / A;
+        } else {
+            result.y = _exp2f(x.y * D - C);
+        }
 
-    out.x = (in.x > cut) ? c * log10(a * in.x + b) + d: e * in.x + f;
-    out.y = (in.y > cut) ? c * log10(a * in.y + b) + d: e * in.y + f;
-    out.z = (in.z > cut) ? c * log10(a * in.z + b) + d: e * in.z + f;
+        if (x.z <= cut2) {
+            result.z = (x.z - B) / A;
+        } else {
+            result.z = _exp2f(x.z * D - C);
+        }
+    } else {
+        // **Forward Transformation**
+        // Apply the forward OETF to each channel
+        if (x.x <= cut1) {
+            result.x = A * x.x + B;
+        } else {
+            result.x = (_log2f(x.x) + C) / D;
+        }
 
-    return out;
-    }
- 
- __DEVICE__ float3 inline LinToDI (float3 in) {
-    float3 out;
+        if (x.y <= cut1) {
+            result.y = A * x.y + B;
+        } else {
+            result.y = (_log2f(x.y) + C) / D;
+        }
 
-    float a = 0.0075;
-    float b = 7.0;
-    float c = 0.07329248;
-    float m = 10.44426855;
-    float lin_cut = 0.00262409;
-
-    out.x = in.x > lin_cut ? (_log2f(in.x + a) + b) * c : out.x = in.x * m;
-    out.y = in.y > lin_cut ? (_log2f(in.y + a) + b) * c : out.y = in.y * m;
-    out.z = in.z > lin_cut ? (_log2f(in.z + a) + b) * c : out.z = in.z * m;
-
-    return out;
-    }
- 
- __DEVICE__ float3 inline LinToACEScct (float3 in) {
-    float3 out;
-
-    float a = 10.5402377416545;
-    float b = 0.0729055341958355;
-    float c = 9.72;
-    float d = 17.52;
-    float e = 0.0078125;
-
-    out.x = in.x <= e ? a * in.x + b : (_log2f(in.x) + c) / d;
-    out.y = in.y <= e ? a * in.y + b : (_log2f(in.y) + c) / d;
-    out.z = in.z <= e ? a * in.z + b : (_log2f(in.z) + c) / d;
-
-    return out;
-    }
- 
- __DEVICE__ float3 inline LinToLogC4 (float3 in) {
-    float3 out;
-
-    float a = (_powf(2.0, 18.0) - 16.0) / 117.45;
-    float b = (1023.0 - 95.0) / 1023.0;
-    float c = 95.0 / 1023.0;
-    float s = (7 * _logf(2) * _powf(2.0, 7 - 14 * c / b)) / (a * b);
-    float t = (_powf(2.0, 14.0 * (-c / b) + 6.0) - 64.0) / a;
-
-    out.x = in.x < t ? (in.x - t) / s : (_log2f( a * in.x + 64.0) - 6.0) / 14.0 * b + c;
-    out.y = in.y < t ? (in.y - t) / s : (_log2f( a * in.y + 64.0) - 6.0) / 14.0 * b + c;
-    out.z = in.z < t ? (in.z - t) / s : (_log2f( a * in.z + 64.0) - 6.0) / 14.0 * b + c;
-
-    return out;
-    }
- 
- __DEVICE__ float3 inline LinToDLog (float3 in) {
-    float3 out;
-
-    out.x = in.x <= 0.0078 ? 6.025 * in.x + 0.0929 : (_log10f(in.x * 0.9892 + 0.0108)) * 0.256663 + 0.584555;
-    out.y = in.y <= 0.0078 ? 6.025 * in.y + 0.0929 : (_log10f(in.y * 0.9892 + 0.0108)) * 0.256663 + 0.584555;
-    out.z = in.z <= 0.0078 ? 6.025 * in.z + 0.0929 : (_log10f(in.z * 0.9892 + 0.0108)) * 0.256663 + 0.584555;
-
-    return out;
-    }
- 
- __DEVICE__ float3 inline LinToFLog (float3 in) {
-    float3 out;
-
-    float a = 0.555556;
-    float b = 0.009468;
-    float c = 0.344676;
-    float d = 0.790453;
-    float e = 8.735631;
-    float f = 0.092864;
-    float cut = 0.00089;
-
-    out.x = in.x >= cut ? c * _log10f(a * in.x + b) + d : e * in.x + f;
-    out.y = in.y >= cut ? c * _log10f(a * in.y + b) + d : e * in.y + f;
-    out.z = in.z >= cut ? c * _log10f(a * in.z + b) + d : e * in.z + f;
-
-    return out;
-    }
- 
- __DEVICE__ float3 inline LinToFLog2 (float3 in) {
-    float3 out;
-
-    float a = 5.555556;
-    float b = 0.064829;
-    float c = 0.245281;
-    float d = 0.384316;
-    float e = 8.799461;
-    float f = 0.092864;
-    float cut = 0.000889;
-
-    out.x = in.x >= cut ? c * _log10f(a * in.x + b) + d : e * in.x + f;
-    out.y = in.y >= cut ? c * _log10f(a * in.y + b) + d : e * in.y + f;
-    out.z = in.z >= cut ? c * _log10f(a * in.z + b) + d : e * in.z + f;
-
-    return out;
-    }
- 
- __DEVICE__ float3 inline LinToVLog (float3 in) {
-    float3 out;
-
-    float cut = 0.01;
-    float b = 0.00873;
-    float c = 0.241514;
-    float d = 0.598206;
-
-    out.x = in.x < cut ? 5.6 * in.x + 0.125 : c * _log10f(in.x + b) + d;
-    out.y = in.y < cut ? 5.6 * in.y + 0.125 : c * _log10f(in.y + b) + d;
-    out.z = in.z < cut ? 5.6 * in.z + 0.125 : c * _log10f(in.z + b) + d;
-
-    return out;
-    }
- 
- __DEVICE__ float3 inline LinToLog3G10 (float3 in) {
-    float3 out;
-
-    float a = 0.224282f;
-    float b = 155.975327f;
-    float c = 0.01f;
-    float g = 15.1927f;
-
-    in.x += c;
-    in.y += c;
-    in.z += c;
-
-    out.x = in.x < 0.0f ? in.x * g : a * _log10f((in.x * b) + 1.0f);
-    out.y = in.y < 0.0f ? in.y * g : a * _log10f((in.y * b) + 1.0f);
-    out.z = in.z < 0.0f ? in.z * g : a * _log10f((in.z * b) + 1.0f);
-
-    return out;
-    }
- 
- __DEVICE__ float3 inline LinToSLog3 (float3 in) {
-    float3 out;
-
-    out.x = in.x >= 0.01125000 ? (420.0 + _log10f((in.x + 0.01) / (0.18 + 0.01)) * 261.5) / 1023.0 : (in.x * (171.2102946929 - 95.0)/0.01125000 + 95.0) / 1023.0;
-    out.y = in.y >= 0.01125000 ? (420.0 + _log10f((in.y + 0.01) / (0.18 + 0.01)) * 261.5) / 1023.0 : (in.y * (171.2102946929 - 95.0)/0.01125000 + 95.0) / 1023.0;
-    out.z = in.z >= 0.01125000 ? (420.0 + _log10f((in.z + 0.01) / (0.18 + 0.01)) * 261.5) / 1023.0 : (in.z * (171.2102946929 - 95.0)/0.01125000 + 95.0) / 1023.0;    
-
-    return out;
-    }
- 
- __DEVICE__ float3 inline LinToBMDFilmGen5(float3 in) {
-    float3 out;
-
-    float a = 8.283605932402494f;
-    float b = 0.09246575342465753f;
-    float c = 0.5300133392291939f;
-    float d = 0.08692876065491224f;
-    float e = 0.005494072432257808f;
-    float cut = 0.005f;
-
-    out.x = in.x < cut ? a * in.x + b : d * _logf(in.x + e) + c;
-    out.y = in.y < cut ? a * in.y + b : d * _logf(in.y + e) + c;
-    out.z = in.z < cut ? a * in.z + b : d * _logf(in.z + e) + c;
-
-    return out;
+        if (x.z <= cut1) {
+            result.z = A * x.z + B;
+        } else {
+            result.z = (_log2f(x.z) + C) / D;
+        }
     }
 
- 
- __DEVICE__ float3 inline LinToCLog3 (float3 in) {
-    float3 out;
+    return result;
+  }
 
-    out.x = in.x < -0.014 ? -0.36726845 * _log10f(1 - 14.98325 * in.x) + 0.12783901 : in.x <= 0.014 ? 1.9754798 * in.x + 0.12512219 : 0.36726845 * _log10f(14.98325 * in.x + 1) + 0.12240537;
-    out.y = in.y < -0.014 ? -0.36726845 * _log10f(1 - 14.98325 * in.y) + 0.12783901 : in.y <= 0.014 ? 1.9754798 * in.y + 0.12512219 : 0.36726845 * _log10f(14.98325 * in.y + 1) + 0.12240537;
-    out.z = in.z < -0.014 ? -0.36726845 * _log10f(1 - 14.98325 * in.z) + 0.12783901 : in.z <= 0.014 ? 1.9754798 * in.z + 0.12512219 : 0.36726845 * _log10f(14.98325 * in.z + 1) + 0.12240537;
+ __DEVICE__ float3 inline oetf_arri_logc3(float3 x, int inv) {
+    /* Arri Alexa LogC3 
+       Formerly known as Alexa V3LogC EI800
+       https://www.arri.com/resource/blob/31918/66f56e6abb6e5b6553929edf9aa7483e/2017-03-alexa-logc-curve-in-vfx-data.pdf
+    */
+    const float cut = 0.010591f;
+    const float a = 5.555556f;
+    const float b = 0.052272f;
+    const float c = 0.247190f;
+    const float d = 0.385537f;
+    const float e = 5.367655f;
+    const float f = 0.092809f;
 
-    return out;
+    float3 result;
+
+    if (inv == 1) {
+        // **Inverse Transformation**
+        // Apply the inverse OETF to each channel
+        if (x.x < e * cut + f) {
+            result.x = (x.x - f) / e;
+        } else {
+            result.x = (_exp10f((x.x - d) / c) - b) / a;
+        }
+
+        if (x.y < e * cut + f) {
+            result.y = (x.y - f) / e;
+        } else {
+            result.y = (_exp10f((x.y - d) / c) - b) / a;
+        }
+
+        if (x.z < e * cut + f) {
+            result.z = (x.z - f) / e;
+        } else {
+            result.z = (_exp10f((x.z - d) / c) - b) / a;
+        }
+    } else {
+        // **Forward Transformation**
+        // Apply the forward OETF to each channel
+        if (x.x < cut) {
+            result.x = e * x.x + f;
+        } else {
+            result.x = c * _log10f(a * x.x + b) + d;
+        }
+
+        if (x.y < cut) {
+            result.y = e * x.y + f;
+        } else {
+            result.y = c * _log10f(a * x.y + b) + d;
+        }
+
+        if (x.z < cut) {
+            result.z = e * x.z + f;
+        } else {
+            result.z = c * _log10f(a * x.z + b) + d;
+        }
     }
+
+    return result;
+  }
+
+ __DEVICE__ float3 inline oetf_arri_logc4(float3 x, int inv) {
+    /* Arri Alexa LogC4
+       https://www.arri.com/resource/blob/278790/bea879ac0d041a925bed27a096ab3ec2/2022-05-arri-logc4-specification-data.pdf
+    */
+    const float a = (_exp2f(18.0f) - 16.0f) / 117.45f;
+    const float b = (1023.0f - 95.0f) / 1023.0f;
+    const float c = 95.0f / 1023.0f;
+    const float s = (7.0f * _logf(2.0f) * _exp2f(7.0f - 14.0f * c / b)) / (a * b);
+    const float t = (_exp2f(14.0f * (-c / b) + 6.0f) - 64.0f) / a;
+
+    float3 result;
+
+    if (inv == 1) {
+        // **Inverse Transformation**
+        // Apply the inverse OETF to each channel
+        if (x.x < t) {
+            result.x = x.x * s + t;
+        } else {
+            result.x = (_exp2f(14.0f * (x.x - c) / b + 6.0f) - 64.0f) / a;
+        }
+
+        if (x.y < t) {
+            result.y = x.y * s + t;
+        } else {
+            result.y = (_exp2f(14.0f * (x.y - c) / b + 6.0f) - 64.0f) / a;
+        }
+
+        if (x.z < t) {
+            result.z = x.z * s + t;
+        } else {
+            result.z = (_exp2f(14.0f * (x.z - c) / b + 6.0f) - 64.0f) / a;
+        }
+    } else {
+        // **Forward Transformation**
+        // Apply the forward OETF to each channel
+        if (x.x < t) {
+            result.x = (x.x - t) / s;
+        } else {
+            result.x = (_log2f(a * x.x + 64.0f) - 6.0f) / 14.0f * b + c;
+        }
+
+        if (x.y < t) {
+            result.y = (x.y - t) / s;
+        } else {
+            result.y = (_log2f(a * x.y + 64.0f) - 6.0f) / 14.0f * b + c;
+        }
+
+        if (x.z < t) {
+            result.z = (x.z - t) / s;
+        } else {
+            result.z = (_log2f(a * x.z + 64.0f) - 6.0f) / 14.0f * b + c;
+        }
+    }
+
+    return result;
+  }
+
+ __DEVICE__ float3 inline oetf_blackmagic_filmgen5(float3 x, int inv) {
+    /* Blackmagic Film Generation 5
+       Specified in the Blackmagic Generation 5 Color Science whitepaper included in the Blackmagic Raw SDK available here
+       https://www.blackmagicdesign.com/support/download/1bad3dc74c2c4a908ce5c9ce8b9f74f8/Linux
+       At this path in the installer:
+       /usr/lib64/blackmagic/BlackmagicRAWSDK/Documents/Blackmagic Generation 5 Color Science Technical Reference.pdf
+    */
+    const float A = 0.08692876065491224f;
+    const float B = 0.005494072432257808f;
+    const float C = 0.5300133392291939f;
+    const float D = 8.283605932402494f;
+    const float E = 0.09246575342465753f;
+    const float LIN_CUT = 0.005f;
+    const float LOG_CUT = D * LIN_CUT + E;
+
+    float3 result;
+
+    if (inv == 1) {
+        // **Inverse Transformation**
+        // Apply the inverse OETF to each channel
+        if (x.x < LOG_CUT) {
+            result.x = (x.x - E) / D;
+        } else {
+            result.x = _expf((x.x - C) / A) - B;
+        }
+
+        if (x.y < LOG_CUT) {
+            result.y = (x.y - E) / D;
+        } else {
+            result.y = _expf((x.y - C) / A) - B;
+        }
+
+        if (x.z < LOG_CUT) {
+            result.z = (x.z - E) / D;
+        } else {
+            result.z = _expf((x.z - C) / A) - B;
+        }
+    } else {
+        // **Forward Transformation**
+        // Apply the forward OETF to each channel
+        if (x.x < LIN_CUT) {
+            result.x = D * x.x + E;
+        } else {
+            result.x = A * _logf(x.x + B) + C;
+        }
+
+        if (x.y < LIN_CUT) {
+            result.y = D * x.y + E;
+        } else {
+            result.y = A * _logf(x.y + B) + C;
+        }
+
+        if (x.z < LIN_CUT) {
+            result.z = D * x.z + E;
+        } else {
+            result.z = A * _logf(x.z + B) + C;
+        }
+    }
+
+    return result;
+  }
+
+ __DEVICE__ float3 inline oetf_canon_clog2(float3 x, int inv) {
+    /* Canon CLog2
+       CLog2 is intended for grading workflows, whereas CLog3 is intended for a more "direct to display" workflow.
+       
+       Canon log transfer functions are all described in this whitepaper:
+       https://downloads.canon.com/nw/learn/white-papers/cinema-eos/white-paper-canon-log-gamma-curves.pdf
+
+       The log transfer functions described above match the 1D LUTs available in the "Canon lookup table Version 201911" 
+       download available here
+       https://www.usa.canon.com/internet/portal/us/home/support/details/cameras/cinema-eos/cinema-eos-c500-mark-ii?tab=drivers_downloads
+
+       However in the CTL ACES IDT provided in the "Input Transfrm Version 202007 for EOS C500 Mark II" file 
+       at the above url, they add the /=0.9 on the scene-linear values. This function matches the IDT.
+    */
+    const float c0 = 0.092864125f;
+    const float c1 = 0.24136077f;
+    const float c2 = 87.099375f;
+
+
+    if (inv == 1) {
+        // **Inverse Transformation**
+        // Apply the inverse OETF to each channel
+    x.x = x.x < c0 ? -(_exp10f((c0 - x.x)/c1) - 1.0f)/c2 : (_exp10f((x.x - c0)/c1) - 1.0f)/c2;
+    x.y = x.y < c0 ? -(_exp10f((c0 - x.y)/c1) - 1.0f)/c2 : (_exp10f((x.y - c0)/c1) - 1.0f)/c2;
+    x.z = x.z < c0 ? -(_exp10f((c0 - x.z)/c1) - 1.0f)/c2 : (_exp10f((x.z - c0)/c1) - 1.0f)/c2;
+
+   return x*0.9f;
+
+    } else {
+        // **Forward Transformation**
+        // Apply the forward OETF to each channel
+    x /= 0.9f;
+    x.x = x.x < 0.0f ? -c1*_log10f(1.0f - c2*x.x) + c0 : c1*_log10f(c2*x.x + 1.0f) + c0;
+    x.y = x.y < 0.0f ? -c1*_log10f(1.0f - c2*x.y) + c0 : c1*_log10f(c2*x.y + 1.0f) + c0;
+    x.z = x.z < 0.0f ? -c1*_log10f(1.0f - c2*x.z) + c0 : c1*_log10f(c2*x.z + 1.0f) + c0;
+
+    return x;
+    }
+
+  }
+ __DEVICE__ float3 inline oetf_canon_clog3(float3 x, int inv) {
+    /* Canon CLog3 OETF and Inverse OETF
+       Reference:
+       https://downloads.canon.com/nw/learn/white-papers/cinema-eos/white-paper-canon-log-gamma-curves.pdf
+    */
+
+    // Constants as per Canon CLog3 specification
+    const float sp0 = 0.014f;
+    const float sp1 = 0.09746547f;
+    const float sp2 = 0.15277891f;
+    const float c0 = 0.36726845f;
+    const float c1 = 14.98325f;
+    const float c2 = 0.12783901f;
+    const float c3 = 1.9754798f;
+    const float c4 = 0.12512219f;
+    const float c5 = 0.12240537f;
+
+
+
+    if (inv == 1) {
+        // **Inverse Transformation (Log to Linear)**
+
+        // Apply transformation to each component using ternary operators for brevity
+    x.x = x.x < sp1 ? -(_exp10f((c2 - x.x)/c0) - 1.0f)/c1 : x.x <= sp2 ? (x.x - c4)/c3 : (_exp10f((x.x - c5)/c0) - 1.0f)/c1;
+    x.y = x.y < sp1 ? -(_exp10f((c2 - x.y)/c0) - 1.0f)/c1 : x.y <= sp2 ? (x.y - c4)/c3 : (_exp10f((x.y - c5)/c0) - 1.0f)/c1;
+    x.z = x.z < sp1 ? -(_exp10f((c2 - x.z)/c0) - 1.0f)/c1 : x.z <= sp2 ? (x.z - c4)/c3 : (_exp10f((x.z - c5)/c0) - 1.0f)/c1;
+    
+    return x*0.9f;
+    }
+    else {
+    x /= 0.9f;
+    x.x = x.x < -sp0 ? -c0*_log10f(1.0f - c1*x.x) + c2 : x.x <= sp0 ? c3*x.x + c4 : c0*_log10f(c1*x.x + 1.0f) + c5;
+    x.y = x.y < -sp0 ? -c0*_log10f(1.0f - c1*x.y) + c2 : x.y <= sp0 ? c3*x.y + c4 : c0*_log10f(c1*x.y + 1.0f) + c5;
+    x.z = x.z < -sp0 ? -c0*_log10f(1.0f - c1*x.z) + c2 : x.z <= sp0 ? c3*x.z + c4 : c0*_log10f(c1*x.z + 1.0f) + c5;
+    return x;
+    }
+
+  }
+ __DEVICE__ float3 inline oetf_dji_dlog(float3 x, int inv) {
+    /* DJI D-Log
+       https://dl.djicdn.com/downloads/zenmuse+x7/20171010/D-Log_D-Gamut_Whitepaper.pdf
+    */
+
+    float3 result;
+
+    if (inv == 1) {
+        // **Inverse Transformation**
+        // Apply the inverse OETF to each channel
+        if (x.x <= 0.14f) {
+            result.x = (x.x - 0.0929f) / 6.025f;
+        } else {
+            result.x = (_exp10f(3.89616f * x.x - 2.27752f) - 0.0108f) / 0.9892f;
+        }
+
+        if (x.y <= 0.14f) {
+            result.y = (x.y - 0.0929f) / 6.025f;
+        } else {
+            result.y = (_exp10f(3.89616f * x.y - 2.27752f) - 0.0108f) / 0.9892f;
+        }
+
+        if (x.z <= 0.14f) {
+            result.z = (x.z - 0.0929f) / 6.025f;
+        } else {
+            result.z = (_exp10f(3.89616f * x.z - 2.27752f) - 0.0108f) / 0.9892f;
+        }
+    } else {
+        // **Forward Transformation**
+        // Apply the forward OETF to each channel
+        if (x.x <= 0.0078f) {
+            result.x = 6.025f * x.x + 0.0929f;
+        } else {
+            result.x = 0.256663f * _log10f(x.x * 0.9892f + 0.0108f) + 0.584555f;
+        }
+
+        if (x.y <= 0.0078f) {
+            result.y = 6.025f * x.y + 0.0929f;
+        } else {
+            result.y = 0.256663f * _log10f(x.y * 0.9892f + 0.0108f) + 0.584555f;
+        }
+
+        if (x.z <= 0.0078f) {
+            result.z = 6.025f * x.z + 0.0929f;
+        } else {
+            result.z = 0.256663f * _log10f(x.z * 0.9892f + 0.0108f) + 0.584555f;
+        }
+    }
+
+    return result;
+  }
+
+ __DEVICE__ float3 inline oetf_fujifilm_flog(float3 x, int inv) {
+    /* Fujifilm F-Log
+       https://dl.fujifilm-x.com/support/lut/F-Log_DataSheet_E_Ver.1.0.pdf
+    */
+    const float a = 0.555556f;
+    const float b = 0.009468f;
+    const float c = 0.344676f;
+    const float d = 0.790453f;
+    const float e = 8.735631f;
+    const float f = 0.092864f;
+    const float cut1 = 0.00089f;
+    const float cut2 = 0.1005377752f;
+
+    float3 result;
+
+    if (inv == 1) {
+        // **Inverse Transformation**
+        // Apply the inverse OETF to each channel
+        if (x.x < cut2) {
+            result.x = (x.x - f) / e;
+        } else {
+            result.x = (_exp10f((x.x - d) / c) / a - b / a);
+        }
+
+        if (x.y < cut2) {
+            result.y = (x.y - f) / e;
+        } else {
+            result.y = (_exp10f((x.y - d) / c) / a - b / a);
+        }
+
+        if (x.z < cut2) {
+            result.z = (x.z - f) / e;
+        } else {
+            result.z = (_exp10f((x.z - d) / c) / a - b / a);
+        }
+    } else {
+        // **Forward Transformation**
+        // Apply the forward OETF to each channel
+        if (x.x < cut1) {
+            result.x = e * x.x + f;
+        } else {
+            result.x = c * _log10f(a * x.x + b) + d;
+        }
+
+        if (x.y < cut1) {
+            result.y = e * x.y + f;
+        } else {
+            result.y = c * _log10f(a * x.y + b) + d;
+        }
+
+        if (x.z < cut1) {
+            result.z = e * x.z + f;
+        } else {
+            result.z = c * _log10f(a * x.z + b) + d;
+        }
+    }
+
+    return result;
+  }
+
+ __DEVICE__ float3 inline oetf_fujifilm_flog2(float3 x, int inv) {
+    /* Fujifilm F-Log2
+       https://dl.fujifilm-x.com/support/lut/F-Log2_DataSheet_E_Ver.1.0.pdf
+    */
+    const float a = 5.555556f;
+    const float b = 0.064829f;
+    const float c = 0.245281f;
+    const float d = 0.384316f;
+    const float e = 8.799461f;
+    const float f = 0.092864f;
+    const float cut1 = 0.000889f;
+    const float cut2 = 0.100686685370811f;
+
+    float3 result;
+
+    if (inv == 1) {
+        // **Inverse Transformation**
+        // Apply the inverse OETF to each channel
+        if (x.x < cut2) {
+            result.x = (x.x - f) / e;
+        } else {
+            result.x = (_exp10f((x.x - d) / c) / a - b / a);
+        }
+
+        if (x.y < cut2) {
+            result.y = (x.y - f) / e;
+        } else {
+            result.y = (_exp10f((x.y - d) / c) / a - b / a);
+        }
+
+        if (x.z < cut2) {
+            result.z = (x.z - f) / e;
+        } else {
+            result.z = (_exp10f((x.z - d) / c) / a - b / a);
+        }
+    } else {
+        // **Forward Transformation**
+        // Apply the forward OETF to each channel
+        if (x.x < cut1) {
+            result.x = e * x.x + f;
+        } else {
+            result.x = c * _log10f(a * x.x + b) + d;
+        }
+
+        if (x.y < cut1) {
+            result.y = e * x.y + f;
+        } else {
+            result.y = c * _log10f(a * x.y + b) + d;
+        }
+
+        if (x.z < cut1) {
+            result.z = e * x.z + f;
+        } else {
+            result.z = c * _log10f(a * x.z + b) + d;
+        }
+    }
+
+    return result;
+  }
+
+ __DEVICE__ float3 inline oetf_panasonic_vlog(float3 x, int inv) {
+    /* Panasonic V-Log
+       https://pro-av.panasonic.net/en/cinema_camera_varicam_eva/support/pdf/VARICAM_V-Log_V-Gamut.pdf
+    */
+    const float cut1 = 0.01f;
+    const float cut2 = 0.181f;
+    const float b = 0.00873f;
+    const float c = 0.241514f;
+    const float d = 0.598206f;
+
+    float3 result;
+
+    if (inv == 1) {
+        // **Inverse Transformation**
+        // Apply the inverse OETF to each channel
+        if (x.x < cut2) {
+            result.x = (x.x - 0.125f) / 5.6f;
+        } else {
+            result.x = _exp10f((x.x - d) / c) - b;
+        }
+
+        if (x.y < cut2) {
+            result.y = (x.y - 0.125f) / 5.6f;
+        } else {
+            result.y = _exp10f((x.y - d) / c) - b;
+        }
+
+        if (x.z < cut2) {
+            result.z = (x.z - 0.125f) / 5.6f;
+        } else {
+            result.z = _exp10f((x.z - d) / c) - b;
+        }
+    } else {
+        // **Forward Transformation**
+        // Apply the forward OETF to each channel
+        if (x.x < cut1) {
+            result.x = 5.6f * x.x + 0.125f;
+        } else {
+            result.x = c * _log10f(x.x + b) + d;
+        }
+
+        if (x.y < cut1) {
+            result.y = 5.6f * x.y + 0.125f;
+        } else {
+            result.y = c * _log10f(x.y + b) + d;
+        }
+
+        if (x.z < cut1) {
+            result.z = 5.6f * x.z + 0.125f;
+        } else {
+            result.z = c * _log10f(x.z + b) + d;
+        }
+    }
+
+    return result;
+  }
+
+ __DEVICE__ float3 inline oetf_red_log3g10(float3 x, int inv) {
+    /* Red Log3G10
+       https://docs.red.com/955-0187/PDF/915-0187%20Rev-C%20%20%20RED%20OPS,%20White%20Paper%20on%20REDWideGamutRGB%20and%20Log3G10.pdf
+    */
+    const float a = 0.224282f;
+    const float b = 155.975327f;
+    const float c = 0.01f;
+    const float g = 15.1927f;
+
+    float3 result;
+
+    if (inv == 1) {
+        // **Inverse Transformation**
+        // Apply the inverse OETF to each channel
+        if (x.x < 0.0f) {
+            result.x = (x.x / g) - c;
+        } else {
+            result.x = (_exp10f(x.x / a) - 1.0f) / b - c;
+        }
+
+        if (x.y < 0.0f) {
+            result.y = (x.y / g) - c;
+        } else {
+            result.y = (_exp10f(x.y / a) - 1.0f) / b - c;
+        }
+
+        if (x.z < 0.0f) {
+            result.z = (x.z / g) - c;
+        } else {
+            result.z = (_exp10f(x.z / a) - 1.0f) / b - c;
+        }
+    } else {
+        // **Forward Transformation**
+        // Apply the forward OETF to each channel
+        if (x.x < -c) {
+            result.x = (x.x + c) * g;
+        } else {
+            result.x = a * _log10f((x.x + c) * b + 1.0f);
+        }
+
+        if (x.y < -c) {
+            result.y = (x.y + c) * g;
+        } else {
+            result.y = a * _log10f((x.y + c) * b + 1.0f);
+        }
+
+        if (x.z < -c) {
+            result.z = (x.z + c) * g;
+        } else {
+            result.z = a * _log10f((x.z + c) * b + 1.0f);
+        }
+    }
+
+    return result;
+  }
+
+ __DEVICE__ float3 inline oetf_sony_slog3(float3 x, int inv) {
+    /* Sony S-Log3 OETF and Inverse OETF
+       Reference:
+       https://pro.sony/s3/cms-static-content/uploadfile/06/1237494271406.pdf
+    */
+
+    // Constants as per Sony S-Log3 specification
+    const float a = 0.01125f;
+    const float b = 420.0f;
+    const float c = 261.5f;
+    const float d = 171.2102946929f;
+    const float e = 95.0f;
+    const float f = 0.18f;
+    const float o = 0.01f;
+
+    float3 result;
+
+    if (inv == 1) {
+        // **Inverse Transformation (Log to Linear)**
+
+        // Apply transformation to each component
+        // For each channel:
+        // If x < d/1023.0f, apply (x*1023.0f - e)*a/(d-e)
+        // Else, apply (_exp10f(((x*1023.0f - b)/c))*(f + o) - o)
+        result.x = (x.x < d/1023.0f) ? ((x.x * 1023.0f - e) * a / (d - e)) : ((_exp10f(((x.x * 1023.0f - b) / c)) * (f + o)) - o);
+        result.y = (x.y < d/1023.0f) ? ((x.y * 1023.0f - e) * a / (d - e)) : ((_exp10f(((x.y * 1023.0f - b) / c)) * (f + o)) - o);
+        result.z = (x.z < d/1023.0f) ? ((x.z * 1023.0f - e) * a / (d - e)) : ((_exp10f(((x.z * 1023.0f - b) / c)) * (f + o)) - o);
+    }
+    else {
+        // **Forward Transformation (Linear to Log)**
+
+        // Apply transformation to each component
+        // For each channel:
+        // If x < a, apply (x*(d - e)/a + e)/1023.0f
+        // Else, apply (b + _log10f((x + o)/(f + o))*c)/1023.0f
+        result.x = (x.x < a) ? ((x.x * (d - e) / a + e) / 1023.0f) : ((b + _log10f((x.x + o) / (f + o)) * c) / 1023.0f);
+        result.y = (x.y < a) ? ((x.y * (d - e) / a + e) / 1023.0f) : ((b + _log10f((x.y + o) / (f + o)) * c) / 1023.0f);
+        result.z = (x.z < a) ? ((x.z * (d - e) / a + e) / 1023.0f) : ((b + _log10f((x.z + o) / (f + o)) * c) / 1023.0f);
+    }
+
+    return result;
+  }
+
+ __DEVICE__ float3 inline oetf_davinci_intermediate(float3 x, int inv) {
+    /* DaVinci Intermediate Log OETF and Inverse OETF
+       Reference:
+       https://documents.blackmagicdesign.com/InformationNotes/DaVinci_Resolve_17_Wide_Gamut_Intermediate.pdf
+    */
+
+    // Constants as per DaVinci Intermediate Log specification
+    const float A = 0.0075f;
+    const float B = 7.0f;
+    const float C = 0.07329248f;
+    const float M = 10.44426855f;
+    const float LIN_CUT = 0.00262409f;
+    const float LOG_CUT = 0.02740668f;
+
+    float3 result;
+    
+    if (inv == 1) {
+        // **Inverse Transformation (Log to Linear)**
+        
+        // Step 1: Apply piecewise transformation to each component
+        // If x <= LOG_CUT, apply linear scaling: x / M
+        // Else, apply exponential scaling: exp2(x / C - B) - A
+        result.x = (x.x <= LOG_CUT) ? (x.x / M) : (_exp2f(x.x / C - B) - A);
+        result.y = (x.y <= LOG_CUT) ? (x.y / M) : (_exp2f(x.y / C - B) - A);
+        result.z = (x.z <= LOG_CUT) ? (x.z / M) : (_exp2f(x.z / C - B) - A);
+    }
+    else {
+        // **Forward Transformation (Linear to Log)**
+        
+        // Step 1: Apply piecewise transformation to each component
+        // If x <= LIN_CUT, apply linear scaling: x * M
+        // Else, apply logarithmic scaling: (log2(x + A) + B) * C
+        result.x = (x.x <= LIN_CUT) ? (x.x * M) : ((_log2f(x.x + A) + B) * C);
+        result.y = (x.y <= LIN_CUT) ? (x.y * M) : ((_log2f(x.y + A) + B) * C);
+        result.z = (x.z <= LIN_CUT) ? (x.z * M) : ((_log2f(x.z + A) + B) * C);
+    }
+    
+    return result;
+  }
 
  __DEVICE__ float3 inline oetf_gopro_protune(float3 x, int inv) {
   /* GoPro Protune Flat log curve
@@ -213,7 +712,7 @@ Thanks to Thatcher Freeman for the original code to draw the chart and to render
     }
 
     return result;
-    }
+  }
  
  __DEVICE__ float3 inline oetf_leica_llog(float3 x, int inv) {
   /* Leica L-Log
@@ -244,7 +743,7 @@ Thanks to Thatcher Freeman for the original code to draw the chart and to render
     }
 
     return result;
-    }
+  }
  
  __DEVICE__ float3 inline oetf_nikon_nlog(float3 x, int inv) {
   /* Nikon N-Log
@@ -272,7 +771,7 @@ Thanks to Thatcher Freeman for the original code to draw the chart and to render
     }
 
     return result;
-    }
+  }
 
  __DEVICE__ float3 inline oetf_sony_slog2(float3 x, int inv) {
   /* Sony S-Log2
@@ -315,7 +814,7 @@ Thanks to Thatcher Freeman for the original code to draw the chart and to render
     }
 
     return result;
-    }
+  }
 
  __DEVICE__ float3 inline oetf_filmlight_tlog(float3 x, int inv) {
   /* Filmlight T-Log
@@ -344,7 +843,7 @@ Thanks to Thatcher Freeman for the original code to draw the chart and to render
     }
 
     return result;
-    }
+  }
 
  __DEVICE__ float3 inline oetf_kodak_cineon(float3 x, int inv) {
   /* Kodak Cineon Log
@@ -370,7 +869,7 @@ Thanks to Thatcher Freeman for the original code to draw the chart and to render
     }
 
     return result;
-    }
+  }
 
  __DEVICE__ float3 inline LinToGammaCurve (float3 in, float gamma) {
     float3 out;
@@ -380,38 +879,80 @@ Thanks to Thatcher Freeman for the original code to draw the chart and to render
     out.z = _powf(_fmaxf(in.z, 0.0f), (1 / gamma));
 
     return out;
-    }
+  }
+
+ __DEVICE__ float3 inline GammaCurveToLin (float3 in, float gamma) {
+    float3 out;
+
+    out.x = _powf(_fmaxf(in.x, 0.0f), gamma);
+    out.y = _powf(_fmaxf(in.y, 0.0f), gamma);
+    out.z = _powf(_fmaxf(in.z, 0.0f), gamma);
+
+    return out;
+  }  
+
+
  
 //functions to apply transfer function conversions
  
  __DEVICE__ float3 inline LinToTF (float3 in, int TF) {
-    if (TF ==  0) return LinToLogC3(in);
-    if (TF ==  1) return LinToLogC4(in);
-    if (TF ==  2) return LinToDI(in);
-    if (TF ==  3) return LinToACEScct(in);
-    if (TF ==  4) return LinToLog3G10(in);
-    if (TF ==  5) return LinToSLog3(in);
-    if (TF ==  6) return oetf_sony_slog2(in,0);
-    if (TF ==  7) return LinToBMDFilmGen5(in);
-    if (TF ==  8) return LinToCLog3(in);
-    if (TF ==  9) return LinToDLog(in);
-    if (TF == 10) return LinToFLog(in);
-    if (TF == 11) return LinToFLog2(in);
-    if (TF == 12) return LinToVLog(in);
-    if (TF == 13) return oetf_gopro_protune(in,0);
-    if (TF == 14) return oetf_leica_llog(in,0);
-    if (TF == 15) return oetf_nikon_nlog(in,0);
-    if (TF == 16) return oetf_filmlight_tlog(in,0);
-    if (TF == 17) return oetf_kodak_cineon(in,0);
-    if (TF == 18) return LinToGammaCurve(in, 2.2);
-    if (TF == 19) return LinToGammaCurve(in, 2.4);
-    if (TF == 20) return LinToGammaCurve(in, 2.6);
-    if (TF == 21) return in; // Lin
+    if (TF ==  0) return oetf_arri_logc3(in,0);
+    if (TF ==  1) return oetf_arri_logc4(in, 0);
+    if (TF ==  2) return oetf_davinci_intermediate(in,0);
+    if (TF ==  3) return oetf_acescct(in,0);
+    if (TF ==  4) return oetf_red_log3g10(in,0);
+    if (TF ==  5) return oetf_sony_slog2(in,0);
+    if (TF ==  6) return oetf_sony_slog3(in,0);
+    if (TF ==  7) return oetf_blackmagic_filmgen5(in,0);
+    if (TF ==  8) return oetf_canon_clog2(in,0);
+    if (TF ==  9) return oetf_canon_clog3(in,0);
+    if (TF == 10) return oetf_dji_dlog(in,0);
+    if (TF == 11) return oetf_fujifilm_flog(in,0);
+    if (TF == 12) return oetf_fujifilm_flog2(in,0);
+    if (TF == 13) return oetf_panasonic_vlog(in,0);
+    if (TF == 14) return oetf_gopro_protune(in,0);
+    if (TF == 15) return oetf_leica_llog(in,0);
+    if (TF == 16) return oetf_nikon_nlog(in,0);
+    if (TF == 17) return oetf_filmlight_tlog(in,0);
+    if (TF == 18) return oetf_kodak_cineon(in,0);
+    if (TF == 19) return LinToGammaCurve(in, 2.2);
+    if (TF == 20) return LinToGammaCurve(in, 2.4);
+    if (TF == 21) return LinToGammaCurve(in, 2.6);
+    if (TF == 22) return in; // Lin
 
 
     
     return make_float3(1, 0, 0); // Red on error
     }
+ __DEVICE__ float3 inline Linearize (float3 in, int TF) {
+    if (TF ==  0) return oetf_arri_logc3(in, 1);
+    if (TF ==  1) return oetf_arri_logc4(in, 1);
+    if (TF ==  2) return oetf_davinci_intermediate(in, 1);
+    if (TF ==  3) return oetf_acescct(in, 1);
+    if (TF ==  4) return oetf_red_log3g10(in, 1);
+    if (TF ==  5) return oetf_sony_slog2(in, 1);
+    if (TF ==  6) return oetf_sony_slog3(in, 1);
+    if (TF ==  7) return oetf_blackmagic_filmgen5(in, 1);
+    if (TF ==  8) return oetf_canon_clog2(in, 1);
+    if (TF ==  9) return oetf_canon_clog3(in, 1);
+    if (TF == 10) return oetf_dji_dlog(in, 1);
+    if (TF == 11) return oetf_fujifilm_flog(in, 1);
+    if (TF == 12) return oetf_fujifilm_flog2(in, 1);
+    if (TF == 13) return oetf_panasonic_vlog(in, 1);
+    if (TF == 14) return oetf_gopro_protune(in, 1);
+    if (TF == 15) return oetf_leica_llog(in, 1);
+    if (TF == 16) return oetf_nikon_nlog(in, 1);
+    if (TF == 17) return oetf_filmlight_tlog(in, 1);
+    if (TF == 18) return oetf_kodak_cineon(in, 1);
+    if (TF == 19) return GammaCurveToLin(in, 2.2);
+    if (TF == 20) return GammaCurveToLin(in, 2.4);
+    if (TF == 21) return GammaCurveToLin(in, 2.6);
+    if (TF == 22) return in; // Lin
+
+
+    
+    return make_float3(1, 0, 0); // Red on error
+    }    
  
  __DEVICE__ float inline set_mid_gray (float mid_gray, int TF) {
 
@@ -422,6 +963,87 @@ Thanks to Thatcher Freeman for the original code to draw the chart and to render
     return mid_gray;
     }
 
+//functions for implementing quantization step and the rest of the evaluation process
+
+__DEVICE__ inline float3 maxf3(float3 a,float b) {
+    // For each component of float3 a, return max of component and float b
+    return make_float3(_fmaxf(a.x, b), _fmaxf(a.y, b), _fmaxf(a.z, b));
+}
+
+__DEVICE__ float3 quantize (float3 in, int rounding_opt, int bit_depth) {
+
+    float3 output_color = in;
+
+    float values = (float)(1 << (bit_depth)) - 1.0;
+    output_color *= values;
+    // rounding option is round case = 0
+    if (rounding_opt == 0) {
+        output_color.x = _round(output_color.x);
+        output_color.y = _round(output_color.y);
+        output_color.z = _round(output_color.z);
+
+   // rounding option is Truncate case = 1
+    } else if (rounding_opt == 1) {
+        output_color.x = _truncf(output_color.x);
+        output_color.y = _truncf(output_color.y);
+        output_color.z = _truncf(output_color.z);
+
+   // rounding option is Stochastic case = 2
+    } 
+
+    output_color /= values;
+
+    // clamping step
+        output_color.x = _saturatef(output_color.x);
+        output_color.y = _saturatef(output_color.y);
+        output_color.z = _saturatef(output_color.z);
+
+    return output_color;
+}
+
+ __DEVICE__ float3 inline tlog_curve(float3 x, int direction, int stops) {
+    /* 
+    T-Log Transformation (Linear to Log and Log to Linear)
+    - direction: 0 for Linear to Log (LIN2LOG), 1 for Log to Linear (LOG2LIN)
+    - stops: Number of stops for dynamic range
+    - exposure_comp: Fixed to 0.0
+    */
+
+    // Fixed Exposure Compensation
+    float exp = 0.0f;
+
+    // Calculate linear and log extremes based on stops
+    float lin_max = _exp2f(stops / 2.0f);
+    float lin_min = _exp2f(-stops / 2.0f);
+
+    float3 result;
+    float3 l;
+ // Forward Transformation: Linear to Log
+    if (direction == 0) {
+        // Scaling: Adjusting linear values to middle gray
+         l = maxf3(x, 0.0f) * (1.0f / 0.18f);// * _exp2f(exp); // exp=0: multiply by 1.0
+
+        // Apply logarithmic scaling
+        result.x = (_log2f(l.x) - _log2f(lin_min)) / (_log2f(lin_max) - _log2f(lin_min));
+        result.y = (_log2f(l.y) - _log2f(lin_min)) / (_log2f(lin_max) - _log2f(lin_min));
+        result.z = (_log2f(l.z) - _log2f(lin_min)) / (_log2f(lin_max) - _log2f(lin_min));
+    }
+
+ // Inverse Transformation: Log to Linear
+    else { 
+        // Apply exponential scaling
+        l.x = _exp2f(x.x * ((_log2f(lin_max) )- _log2f(lin_min)) + _log2f(lin_min));
+        l.y = _exp2f(x.y * ((_log2f(lin_max) )- _log2f(lin_min)) + _log2f(lin_min));
+        l.z = _exp2f(x.z * ((_log2f(lin_max) )- _log2f(lin_min)) + _log2f(lin_min));
+
+        // Scale back to linear space
+        result.x = _fmaxf((l.x * 0.18f / _exp2f(exp)), 0.0f); // exp=0: divide by 1.0
+        result.y = _fmaxf((l.y * 0.18f / _exp2f(exp)), 0.0f);
+        result.z = _fmaxf((l.z * 0.18f / _exp2f(exp)), 0.0f);
+    }
+
+    return result;
+}
 
 
 // UI Parameters
@@ -432,10 +1054,11 @@ DEFINE_UI_PARAMS(opt_mid, Enable Custom Mid-Gray, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(opt_card, Show Gray Card, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(opt_ramp, Overlay Linear Ramp, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(opt_scope, :: Wide Aspect Mode ::, DCTLUI_CHECK_BOX, 0)
-DEFINE_UI_PARAMS(annotation_mode, Annotate, DCTLUI_COMBO_BOX, 0, {ANNOTATE_NONE, ANNOTATE_MIDGRAY_BASELINE, ANNOTATE_START_FROM_ZERO}, {None, Midgray Baseline, Start from Zero})
-DEFINE_UI_PARAMS(p_TF, Transfer Function, DCTLUI_COMBO_BOX, 2, {logc3, logc4, di, aces_cct, log3g10, slog2,slog3, bmd_f5, clog3, dlog, fLog, fLog2, vlog,goprotune, Leicallog, nlog,tlog,cineon, g22, g24, g26, linear}, {ARRI LogC3, ARRI LogC4,  DaVinci Intermediate, ACEScct, RED Log3G10, Sony S-Log2,Sony S-Log3, BMD Film Gen 5, Canon Log 3, DJI D-Log, FujiFilm F-Log, FujiFilm F-Log2, Panasonic V-Log, Gopro protune, Leica - Llog, Nikon Nlog, Filmlight T log,Kodak Cineon,Gamma 2.2, Gamma 2.4, Gamma 2.6, Linear})
-DEFINE_UI_PARAMS(opt_label, Show Label, DCTLUI_CHECK_BOX, 1) // Checkbox to toggle label display
 
+DEFINE_UI_PARAMS(eval, Evaluation mode, DCTLUI_COMBO_BOX, 0, {eval_off, eval_10, eval_8}, {Off, 10 bit rounded, 8 bit rounded})
+DEFINE_UI_PARAMS(annotation_mode, Annotation, DCTLUI_COMBO_BOX, 0, {ANNOTATE_NONE, ANNOTATE_MIDGRAY_BASELINE, ANNOTATE_START_FROM_ZERO}, {Off, Midgray Baseline, Start from Zero})
+DEFINE_UI_PARAMS(p_TF, Transfer Function, DCTLUI_COMBO_BOX, 2, {logc3, logc4, di, aces_cct, log3g10, slog2,slog3, bmd_f5, clog2, clog3, dlog, fLog, fLog2, vlog,goprotune, Leicallog, nlog,tlog,cineon, g22, g24, g26, linear}, {ARRI LogC3, ARRI LogC4,  DaVinci Intermediate, ACEScct, RED Log3G10, Sony S-Log2,Sony S-Log3, BMD Film Gen 5, Canon Log 2,Canon Log 3, DJI D-Log, FujiFilm F-Log, FujiFilm F-Log2, Panasonic V-Log, Gopro protune, Leica - Llog, Nikon Nlog, Filmlight T log,Kodak Cineon,Gamma 2.2, Gamma 2.4, Gamma 2.6, Linear})
+DEFINE_UI_PARAMS(opt_label, Show Label, DCTLUI_CHECK_BOX, 1) // Checkbox to toggle label display
 
 
 
@@ -579,7 +1202,6 @@ __CONSTANT__ int font[FONT_LENGTH][FONT_HEIGHT] = {{0, 0, 0, 0, 0, 0, 0, 0, 0, 0
                                                    {0, 0, 0, 0, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 0, 0},
                                                    {0, 0, 0, 0, 4, 8, 8, 8, 8, 16, 8, 8, 8, 8, 4, 0},
                                                    {0, 0, 0, 0, 0, 0, 0, 80, 40, 0, 0, 0, 0, 0, 0, 0}};
-
 
 // Define structures for text rendering
  typedef struct {
@@ -740,78 +1362,80 @@ __CONSTANT__ int font[FONT_LENGTH][FONT_HEIGHT] = {{0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 // Function to get the transfer function name based on index
  __DEVICE__ void get_tf_name(int index, char output[]) {
     switch (index) {
-        case 0:
-            strcpy("ARRI LogC3", output);
-            break;
-        case 1:
-            strcpy("ARRI LogC4", output);
-            break;
-        case 2:
-            strcpy("DaVinci Intermediate", output);
-            break;
-        case 3:
-            strcpy("ACEScct", output);
-            break;
-        case 4:
-            strcpy("RED Log3G10", output);
-            break;
-        case 5:
-            strcpy("Sony S-Log2", output);
-            break;
-        case 6:
-            strcpy("Sony S-Log3", output);
-            break;        
-        case 7:
-            strcpy("BMD Film Gen 5", output);
-            break;
-        case 8:
-            strcpy("Canon Log 3", output);
-            break;
-        case 9:
-            strcpy("DJI D-Log", output);
-            break;
+        case  0:
+                 strcpy("ARRI LogC3", output);
+                 break;
+        case  1:
+                 strcpy("ARRI LogC4", output);
+                 break;
+        case  2:
+                strcpy("DaVinci Intermediate", output);
+                break;
+        case  3:
+                 strcpy("ACEScct", output);
+                 break;
+        case  4:
+                 strcpy("RED Log3G10", output);
+                 break;
+        case  5:
+                 strcpy("Sony S-Log2", output);
+                 break;
+        case  6:
+                 strcpy("Sony S-Log3", output);
+                 break;        
+        case  7:
+                 strcpy("BMD Film Gen 5", output);
+                 break;
+        case  8:
+                 strcpy("Canon Log 2", output);
+                 break;
+        case  9:
+                 strcpy("Canon Log 3", output);
+                 break;
         case 10:
-            strcpy("FujiFilm F-Log", output);
-            break;
+                 strcpy("DJI D-Log", output);
+                 break;
         case 11:
-            strcpy("FujiFilm F-Log2", output);
-            break;
+                 strcpy("FujiFilm F-Log", output);
+                 break;
         case 12:
-            strcpy("Panasonic V-Log", output);
-            break;
+                 strcpy("FujiFilm F-Log2", output);
+                 break;
         case 13:
-            strcpy("gopro protune ", output);
-            break;
+                 strcpy("Panasonic V-Log", output);
+                 break;
         case 14:
-            strcpy("Leica - Llog", output);
-            break;
+                 strcpy("gopro protune ", output);
+                 break;
         case 15:
-            strcpy("Nikon Nlog", output);
-            break;
+                 strcpy("Leica - Llog", output);
+                 break;
         case 16:
-            strcpy("Filmlight T log", output);
-            break;
+                 strcpy("Nikon Nlog", output);
+                 break;
         case 17:
-            strcpy("Kodak Cineon", output);
-            break;
+                 strcpy("Filmlight T log", output);
+                 break;
         case 18:
-            strcpy("Gamma 2.2", output);
-            break;
+                 strcpy("Kodak Cineon", output);
+                 break;
         case 19:
-            strcpy("Gamma 2.4", output);
-            break;
+                 strcpy("Gamma 2.2", output);
+                 break;
         case 20:
-            strcpy("Gamma 2.6", output);
-            break;
+                 strcpy("Gamma 2.4", output);
+                 break;
         case 21:
-            strcpy("Linear", output);
-            break;
+                 strcpy("Gamma 2.6", output);
+                 break;
+        case 22:
+                 strcpy("Linear", output);
+                 break;
        default:
             strcpy("Unknown", output);
             break;
     }
  }
-
 //  function to convert integer to string with sign
  __DEVICE__ void strcpy_idx(char str_src[], char str_dst[], int src_start_idx, int dst_start_idx, int num_chars) {
     for (int i = 0; i < num_chars; ++i) {
@@ -881,18 +1505,16 @@ __CONSTANT__ int font[FONT_LENGTH][FONT_HEIGHT] = {{0, 0, 0, 0, 0, 0, 0, 0, 0, 0
     output[runner] = '\0';
  }
  
- 
 
 
-
-// Main transform function
+// Main Transfrm function
 __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p_R, float p_G, float p_B) {
-    // Frame dimensions
+
+ // Frame dimensions
     float frame_width = p_Width;
     float frame_height = p_Height;
 
-    
-    // Aspect ratio adjustments
+ // Aspect ratio adjustments
      float x, y;
      if (opt_scope) {
         // Wide Aspect Mode (Aspect Ratio 2.5)
@@ -935,13 +1557,13 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
          return make_float3(0.0f, 0.0f, 0.0f);
      }
  
-    // Determine the mid-gray value to use
+ // Determine the mid-gray value to use
     float mid_gray_value;
     int slct_p_TF;
     if (opt_mid == 1) {
         // Custom Mid-Gray is enabled; use linear transfer function
         mid_gray_value = mid_gray;
-        slct_p_TF = 21; // Linear
+        slct_p_TF = 22; // Linear
     } else {
         // Custom Mid-Gray is disabled; use predefined mid-gray and selected transfer function
         mid_gray_value = 0.18f;
@@ -956,7 +1578,7 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
     int middle_step = num_steps / 2;
     float3 Output;
 
-    // Resolution-agnostic framing for the middle box
+ // Resolution-agnostic framing for the middle box
     float middle_box_left = 0.25f;
     float middle_box_right = 0.75f;
     float middle_box_top = 0.3f;
@@ -965,7 +1587,8 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
     // Variables for annotations
     int curr_step = (int)(x / step_width);
     float val;
-
+ 
+ //Draw chart
     if (middle_box_left <= x && x <= middle_box_right && middle_box_top <= y && y <= middle_box_bottom) {
         // Middle box
         Output = mid_gray_tf;
@@ -982,25 +1605,20 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
         Output = make_float3(0.0f, 0.0f, 0.0f);
     }
 
-    if (opt_ramp) {
-        // Make linear ramp using unaltered x position defined as cleanX 
-   float cleanX = (float)p_X / ((float)p_Width-1);
-   float3 ramp = make_float3(cleanX, cleanX, cleanX);
-        Output = y >= 0.85f ? ramp: Output;
-    }
+
 
     if (opt_card) {
         // Make gray card
         Output = mid_gray_tf;
     }
-
-    // Initialize curr_color
+ 
+ // Initialize curr_color
     float3 curr_color = Output;
 
-    // Current pixel position in normalized coordinates
+ // Current pixel position in normalized coordinates
     curr_pos_t curr_pos = make_curr_pos(x, y);
 
-    // Annotation for Top Gradation Steps
+ // Annotation for Top Gradation Steps
     if (y <= 0.2f && y >= 0.09f && annotation_mode != ANNOTATE_NONE) {
         // Annotation area just below the steps
         float annotation_y = 0.15f; // Adjust as needed
@@ -1046,7 +1664,7 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
         }
     }
 
-    // Draw the label within the middle box if opt_label is true
+ // Draw the label within the middle box if opt_label is true
     if (opt_label == 1 && middle_box_left <= x && x <= middle_box_right && middle_box_top <= y && y <= middle_box_bottom) {
         // Get the transfer function name
         char tf_name[64];
@@ -1089,18 +1707,43 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
             label_y_line2 -= overflow;
         }
 
-        // Set label color (contrast with background)
+   // Set label color (contrast with background)
         float lum = (curr_color.x + curr_color.y + curr_color.z) / 3.0f;
         float3 label_color = lum > 0.5f ? make_float3(0.0f, 0.0f, 0.0f) : make_float3(1.0f, 1.0f, 1.0f);
 
-        // Draw the first line (Transfer Function Name)
+   // Draw the first line (Transfer Function Name)
         char_trans_t char_trans_line1 = make_char_trans(label_x, label_y_line1, scale_line1);
         draw_string(tf_name, label_color, &char_trans_line1, &curr_pos, &curr_color);
 
-        // Draw the second line (Mid Gray Value) with smaller scale
+   // Draw the second line (Mid Gray Value) with smaller scale
         char_trans_t char_trans_line2 = make_char_trans(label_x, label_y_line2, scale_line2);
         draw_string(mid_gray_label, label_color, &char_trans_line2, &curr_pos, &curr_color);
     }
+ 
+ //Evaluation mode
+    if (eval != 0){
+
+      if( eval == 1){
+
+      curr_color = quantize (curr_color, 0, 10);
+      curr_color = Linearize(curr_color, slct_p_TF);
+      curr_color = tlog_curve(curr_color, 0, num_steps);
+    } else if (eval == 2) {
+
+      curr_color = quantize (curr_color, 0, 8);
+      curr_color = Linearize(curr_color, slct_p_TF);
+      curr_color = tlog_curve(curr_color, 0, num_steps);
+    }  
+ }
+
+// option to show a linear ramp
+    if (opt_ramp) {
+        // Make linear ramp using unaltered x position defined as cleanX 
+   float cleanX = (float)p_X / ((float)p_Width-1);
+   float3 ramp = make_float3(cleanX, cleanX, cleanX);
+        curr_color = y >= 0.85f ? ramp: curr_color;
+    }
 
     return curr_color;
+ 
 }
