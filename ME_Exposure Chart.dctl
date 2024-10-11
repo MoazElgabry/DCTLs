@@ -1,7 +1,7 @@
 #line 2 
 /*
 
-Exposure Chart DCTL ver 1.2
+Exposure Chart DCTL ver 1.3
 by Moaz Elgabry, moazelgabry.com
 
 Thanks to Thatcher Freeman for the original code to draw the chart and to render text
@@ -1055,7 +1055,7 @@ DEFINE_UI_PARAMS(opt_ramp, Overlay Linear Ramp, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(opt_scope, :: Wide Aspect Mode ::, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(opt_card, Midgray Card Display, DCTLUI_COMBO_BOX, 1, {CARD_FULL_SCREEN, CARD_BOX, CARD_NONE}, {Full Screen, Box, None})
 
-DEFINE_UI_PARAMS(eval, Evaluation mode, DCTLUI_COMBO_BOX, 2, {eval_10, eval_8,eval_off}, {10 bit rounded, 8 bit rounded,Off})
+DEFINE_UI_PARAMS(eval, Evaluation mode, DCTLUI_COMBO_BOX, 3, {eval_12, eval_10, eval_8, eval_off}, {12 bit rounded, 10 bit rounded, 8 bit rounded,Off})
 DEFINE_UI_PARAMS(annotation_mode, Annotation, DCTLUI_COMBO_BOX, 0, {ANNOTATE_NONE, ANNOTATE_MIDGRAY_BASELINE, ANNOTATE_START_FROM_ZERO}, {Off, Midgray Baseline, Start from Zero})
 DEFINE_UI_PARAMS(p_TF, Transfer Function, DCTLUI_COMBO_BOX, 2, {logc3, logc4, di, aces_cct, log3g10, slog2,slog3, bmd_f5, clog2, clog3, dlog, fLog, fLog2, vlog,goprotune, Leicallog, nlog,tlog,cineon, g22, g24, g26, linear}, {ARRI LogC3, ARRI LogC4,  DaVinci Intermediate, ACEScct, RED Log3G10, Sony S-Log2,Sony S-Log3, BMD Film Gen 5, Canon Log 2,Canon Log 3, DJI D-Log, FujiFilm F-Log, FujiFilm F-Log2, Panasonic V-Log, Gopro protune, Leica - Llog, Nikon Nlog, Filmlight T log,Kodak Cineon,Gamma 2.2, Gamma 2.4, Gamma 2.6, Linear})
 DEFINE_UI_PARAMS(opt_label, Show Label, DCTLUI_CHECK_BOX, 1) // Checkbox to toggle label display
@@ -1753,21 +1753,21 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
         char second_line[64];
 
         // Determine whether evaluation mode is active
-        int eval_mode_active = (eval != 2) && (opt_mid == 0) && (slct_p_TF != 22);
+        int eval_mode_active = (eval != 3) && (opt_mid == 0) && (slct_p_TF != 22);
          
          if (eval_mode_active && opt_card != 0) {
              // Show "Evaluation mode"
-             char eval_mode_str[] = "Evaluation mode";
+             char eval_mode_str[] = "Evaluation in T-log";
              strcpy(second_line, eval_mode_str);
-         } else if ((eval != 2 && opt_mid == 1 && opt_card != 0) || (eval != 2 && slct_p_TF == 22 && opt_card != 0)) {
+         } else if ((eval != 3 && opt_mid == 1 && opt_card != 0) || (eval != 2 && slct_p_TF == 22 && opt_card != 0)) {
              // Evaluation is off for linear
              char eval_off_str[] = "Evaluation is off for linear";
              strcpy(second_line, eval_off_str);
-         } else if ((eval != 2 && opt_mid == 1 && opt_card == 0) || (eval != 2 && slct_p_TF == 22 && opt_card == 0)) {
+         } else if ((eval != 3 && opt_mid == 1 && opt_card == 0) || (eval != 2 && slct_p_TF == 22 && opt_card == 0)) {
              // Evaluation off for linear/full card
              char eval_off_fullcard_str[] = "Evaluation off for linear/full card";
              strcpy(second_line, eval_off_fullcard_str);
-         } else if (eval != 2 && opt_card == 0) {
+         } else if (eval != 3 && opt_card == 0) {
              // Evaluation is off for fullscreen card
              char eval_off_fullscreen_str[] = "Evaluation is off for fullscreen card";
              strcpy(second_line, eval_off_fullscreen_str);
@@ -1824,12 +1824,16 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
     }
 
     // Evaluation mode
-    if (eval != 2 && !(opt_card== 0) && !(opt_mid == 1 || slct_p_TF == 22) ) {
-        if (eval == 0) {//evaluation mode in 10 bit
+    if (eval != 3 && !(opt_card== 0) && !(opt_mid == 1 || slct_p_TF == 22) ) {
+        if (eval == 0) {//evaluation mode in 12 bit
+            curr_color = quantize(curr_color, 0, 12);
+            curr_color = Linearize(curr_color, slct_p_TF);
+            curr_color = tlog_curve(curr_color, 0, num_steps);
+        } else if (eval == 1) {//evaluation mode in 10 bit
             curr_color = quantize(curr_color, 0, 10);
             curr_color = Linearize(curr_color, slct_p_TF);
             curr_color = tlog_curve(curr_color, 0, num_steps);
-        } else if (eval == 1) {//evaluation mode in 8 bit
+        } else if (eval == 2) {//evaluation mode in 8 bit
             curr_color = quantize(curr_color, 0, 8);
             curr_color = Linearize(curr_color, slct_p_TF);
             curr_color = tlog_curve(curr_color, 0, num_steps);
