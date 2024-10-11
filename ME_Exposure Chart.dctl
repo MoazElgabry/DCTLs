@@ -1268,35 +1268,244 @@ __CONSTANT__ int font[FONT_LENGTH][FONT_HEIGHT] = {{0, 0, 0, 0, 0, 0, 0, 0, 0, 0
     }
  }
  
- __DEVICE__ int strlen(__CONSTANTREF__ const char str[]) {
+ __DEVICE__ float string_width_in_units(char str[], float scale) {
+    float width = 0.0f;
     int i = 0;
-    while (str[i] != '\0' && str[i] != 0) {
+    char c = str[i];
+    while (c != '\0' && c != 0) {
+        int c_width = font_widths[c];
+        width += scale * c_width / FONT_HEIGHT;
+        i++;
+        c = str[i];
+    }
+    return width;
+ }
+
+ __DEVICE__ int strlen(char a[]) {
+    int i = 0;
+    while (a[i] != '\0' && a[i] != 0) {
         ++i;
     }
     return i;
  }
  
- __DEVICE__ void strcpy(char dest[], __CONSTANTREF__ const char src[]) {
+ __DEVICE__ void strcpy_idx(char str_src[], char str_dst[], int src_start_idx, int dst_start_idx, int num_chars) {
+    for (int i = 0; i < num_chars; ++i) {
+        str_dst[dst_start_idx + i] = str_src[src_start_idx + i];
+    }
+ }
+ 
+ __DEVICE__ void strcpy(char dest[], char src[]) {
     int i = 0;
-    while (src[i] != '\0' && i < 64) {
+    while (src[i] != '\0' && i < 64) { // Assuming max length of 64
         dest[i] = src[i];
         i++;
     }
     dest[i] = '\0';
  }
  
- __DEVICE__ void strcat(char dest[], __CONSTANTREF__ const char src[]) {
-    int len_dest = strlen(dest);
-    int i = 0;
-    while (src[i] != '\0' && (len_dest + i) < 64) {
-        dest[len_dest + i] = src[i];
-        i++;
-    }
-    dest[len_dest + i] = '\0';
+  
+ __DEVICE__ void strcat(char a[], char b[], char dest[]) {
+     int len_a = strlen(a);
+     int len_b = strlen(b);
+     if (a != dest) {
+         strcpy_idx(a, dest, 0, 0, len_a);
+     }
+     strcpy_idx(b, dest, 0, len_a, len_b);
+     dest[len_a + len_b] = '\0';
  }
 
  
- // Corrected float2str function
+ __DEVICE__ char digit2char(int i) {
+    return (char)('0' + i);
+ }
+ 
+ __DEVICE__ void int2str(int value, char output[], int num_chars) {
+    int runner = 0;
+
+    if (value < 0) {
+        output[runner++] = '-';
+        value = -value;
+    } else if (value == 0) {
+        output[runner++] = '0';
+        output[runner] = '\0';
+        return;
+    }
+
+    int temp = value;
+    int digits = 0;
+    while (temp > 0) {
+        temp /= 10;
+        digits++;
+    }
+
+    for (int i = digits - 1; i >= 0 && runner < num_chars - 1; i--) {
+        int divisor = (int)_powf(10.0f, i);
+        int digit = value / divisor;
+        output[runner++] = digit2char(digit);
+        value %= divisor;
+    }
+    output[runner] = '\0';
+ }
+ 
+ __DEVICE__ void int2str_signed(int value, char output[]) {
+    int runner = 0;
+    if (value < 0) {
+        output[runner++] = '-';
+        value = -value;
+    } else if (value > 0) {
+        output[runner++] = '+';
+    } else {
+        output[runner++] = '0';
+        output[runner] = '\0';
+        return;
+    }
+
+    int temp = value;
+    int digits = 0;
+    while (temp > 0) {
+        temp /= 10;
+        digits++;
+    }
+
+    for (int i = digits - 1; i >= 0; i--) {
+        int divisor = (int)_powf(10.0f, i);
+        int digit = value / divisor;
+        output[runner++] = digit2char(digit);
+        value %= divisor;
+    }
+    output[runner] = '\0';
+ }
+ 
+ 
+ // Function to get the transfer function name based on index
+ __DEVICE__ void get_tf_name(int index, char output[]) {
+           if (index == 0) {
+        {
+            char name[] = "ARRI LogC3";
+            strcpy(output, name);
+        }
+    } else if (index == 1) {
+        {
+            char name[] = "ARRI LogC4";
+            strcpy(output, name);
+        }
+    } else if (index == 2) {
+        {
+            char name[] = "DaVinci Intermediate";
+            strcpy(output, name);
+        }
+    } else if (index == 3) {
+        {
+            char name[] = "ACEScct";
+            strcpy(output, name);
+        }
+    } else if (index == 4) {
+        {
+            char name[] = "RED Log3G10";
+            strcpy(output, name);
+        }
+    } else if (index == 5) {
+        {
+            char name[] = "Sony S-Log2";
+            strcpy(output, name);
+        }
+    } else if (index == 6) {
+        {
+            char name[] = "Sony S-Log3";
+            strcpy(output, name);
+        }
+    } else if (index == 7) {
+        {
+            char name[] = "BMD Film Gen 5";
+            strcpy(output, name);
+        }
+    } else if (index == 8) {
+        {
+            char name[] = "Canon Log 2";
+            strcpy(output, name);
+        }
+    } else if (index == 9) {
+        {
+            char name[] = "Canon Log 3";
+            strcpy(output, name);
+        }
+    } else if (index == 10) {
+        {
+            char name[] = "DJI D-Log";
+            strcpy(output, name);
+        }
+    } else if (index == 11) {
+        {
+            char name[] = "FujiFilm F-Log";
+            strcpy(output, name);
+        }
+    } else if (index == 12) {
+        {
+            char name[] = "FujiFilm F-Log2";
+            strcpy(output, name);
+        }
+    } else if (index == 13) {
+        {
+            char name[] = "Panasonic V-Log";
+            strcpy(output, name);
+        }
+    } else if (index == 14) {
+        {
+            char name[] = "GoPro Protune";
+            strcpy(output, name);
+        }
+    } else if (index == 15) {
+        {
+            char name[] = "Leica L-Log";
+            strcpy(output, name);
+        }
+    } else if (index == 16) {
+        {
+            char name[] = "Nikon N-Log";
+            strcpy(output, name);
+        }
+    } else if (index == 17) {
+        {
+            char name[] = "Filmlight T-Log";
+            strcpy(output, name);
+        }
+    } else if (index == 18) {
+        {
+            char name[] = "Kodak Cineon";
+            strcpy(output, name);
+        }
+    } else if (index == 19) {
+        {
+            char name[] = "Gamma 2.2";
+            strcpy(output, name);
+        }
+    } else if (index == 20) {
+        {
+            char name[] = "Gamma 2.4";
+            strcpy(output, name);
+        }
+    } else if (index == 21) {
+        {
+            char name[] = "Gamma 2.6";
+            strcpy(output, name);
+        }
+    } else if (index == 22) {
+        {
+            char name[] = "Linear";
+            strcpy(output, name);
+        }
+    }
+    // Add other cases similarly
+    else {
+        {
+            char name[] = "Unknown";
+            strcpy(output, name);
+        }
+    }
+ }
+ 
+
  __DEVICE__ void float2str(float f, char output[], int decimal_places) {
     int runner = 0;
     char inf[] = "inf";
@@ -1308,10 +1517,12 @@ __CONSTANT__ int font[FONT_LENGTH][FONT_HEIGHT] = {{0, 0, 0, 0, 0, 0, 0, 0, 0, 0
     }
 
     if (isinf(f)) {
-        strcpy(output + runner, inf);
+        strcpy_idx(inf, output, 0, runner, strlen(inf));
+        output[runner + strlen(inf)] = '\0';
         return;
     } else if (isnan(f)) {
-        strcpy(output + runner, nan);
+        strcpy_idx(nan, output, 0, runner, strlen(nan));
+        output[runner + strlen(nan)] = '\0';
         return;
     }
 
@@ -1327,10 +1538,11 @@ __CONSTANT__ int font[FONT_LENGTH][FONT_HEIGHT] = {{0, 0, 0, 0, 0, 0, 0, 0, 0, 0
     } while (temp_int != 0);
 
     for (int i = digits - 1; i >= 0; i--) {
-        output[runner + i] = '0' + int_part % 10;
-        int_part /= 10;
+        int divisor = (int)_powf(10.0f, i);
+        int digit = int_part / divisor;
+        output[runner++] = digit2char(digit);
+        int_part %= divisor;
     }
-    runner += digits;
 
     output[runner++] = '.';
 
@@ -1338,112 +1550,13 @@ __CONSTANT__ int font[FONT_LENGTH][FONT_HEIGHT] = {{0, 0, 0, 0, 0, 0, 0, 0, 0, 0
     for (int i = 0; i < decimal_places; i++) {
         frac_part *= 10.0f;
         int digit = (int)frac_part;
-        output[runner++] = '0' + digit;
+        output[runner++] = digit2char(digit);
         frac_part -= digit;
     }
 
     output[runner] = '\0';
  }
- __DEVICE__ float string_width_in_units(char str[], float scale) {
-    float width = 0.0f;
-    int i = 0;
-    char c = str[i];
-    while (c != '\0' && c != 0) {
-        int c_width = font_widths[c];
-        width += scale * c_width / FONT_HEIGHT;
-        i++;
-        c = str[i];
-    }
-    return width;
- }
- 
- // Function to get the transfer function name based on index
- __DEVICE__ void get_tf_name(int index, char output[]) {
-    switch (index) {
-        case 0:
-            strcpy(output, "ARRI LogC3");
-            break;
-        case 1:
-            strcpy(output, "ARRI LogC4");
-            break;
-        case 2:
-            strcpy(output, "DaVinci Intermediate");
-            break;
-        case 3:
-            strcpy(output, "ACEScct");
-            break;
-        case 4:
-            strcpy(output, "RED Log3G10");
-            break;
-        case 5:
-            strcpy(output, "Sony S-Log2");
-            break;
-        case 6:
-            strcpy(output, "Sony S-Log3");
-            break;
-        case 7:
-            strcpy(output, "BMD Film Gen 5");
-            break;
-        case 8:
-            strcpy(output, "Canon Log 2");
-            break;
-        case 9:
-            strcpy(output, "Canon Log 3");
-            break;
-        case 10:
-            strcpy(output, "DJI D-Log");
-            break;
-        case 11:
-            strcpy(output, "FujiFilm F-Log");
-            break;
-        case 12:
-            strcpy(output, "FujiFilm F-Log2");
-            break;
-        case 13:
-            strcpy(output, "Panasonic V-Log");
-            break;
-        case 14:
-            strcpy(output, "GoPro Protune");
-            break;
-        case 15:
-            strcpy(output, "Leica L-Log");
-            break;
-        case 16:
-            strcpy(output, "Nikon N-Log");
-            break;
-        case 17:
-            strcpy(output, "Filmlight T-Log");
-            break;
-        case 18:
-            strcpy(output, "Kodak Cineon");
-            break;
-        case 19:
-            strcpy(output, "Gamma 2.2");
-            break;
-        case 20:
-            strcpy(output, "Gamma 2.4");
-            break;
-        case 21:
-            strcpy(output, "Gamma 2.6");
-            break;
-        case 22:
-            strcpy(output, "Linear");
-            break;
-        default:
-            strcpy(output, "Unknown");
-            break;
-    }
- }
 
- //  function to convert integer to string with sign
- __DEVICE__ void strcpy_idx(char str_src[], char str_dst[], int src_start_idx, int dst_start_idx, int num_chars) {
-    for (int i = 0; i < num_chars; ++i) {
-        str_dst[dst_start_idx + i] = str_src[src_start_idx + i];
-    }
- }
- __DEVICE__ char digit2char(int i) {
-    return (char)('0' + i);
- }
  __DEVICE__ void int2str(int value, char output[]) {
     int runner = 0;
 
@@ -1472,35 +1585,7 @@ __CONSTANT__ int font[FONT_LENGTH][FONT_HEIGHT] = {{0, 0, 0, 0, 0, 0, 0, 0, 0, 0
     }
     output[runner] = '\0';
  }
- __DEVICE__ void int2str_signed(int value, char output[]) {
-    int runner = 0;
-    if (value < 0) {
-        output[runner++] = '-';
-        value = -value;
-    } else if (value > 0) {
-        output[runner++] = '+';
-    } else {
-        output[runner++] = '0';
-        output[runner] = '\0';
-        return;
-    }
 
-    // Convert integer part
-    int digits = 0;
-    int temp = value;
-    do {
-        temp /= 10;
-        digits++;
-    } while (temp != 0);
-
-    for (int i = digits - 1; i >= 0; i--) {
-        int digit = value / (int)_powf(10.0f, i);
-        output[runner++] = '0' + digit;
-        value %= (int)_powf(10.0f, i);
-    }
-    output[runner] = '\0';
- }
- 
 
 
 // Main Transform function
@@ -1622,9 +1707,6 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
         float annotation_y = 0.15f; // Adjust as needed
         float annotation_scale = 0.035f; // Adjust text size
 
-        // Compute position of current step
-        float step_center = (curr_step + 0.5f) * step_width;
-
         // Determine if current pixel is within the annotation area for this step
         float annotation_height = annotation_scale; // Height of the annotation area
 
@@ -1672,26 +1754,33 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
 
         // Determine whether evaluation mode is active
         int eval_mode_active = (eval != 2) && (opt_mid == 0) && (slct_p_TF != 22);
+         
+         if (eval_mode_active && opt_card != 0) {
+             // Show "Evaluation mode"
+             char eval_mode_str[] = "Evaluation mode";
+             strcpy(second_line, eval_mode_str);
+         } else if ((eval != 2 && opt_mid == 1 && opt_card != 0) || (eval != 2 && slct_p_TF == 22 && opt_card != 0)) {
+             // Evaluation is off for linear
+             char eval_off_str[] = "Evaluation is off for linear";
+             strcpy(second_line, eval_off_str);
+         } else if ((eval != 2 && opt_mid == 1 && opt_card == 0) || (eval != 2 && slct_p_TF == 22 && opt_card == 0)) {
+             // Evaluation off for linear/full card
+             char eval_off_fullcard_str[] = "Evaluation off for linear/full card";
+             strcpy(second_line, eval_off_fullcard_str);
+         } else if (eval != 2 && opt_card == 0) {
+             // Evaluation is off for fullscreen card
+             char eval_off_fullscreen_str[] = "Evaluation is off for fullscreen card";
+             strcpy(second_line, eval_off_fullscreen_str);
+         } else {
+             // Show the mid gray value
+             char mid_gray_str[32];
+             float2str(mid_gray_tf_value, mid_gray_str, 4); // 4 decimal places
+         
+             char mid_gray_label[] = "Mid Gray: ";
+             strcpy(second_line, mid_gray_label);
+             strcat(second_line, mid_gray_str, second_line); // Adjusted strcat to include dest parameter
+         }
 
-        if (eval_mode_active && opt_card!= 0) {
-            // Show "Evaluation mode"
-            strcpy(second_line, "Evaluation mode");
-        } else if (eval != 2 && opt_mid == 1 && opt_card !=0|| eval != 2 && slct_p_TF == 22 && opt_card !=0) {
-            // Evaluation is off for linear
-            strcpy(second_line, "Evaluation is off for linear");
-        } else if (eval != 2 && opt_mid == 1 && opt_card ==0 || eval != 2 && slct_p_TF == 22 && opt_card == 0) {
-            // Evaluation is off for linear
-            strcpy(second_line, "Evaluation off for linear/full card");
-         }else if (eval != 2 &&  opt_card ==0 ) {
-            // Evaluation is off for linear
-            strcpy(second_line, "Evaluation is off for fullscreen card");
-         }else {
-            // Show the mid gray value
-            char mid_gray_str[32];
-            float2str(mid_gray_tf_value, mid_gray_str, 4); // 4 decimal places
-            strcpy(second_line, "Mid Gray: ");
-            strcat(second_line, mid_gray_str);
-        }
 
         // Character scales
         float scale_line1 = 0.054f; // Scale for the first line
