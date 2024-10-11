@@ -1757,7 +1757,7 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
          
          if (eval_mode_active && opt_card != 0) {
              // Show "Evaluation mode"
-             char eval_mode_str[] = "Evaluation in T-log";
+             char eval_mode_str[] = "Evaluation in Thatcher T-log";
              strcpy(second_line, eval_mode_str);
          } else if ((eval != 3 && opt_mid == 1 && opt_card != 0) || (eval != 2 && slct_p_TF == 22 && opt_card != 0)) {
              // Evaluation is off for linear
