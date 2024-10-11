@@ -1268,7 +1268,7 @@ __CONSTANT__ int font[FONT_LENGTH][FONT_HEIGHT] = {{0, 0, 0, 0, 0, 0, 0, 0, 0, 0
     }
  }
  
- __DEVICE__ int strlen(const char str[]) {
+ __DEVICE__ int strlen(__CONSTANTREF__ const char str[]) {
     int i = 0;
     while (str[i] != '\0' && str[i] != 0) {
         ++i;
@@ -1276,7 +1276,7 @@ __CONSTANT__ int font[FONT_LENGTH][FONT_HEIGHT] = {{0, 0, 0, 0, 0, 0, 0, 0, 0, 0
     return i;
  }
  
- __DEVICE__ void strcpy(char dest[], const char src[]) {
+ __DEVICE__ void strcpy(char dest[], __CONSTANTREF__ const char src[]) {
     int i = 0;
     while (src[i] != '\0' && i < 64) {
         dest[i] = src[i];
@@ -1285,7 +1285,7 @@ __CONSTANT__ int font[FONT_LENGTH][FONT_HEIGHT] = {{0, 0, 0, 0, 0, 0, 0, 0, 0, 0
     dest[i] = '\0';
  }
  
- __DEVICE__ void strcat(char dest[], const char src[]) {
+ __DEVICE__ void strcat(char dest[], __CONSTANTREF__ const char src[]) {
     int len_dest = strlen(dest);
     int i = 0;
     while (src[i] != '\0' && (len_dest + i) < 64) {
