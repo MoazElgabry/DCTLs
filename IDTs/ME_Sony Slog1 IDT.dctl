@@ -1,4 +1,9 @@
 #line 2
+/*
+Custom Input color transform from Sony Slog / S-Gamut
+written by Moazelgabry. moazelgabry.com
+
+*/
 typedef struct {
         float3 x, y, z;
 } float3x3;
@@ -166,7 +171,7 @@ __DEVICE__ float3 inline oetf_slog1(float3 rgb, int inverse) {
 
 // UI Parameters
 DEFINE_UI_PARAMS(bypass, Bypass, DCTLUI_CHECK_BOX, 0)
-DEFINE_UI_PARAMS(P_convert, Convert, DCTLUI_COMBO_BOX, 1, {log2lin, slog2, DWGDI,lin2log}, {To linear CIE XYZ, To Slog2 S-Gamut, To DWG DI,Lin to Slog 1 S-Gamut})
+DEFINE_UI_PARAMS(P_convert, Convert, DCTLUI_COMBO_BOX, 1, {log2lin, slog2, DWGDI,lin2log}, {to linear / CIE XYZ, to Slog2 / S-Gamut, to DWG / DI,Lin to Slog 1 / S-Gamut})
 
 
 
