@@ -216,7 +216,7 @@ __DEVICE__ float3 inline oetf_slog1(float3 rgb, int inverse, int bypass_gamut) {
     // Fixed Exposure Compensation (fixed to 0.0 as per requirement)
     //float exposure_comp = 0.0f;
     
-    float3 output_rgb;
+    float3 output_rgb = rgb;
     
     if (inverse) { // Decode S-Log1 to Linear
         // Decode each channel
