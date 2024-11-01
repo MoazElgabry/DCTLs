@@ -244,7 +244,7 @@ __DEVICE__ float3 inline oetf_slog1(float3 rgb, int inverse, int bypass_gamut) {
 // UI Parameters
 DEFINE_UI_PARAMS(bypass, Bypass, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(bypass_gamut, Bypass Gamut Conversion, DCTLUI_CHECK_BOX, 0)
-DEFINE_UI_PARAMS(P_convert, Convert, DCTLUI_COMBO_BOX, 1, {log2lin, slog2, DWGDI,logc3,lin2log}, {to linear / CIE XYZ, to Slog2 / S-Gamut, to DWG / DI,to Arri LogC3, Lin to Slog 1 / S-Gamut})
+DEFINE_UI_PARAMS(P_convert, Convert, DCTLUI_COMBO_BOX, 1, {log2lin, slog2, DWGDI,logc3,lin2log}, {to linear / CIE XYZ, to Slog2 / S-Gamut, to DWG / DI,to LogC3 / Arri Wide Gamut 3, Lin to Slog 1 / S-Gamut})
 
 
 
