@@ -230,12 +230,12 @@ __DEVICE__ float3 inline oetf_slog1(float3 rgb, int inverse, int bypass_gamut) {
     }
     else { // Encode Linear to S-Log1
         // Convert XYZ to S-Gamut
-        float3 S_Gamut_RGB = bypass_gamut==0 ? mult_f33_f3(inv_f33(bradford_SGamut_to_XYZ), rgb) : S_Gamut_RGB;
+        if (bypass_gamut == 0) {output_rgb = mult_f33_f3(inv_f33(bradford_SGamut_to_XYZ), rgb);}
         
         // Encode each channel
-        output_rgb.x = slog1_encode(S_Gamut_RGB.x);
-        output_rgb.y = slog1_encode(S_Gamut_RGB.y);
-        output_rgb.z = slog1_encode(S_Gamut_RGB.z); 
+        output_rgb.x = slog1_encode(output_rgb.x);
+        output_rgb.y = slog1_encode(output_rgb.y);
+        output_rgb.z = slog1_encode(output_rgb.z); 
         return output_rgb;
     }
 }
@@ -244,7 +244,7 @@ __DEVICE__ float3 inline oetf_slog1(float3 rgb, int inverse, int bypass_gamut) {
 // UI Parameters
 DEFINE_UI_PARAMS(bypass, Bypass, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(bypass_gamut, Bypass Gamut Conversion, DCTLUI_CHECK_BOX, 0)
-DEFINE_UI_PARAMS(P_convert, Convert, DCTLUI_COMBO_BOX, 1, {log2lin, slog2, DWGDI,lin2log,logc3}, {to linear / CIE XYZ, to Slog2 / S-Gamut, to DWG / DI,Lin to Slog 1 / S-Gamut, Arri LogC3})
+DEFINE_UI_PARAMS(P_convert, Convert, DCTLUI_COMBO_BOX, 1, {log2lin, slog2, DWGDI,lin2log,logc3}, {to linear / CIE XYZ, to Slog2 / S-Gamut, to DWG / DI,Lin to Slog 1 / S-Gamut, to Arri LogC3})
 
 
 
