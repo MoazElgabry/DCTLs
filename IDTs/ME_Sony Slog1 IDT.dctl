@@ -213,8 +213,6 @@ __DEVICE__ float inline slog1_decode(float t) {
     return _powf(10.0f, (t - 0.616596f - 0.03f) / 0.432699f) - 0.037584f;
 }
 __DEVICE__ float3 inline oetf_slog1(float3 rgb, int inverse, int bypass_gamut) {
-    // Fixed Exposure Compensation (fixed to 0.0 as per requirement)
-    //float exposure_comp = 0.0f;
     
     float3 output_rgb = rgb;
     
@@ -251,7 +249,7 @@ DEFINE_UI_PARAMS(P_convert, Convert, DCTLUI_COMBO_BOX, 1, {log2lin, slog2, DWGDI
 __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p_R, float p_G, float p_B) {
     // Create a float3 vector from the input RGB values
     float3 rgb = make_float3(p_R, p_G, p_B);
-    float3 out;
+    float3 out = rgb;
     
     //do nothing in bypass option
     if (bypass) { return rgb;}

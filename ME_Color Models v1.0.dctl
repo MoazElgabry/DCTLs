@@ -20,7 +20,7 @@ and apply the inverse conversion in the second node and apply any adjustments in
      } else {
          return _fmod(x, y);
      }
- }
+    }
 
 
 __DEVICE__ float3 cross_product(float3 a, float3 b) {
@@ -465,7 +465,7 @@ __DEVICE__ float3 RGBtoHSP(float3 rgb) {
 }
  __DEVICE__ float3 cylindrical_to_rgb(float3 hsv) {
     // Adapted from Juan Pablo Zambrano's code
-    float3 lsh = make_float3(hsv.z, hsv.y * 3.0, mod(hsv.x, 1.0) * 2.0 * PI);
+    float3 lsh = make_float3(hsv.z, hsv.y * 3.0, fmod(hsv.x, 1.0) * 2.0 * PI);
 
     float ctr = lsh.x * lsh.y * _cosf(lsh.z);
     float ctg = lsh.x;
@@ -501,7 +501,7 @@ __DEVICE__ float3 RGBtoHSP(float3 rgb) {
         hsl = make_float3(0.0, 0.0, l);
     } else {
         float theta = _atan2f(normalized_color.z, normalized_color.x);
-        hsl.x = mod(theta, 2.0 * PI) / (2.0 * PI);
+        hsl.x = fmod(theta, 2.0 * PI) / (2.0 * PI);
         hsl.y = _hypotf(normalized_color.x, normalized_color.z) / 3.0;
         hsl.z = l;
     }
