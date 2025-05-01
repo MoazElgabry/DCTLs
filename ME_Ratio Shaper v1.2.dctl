@@ -50,9 +50,9 @@
     float m = 10.44426855;
     float lin_cut = 0.00262409;
 
-    out.x = in.x > lin_cut ? (_log2f(in.x + a) + b) * c : out.x = in.x * m;
-    out.y = in.y > lin_cut ? (_log2f(in.y + a) + b) * c : out.y = in.y * m;
-    out.z = in.z > lin_cut ? (_log2f(in.z + a) + b) * c : out.z = in.z * m;
+    out.x = in.x > lin_cut ? (_log2f(in.x + a) + b) * c : in.x * m;
+    out.y = in.y > lin_cut ? (_log2f(in.y + a) + b) * c : in.y * m;
+    out.z = in.z > lin_cut ? (_log2f(in.z + a) + b) * c : in.z * m;
 
     return out;
     }
@@ -668,7 +668,7 @@ __DEVICE__ float3 exposure_low(float3 rgb, float ex, float pv, float fa) {
      return out;
          }
  
-      __DEVICE__ float smoothstep(float x) {
+      __DEVICE__ float smootherstep(float x) {
      x = _clampf(x, 0.0, 1.0);
      return 3.0 * powf(x, 2.0) - 2.0 * powf(x, 3.0);}
  
@@ -699,7 +699,7 @@ __DEVICE__ float3 exposure_low(float3 rgb, float ex, float pv, float fa) {
            } else if (Lo_max < input_metric) {
                shadow_mask = 0.0;
            } else {
-               shadow_mask = _mix(1.0, 0.0, smoothstep((input_metric_log - Lo_min_log) / (Lo_max_log - Lo_min_log)));
+               shadow_mask = _mix(1.0, 0.0, smootherstep((input_metric_log - Lo_min_log) / (Lo_max_log - Lo_min_log)));
            }
        
  
@@ -711,7 +711,7 @@ __DEVICE__ float3 exposure_low(float3 rgb, float ex, float pv, float fa) {
                highlight_mask = 0.0;
            } 
            else {
-               highlight_mask = _mix(1.0, 0.0, smoothstep((input_metric_log - Hi_min_log) / (Hi_max_log - Hi_min_log)));
+               highlight_mask = _mix(1.0, 0.0, smootherstep((input_metric_log - Hi_min_log) / (Hi_max_log - Hi_min_log)));
  
             }
                   highlight_mask = 1- highlight_mask;       
@@ -775,8 +775,10 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
 //--------------------------
 
 
-   // Rec.601 (also Davinci's luma coefficients)
-    const float3 luma_coefficients = {0.29912, 0.58749, 0.11437}; 
+    // experimenting with Rec.601 coefficients
+      //const float3 luma_coefficients = {0.29912, 0.58749, 0.11437}; 
+   // correct coefficients for DWG
+    const float3 luma_coefficients = {0.27411851f,  0.87363190f, -0.14775041f}; 
     
     const float3 bypass_RGB = make_float3(p_R, p_G, p_B);
     float3 out;
@@ -861,9 +863,9 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
    float3 key_out = mixFloat3(P_exHI<0?1-p_save_sat:p_save_sat,key, luma_key_out);
 
 //Exposure and offset in linear
-   //with increase in exposure I automatically add a slight offset down 
+   //with increase in exposure I automatically add a slight negative offset down 
    //to keep the black levels from getting murcky 
-   //also with negative exposure I add the same amount as linear offset to keep black levels from crashing.
+   //also with negative exposure I add the same positive amount as linear offset to keep black levels from crashing.
 
       float minF= -0.01f;
       float maxF = 0.01f;
@@ -914,7 +916,7 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
 
    if (opt_soft) {
       // add an automatic mask to minimize chances of clipping, but allow the user to still make somewhat big adjustments   
-             p_Hi_stops = -3 + powf((p_Hi_stops + 3) / 8.0, 0.3) * 3.8;-3 + (0.475 * (p_Hi_stops + 3));
+             p_Hi_stops = -3 + powf((p_Hi_stops + 3) / 8.0, 0.3) * 3.8;
              HiLo_params.HiThreshold = p_Hi_stops;
              HiLo_params.HiFeather = 1.5 * powf(3 / 1.5,((5-p_Hi_stops) / 8.0));
 
