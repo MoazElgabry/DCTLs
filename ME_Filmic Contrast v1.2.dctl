@@ -1,6 +1,7 @@
 #line 2
 //Flimic Contrast V1.2.1
-//written by Moaz Elgabry
+//written by Moaz Elgabry 
+// moazelgabry.com
 
 
 //functions for Transfer function conversion
@@ -1025,7 +1026,7 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
     pivot = set_pivot(pivot, p_transfer_f);
     float3 out;
 
-    // Build the shared params (use your existing constants)
+    // Build the shared params 
       params_t pmask;
       pmask.HiThreshold = 0.8f;
       pmask.HiFeather   = 2.5f;
