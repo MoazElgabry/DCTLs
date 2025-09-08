@@ -1,5 +1,5 @@
 #line 2
-//Flimic Contrast V1.2
+//Flimic Contrast V1.2.1
 //written by Moaz Elgabry
 
 
@@ -15,9 +15,10 @@
     float e = 5.367655;
     float f = 0.092809;
 
-    out.x = (in.x > cut) ? c * log10(a * in.x + b) + d: e * in.x + f;
-    out.y = (in.y > cut) ? c * log10(a * in.y + b) + d: e * in.y + f;
-    out.z = (in.z > cut) ? c * log10(a * in.z + b) + d: e * in.z + f;
+   out.x = (in.x > cut) ? c * _log10f(a * in.x + b) + d : e * in.x + f;
+   out.y = (in.y > cut) ? c * _log10f(a * in.y + b) + d : e * in.y + f;
+   out.z = (in.z > cut) ? c * _log10f(a * in.z + b) + d : e * in.z + f;
+
 
     return out;
     }
@@ -49,9 +50,9 @@
     float m = 10.44426855;
     float lin_cut = 0.00262409;
 
-    out.x = in.x > lin_cut ? (_log2f(in.x + a) + b) * c : out.x = in.x * m;
-    out.y = in.y > lin_cut ? (_log2f(in.y + a) + b) * c : out.y = in.y * m;
-    out.z = in.z > lin_cut ? (_log2f(in.z + a) + b) * c : out.z = in.z * m;
+    out.x = in.x > lin_cut ? (_log2f(in.x + a) + b) * c : in.x * m;
+    out.y = in.y > lin_cut ? (_log2f(in.y + a) + b) * c : in.y * m;
+    out.z = in.z > lin_cut ? (_log2f(in.z + a) + b) * c : in.z * m;
 
     return out;
     }
@@ -96,7 +97,7 @@
     float c = 9.72;
     float d = 17.52;
     float e = _log2f(65504);
-    float lin_cut = 0.155251141552511;
+    float lin_cut = 0.155251141552511f;
 
     out.x = in.x <= lin_cut ? (in.x - b) / a : in.x < (e + c) / d ? _powf(2, in.x*d-c) : 65504;
     out.y = in.y <= lin_cut ? (in.y - b) / a : in.y < (e + c) / d ? _powf(2, in.y*d-c) : 65504;
@@ -310,9 +311,9 @@
  __DEVICE__ float3 SLog3ToLin (float3 in) {
     float3 out;
 
-    out.x = in.x >= 171.2102946929 / 1023.0 ? (_powf(10.0, ((in.x * 1023.0 - 420.0) / 261.5))) * (0.18 + 0.01) - 0.01 : (in.x * 1023.0 - 95.0) * 0.01125000 / (171.2102946929 - 95.0);
-    out.y = in.y >= 171.2102946929 / 1023.0 ? (_powf(10.0, ((in.y * 1023.0 - 420.0) / 261.5))) * (0.18 + 0.01) - 0.01 : (in.y * 1023.0 - 95.0) * 0.01125000 / (171.2102946929 - 95.0);
-    out.z = in.z >= 171.2102946929 / 1023.0 ? (_powf(10.0, ((in.z * 1023.0 - 420.0) / 261.5))) * (0.18 + 0.01) - 0.01 : (in.z * 1023.0 - 95.0) * 0.01125000 / (171.2102946929 - 95.0);
+    out.x = in.x >= 171.2102946929 / 1023.0 ? (_powf(10.0, ((in.x * 1023.0 - 420.0) / 261.5))) * (0.18 + 0.01) - 0.01f: (in.x * 1023.0 - 95.0) * 0.01125000 / (171.2102946929 - 95.0);
+    out.y = in.y >= 171.2102946929 / 1023.0 ? (_powf(10.0, ((in.y * 1023.0 - 420.0) / 261.5))) * (0.18 + 0.01) - 0.01f: (in.y * 1023.0 - 95.0) * 0.01125000 / (171.2102946929 - 95.0);
+    out.z = in.z >= 171.2102946929 / 1023.0 ? (_powf(10.0, ((in.z * 1023.0 - 420.0) / 261.5))) * (0.18 + 0.01) - 0.01f: (in.z * 1023.0 - 95.0) * 0.01125000 / (171.2102946929 - 95.0);
 
     return out;
     }
@@ -354,9 +355,9 @@
  __DEVICE__ float3 LinToCLog (float3 in) {
     float3 out;
 
-    out.x = in.x < 0 ? -.529136 * _log10f(1 - 10.1596 * in.x) + 0.0730597 : .529136 * _log10f(10.1596 * in.x + 1) + 0.0730597;
-    out.y = in.y < 0 ? -.529136 * _log10f(1 - 10.1596 * in.y) + 0.0730597 : .529136 * _log10f(10.1596 * in.y + 1) + 0.0730597;
-    out.z = in.z < 0 ? -.529136 * _log10f(1 - 10.1596 * in.z) + 0.0730597 : .529136 * _log10f(10.1596 * in.z + 1) + 0.0730597;
+    out.x = in.x < 0.0f ? -.529136f * _log10f(1.0f - 10.1596f * in.x) + 0.0730597f : .529136f * _log10f(10.1596f * in.x + 1.0f) + 0.0730597f;
+    out.y = in.y < 0.0f ? -.529136f * _log10f(1.0f - 10.1596f * in.y) + 0.0730597f : .529136f * _log10f(10.1596f * in.y + 1.0f) + 0.0730597f;
+    out.z = in.z < 0.0f ? -.529136f * _log10f(1.0f - 10.1596f * in.z) + 0.0730597f : .529136f * _log10f(10.1596f * in.z + 1.0f) + 0.0730597f;
 
     return out;
     }
@@ -364,19 +365,19 @@
  __DEVICE__ float3 CLogToLin (float3 in) {
     float3 out;
 
-    out.x = in.x < 0.0730597 ? -(_powf(10, (0.0730597 - in.x) / .529136) - 1) / 10.1596 : (_powf(10, (in.x - 0.0730597) / .529136) - 1) / 10.1596;
-    out.y = in.y < 0.0730597 ? -(_powf(10, (0.0730597 - in.y) / .529136) - 1) / 10.1596 : (_powf(10, (in.y - 0.0730597) / .529136) - 1) / 10.1596;
-    out.z = in.z < 0.0730597 ? -(_powf(10, (0.0730597 - in.z) / .529136) - 1) / 10.1596 : (_powf(10, (in.z - 0.0730597) / .529136) - 1) / 10.1596;
+    out.x = in.x < 0.0730597f ? -(_powf(10.0f, (0.0730597f - in.x) / .529136f) - 1.0f) / 10.1596f : (_powf(10.0f, (in.x - 0.0730597f) / .529136f) - 1) / 10.1596f;
+    out.y = in.y < 0.0730597f ? -(_powf(10.0f, (0.0730597f - in.y) / .529136f) - 1.0f) / 10.1596f : (_powf(10.0f, (in.y - 0.0730597f) / .529136f) - 1) / 10.1596f;
+    out.z = in.z < 0.0730597f ? -(_powf(10.0f, (0.0730597f - in.z) / .529136f) - 1.0f) / 10.1596f : (_powf(10.0f, (in.z - 0.0730597f) / .529136f) - 1) / 10.1596f;
 
     return out;
     }
- 
+
  __DEVICE__ float3 LinToCLog2 (float3 in) {
     float3 out;
 
-    out.x = in.x < 0 ? -0.24136077 * _log10f(1 - 87.099375 * in.x) + 0.092864125 : 0.24136077 * _log10f(87.099375 * in.x + 1) + 0.092864125;
-    out.y = in.y < 0 ? -0.24136077 * _log10f(1 - 87.099375 * in.y) + 0.092864125 : 0.24136077 * _log10f(87.099375 * in.y + 1) + 0.092864125;
-    out.z = in.z < 0 ? -0.24136077 * _log10f(1 - 87.099375 * in.z) + 0.092864125 : 0.24136077 * _log10f(87.099375 * in.z + 1) + 0.092864125;
+    out.x = in.x < 0 ? -0.24136077 * _log10f(1.0f- 87.099375 * in.x) + 0.092864125 : 0.24136077 * _log10f(87.099375 * in.x + 1) + 0.092864125;
+    out.y = in.y < 0 ? -0.24136077 * _log10f(1.0f- 87.099375 * in.y) + 0.092864125 : 0.24136077 * _log10f(87.099375 * in.y + 1) + 0.092864125;
+    out.z = in.z < 0 ? -0.24136077 * _log10f(1.0f- 87.099375 * in.z) + 0.092864125 : 0.24136077 * _log10f(87.099375 * in.z + 1) + 0.092864125;
 
     return out;
     }
@@ -384,9 +385,9 @@
  __DEVICE__ float3 CLog2ToLin (float3 in) {
     float3 out;
 
-    out.x = in.x < 0.092864125 ? -(_powf(10, (0.092864125 - in.x) / 0.24136077) - 1) / 87.099375 : (_powf(10, (in.x - 0.092864125) / 0.24136077) - 1) / 87.099375;
-    out.y = in.y < 0.092864125 ? -(_powf(10, (0.092864125 - in.y) / 0.24136077) - 1) / 87.099375 : (_powf(10, (in.y - 0.092864125) / 0.24136077) - 1) / 87.099375;
-    out.z = in.z < 0.092864125 ? -(_powf(10, (0.092864125 - in.z) / 0.24136077) - 1) / 87.099375 : (_powf(10, (in.z - 0.092864125) / 0.24136077) - 1) / 87.099375;
+    out.x = in.x < 0.092864125f ? -(_powf(10.0f, (0.092864125f - in.x) / 0.24136077f) - 1.0f) / 87.099375f : (_powf(10.0f, (in.x - 0.092864125f) / 0.24136077f) - 1.0f) / 87.099375f;
+    out.y = in.y < 0.092864125f ? -(_powf(10.0f, (0.092864125f - in.y) / 0.24136077f) - 1.0f) / 87.099375f : (_powf(10.0f, (in.y - 0.092864125f) / 0.24136077f) - 1.0f) / 87.099375f;
+    out.z = in.z < 0.092864125f ? -(_powf(10.0f, (0.092864125f - in.z) / 0.24136077f) - 1.0f) / 87.099375f : (_powf(10.0f, (in.z - 0.092864125f) / 0.24136077f) - 1.0f) / 87.099375f;
 
     return out;
     }
@@ -394,9 +395,9 @@
  __DEVICE__ float3 LinToCLog3 (float3 in) {
     float3 out;
 
-    out.x = in.x < -0.014 ? -0.36726845 * _log10f(1 - 14.98325 * in.x) + 0.12783901 : in.x <= 0.014 ? 1.9754798 * in.x + 0.12512219 : 0.36726845 * _log10f(14.98325 * in.x + 1) + 0.12240537;
-    out.y = in.y < -0.014 ? -0.36726845 * _log10f(1 - 14.98325 * in.y) + 0.12783901 : in.y <= 0.014 ? 1.9754798 * in.y + 0.12512219 : 0.36726845 * _log10f(14.98325 * in.y + 1) + 0.12240537;
-    out.z = in.z < -0.014 ? -0.36726845 * _log10f(1 - 14.98325 * in.z) + 0.12783901 : in.z <= 0.014 ? 1.9754798 * in.z + 0.12512219 : 0.36726845 * _log10f(14.98325 * in.z + 1) + 0.12240537;
+    out.x = in.x < -0.014 ? -0.36726845 * _log10f(1.0f- 14.98325 * in.x) + 0.12783901 : in.x <= 0.014 ? 1.9754798 * in.x + 0.12512219 : 0.36726845 * _log10f(14.98325 * in.x + 1) + 0.12240537;
+    out.y = in.y < -0.014 ? -0.36726845 * _log10f(1.0f- 14.98325 * in.y) + 0.12783901 : in.y <= 0.014 ? 1.9754798 * in.y + 0.12512219 : 0.36726845 * _log10f(14.98325 * in.y + 1) + 0.12240537;
+    out.z = in.z < -0.014 ? -0.36726845 * _log10f(1.0f- 14.98325 * in.z) + 0.12783901 : in.z <= 0.014 ? 1.9754798 * in.z + 0.12512219 : 0.36726845 * _log10f(14.98325 * in.z + 1) + 0.12240537;
 
     return out;
     }
@@ -425,9 +426,9 @@
  __DEVICE__ float3 LinToGammaCurve (float3 in, float gamma) {
     float3 out;
 
-    out.x = _powf(_fmaxf(in.x, 0.0f), (1 / gamma));
-    out.y = _powf(_fmaxf(in.y, 0.0f), (1 / gamma));
-    out.z = _powf(_fmaxf(in.z, 0.0f), (1 / gamma));
+    out.x = _powf(_fmaxf(in.x, 0.0f), (1.0f / gamma));
+    out.y = _powf(_fmaxf(in.y, 0.0f), (1.0f / gamma));
+    out.z = _powf(_fmaxf(in.z, 0.0f), (1.0f / gamma));
 
     return out;
     }
@@ -466,21 +467,24 @@
  __DEVICE__ float3 HSV_to_RGB(float3 HSV) {
     float3 RGB;
     if (HSV.y == 0.0f) {
-    RGB.x = RGB.y = RGB.z = HSV.z;
+        RGB.x = RGB.y = RGB.z = HSV.z;
     } else {
-    HSV.x *= 6.0f;
-    int i = floor(HSV.x);
-    float f = HSV.x - i;
-    i = (i >= 0) ? (i % 6) : (i % 6) + 6;
-    float p = HSV.z * (1.0f - HSV.y);
-    float q = HSV.z * (1.0f - HSV.y * f);
-    float t = HSV.z * (1.0f - HSV.y * (1.0f - f));
-    RGB.x = i == 0 ? HSV.z : i == 1 ? q : i == 2 ? p : i == 3 ? p : i == 4 ? t : HSV.z;
-    RGB.y = i == 0 ? t : i == 1 ? HSV.z : i == 2 ? HSV.z : i == 3 ? q : i == 4 ? p : p;
-    RGB.z = i == 0 ? p : i == 1 ? p : i == 2 ? t : i == 3 ? HSV.z : i == 4 ? HSV.z : q;
+        HSV.x *= 6.0f;
+        int i = (int)_floorf(HSV.x);   // <- use _floorf, then cast
+        float f = HSV.x - (float)i;
+        i = (i >= 0) ? (i % 6) : (i % 6) + 6;
+
+        float p = HSV.z * (1.0f - HSV.y);
+        float q = HSV.z * (1.0f - HSV.y * f);
+        float t = HSV.z * (1.0f - HSV.y * (1.0f - f));
+
+        // compare i to ints, not floats
+        RGB.x = (i == 0) ? HSV.z : (i == 1) ? q : (i == 2) ? p : (i == 3) ? p : (i == 4) ? t : HSV.z;
+        RGB.y = (i == 0) ? t : (i == 1) ? HSV.z : (i == 2) ? HSV.z : (i == 3) ? q : (i == 4) ? p : p;
+        RGB.z = (i == 0) ? p : (i == 1) ? p : (i == 2) ? t : (i == 3) ? HSV.z : (i == 4) ? HSV.z : q;
     }
     return RGB;
-    } //Convert from HSV to RGB
+ } //Convert from HSV to RGB
 
    __DEVICE__ float3 RGB_to_cone(float3 rgb) {
     const float pi= 3.14159265359f;
@@ -581,12 +585,12 @@
 
 // Helper functions
  
- __DEVICE__ float powf(float base, float exp) {
+ __DEVICE__ float powerf(float base, float exp) {
      return _copysignf(_powf(_fabs(base), exp), base);
      }
  
  __DEVICE__ float pow2f(float base) {
-     return _powf(_fabs(base), 2.0);
+     return _powf(_fabs(base), 2.0f);
      }
  
  __DEVICE__ float maxf3(float3 x) {
@@ -598,7 +602,7 @@
      }
  
  __DEVICE__ float3 powf3(float3 base, float exp) {
-     return make_float3(powf(base.x, exp), powf(base.y, exp), powf(base.z, exp));
+     return make_float3(powerf(base.x, exp), powerf(base.y, exp), powerf(base.z, exp));
      }
      
 
@@ -618,9 +622,9 @@
     if (gamma ==  9) return FLogToLin(in);
     if (gamma == 10) return FLog2ToLin(in);
     if (gamma == 11) return VLogToLin(in);
-    if (gamma == 12) return GammaCurveToLin(in, 2.2);
-    if (gamma == 13) return GammaCurveToLin(in, 2.4);
-    if (gamma == 14) return GammaCurveToLin(in, 2.6);
+    if (gamma == 12) return GammaCurveToLin(in, 2.2f);
+    if (gamma == 13) return GammaCurveToLin(in, 2.4f);
+    if (gamma == 14) return GammaCurveToLin(in, 2.6f);
     if (gamma == 15) return in; // Lin
 
 
@@ -640,14 +644,14 @@
     if (gamma ==  9) return LinToFLog(in);
     if (gamma == 10) return LinToFLog2(in);
     if (gamma == 11) return LinToVLog(in);
-    if (gamma == 12) return LinToGammaCurve(in, 2.2);
-    if (gamma == 13) return LinToGammaCurve(in, 2.4);
-    if (gamma == 14) return LinToGammaCurve(in, 2.6);
+    if (gamma == 12) return LinToGammaCurve(in, 2.2f);
+    if (gamma == 13) return LinToGammaCurve(in, 2.4f);
+    if (gamma == 14) return LinToGammaCurve(in, 2.6f);
     if (gamma == 15) return in; // Lin
 
 
     
-    return make_float3(0, 1, 0); // Green on error
+    return make_float3(0.0f, 1.0f, 0.0f); // Green on error
     }
  
  __DEVICE__ float set_pivot (float pivot, int gamma) {
@@ -705,9 +709,9 @@
     
     float out = in;
     //offsetting the user slider to set the starting point at zero
-    contrast = contrast+1;
+    contrast = contrast+1.0f;
     //limit user input to zero
-    if (contrast <0) {contrast = _fmaxf(contrast, 0.0f);}
+    if (contrast <0.0f) {contrast = _fmaxf(contrast, 0.0f);}
 
     out = (in - pivot) * contrast + pivot;
 
@@ -727,18 +731,18 @@
   __DEVICE__ float apply_rolling_contrast (float in, float contrast, float pivot) {
    float out = in;
        //offsett the user slider to set the starting point at zero instead of 1
-   contrast = contrast + 1.f;
+   contrast = contrast + 1.0f;
 
 
     // apply rolling contrast
 
-   if (in <= pivot) {out = powf((in / pivot) , contrast) * pivot;} 
+   if (in <= pivot) {out = powerf((in / pivot) , contrast) * pivot;} 
         if (in > pivot) {
-            in = 1 - in; 
-            pivot = 1 - pivot;
-            out = powf((in / pivot) , contrast) * pivot;
-            out = 1 - out;
-            pivot = 1 - pivot;
+            in = 1.0f - in; 
+            pivot = 1.0f - pivot;
+            out = powerf((in / pivot) , contrast) * pivot;
+            out = 1.0f - out;
+            pivot = 1.0f - pivot;
         }
    return out;
  
@@ -853,9 +857,9 @@
         
         }
 
-    out.x = 1 - out.x;
-    out.y = 1 - out.y;
-    out.z = 1 - out.z;
+    out.x = 1.0f - out.x;
+    out.y = 1.0f - out.y;
+    out.z = 1.0f - out.z;
    
    return out;
     
@@ -863,83 +867,99 @@
     
 
 //functions for implementing the feathered luma mask
-     __DEVICE__ float smoothstep(float x) {
-    x = _clampf(x, 0.0, 1.0);
-    return 3.0 * powf(x, 2.0) - 2.0 * powf(x, 3.0);}
-
-   __DEVICE__ float3 HiLoLumaMask (float3 in, float3 base, float HiThreshold, float HiFeather, float LoThreshold,  float LoFeather, float TF, float factor, float alpha, int X, int Y)  {
-      float3 mid_grey_f3 = LinToGamma(make_float3 (0.18,0.18,0.18), TF);
-      float mid_grey = mid_grey_f3.x;
-      //float pxlX = (float)X;
-      //float pxlY = (float)Y;
-
-      //mid_grey = 0.18;
-      
-
-      float Lo_min = mid_grey * _exp2f(LoThreshold - 0.5 * LoFeather);
-      float Lo_max = mid_grey * _exp2f(LoThreshold + 0.5 * LoFeather);
-      float Hi_min = mid_grey * _exp2f(HiThreshold - 0.5 * HiFeather);
-      float Hi_max = mid_grey * _exp2f(HiThreshold + 0.5 * HiFeather);            
-      float input_metric = _fmaxf(_fmaxf(base.x, base.y), base.z);
-
-      float input_metric_log = _log2f(_fmaxf(input_metric, 0.0));
-      float Hi_min_log = _log2f(Hi_min);
-      float Hi_max_log = _log2f(Hi_max);
-      float Lo_min_log = _log2f(Lo_min);
-      float Lo_max_log = _log2f(Lo_max);
-
-      float shadow_mask;
-          if (input_metric < Lo_min) {
-              shadow_mask = 1.0;
-          } else if (Lo_max < input_metric) {
-              shadow_mask = 0.0;
-          } else {
-              shadow_mask = _mix(1.0, 0.0, smoothstep((input_metric_log - Lo_min_log) / (Lo_max_log - Lo_min_log)));
-          }
-      
-
-      float highlight_mask;
-          if (input_metric < Hi_min) {
-              highlight_mask = 1.0;
-           } 
-          else if (Hi_max < input_metric) {
-              highlight_mask = 0.0;
-          } 
-          else {
-              highlight_mask = _mix(1.0, 0.0, smoothstep((input_metric_log - Hi_min_log) / (Hi_max_log - Hi_min_log)));
-
-           }
-                 highlight_mask = 1- highlight_mask;       
-
-          float HiLo_mask = shadow_mask + highlight_mask;
-           HiLo_mask = 1- _saturatef(HiLo_mask);
-
-
-
-         float3 pinends = _mix(base,in,HiLo_mask);
-
-         float3 output = _mix(in, pinends, factor);
-
-
-
-            float highlight_r = 0.0;
-            float highlight_g = 0.4;
-            float highlight_b = 0.35;
-            float3 Checker = make_float3(highlight_r, highlight_g, highlight_b);
-            float checker_size = 5;
-            if (((int)(X / checker_size) + (int)(Y / checker_size)) % 2 == 0) {Checker = make_float3(1.0 - highlight_r, 1.0 - highlight_g, 1.0 - highlight_b);}
-
-         if (alpha) {
-
-            return _mix(Checker,output,_saturatef(HiLo_mask));
-           }
-
-         
-         return output;
-
-
-
+      // Scalar mix for float3
+    __DEVICE__ float3 mixFloat3(float t, float3 a, float3 b) {
+    // Blends a -> b by t (t in [0..1])
+    return a * (1.0f - t) + b * t;
       }
+
+     __DEVICE__ float smootherstep(float x) {
+    x = _clampf(x, 0.0f, 1.0f);
+    return 3.0f * powerf(x, 2.0f) - 2.0f * powerf(x, 3.0f);}
+
+
+      typedef struct {
+          float HiThreshold, HiFeather, LoThreshold, LoFeather, TF;
+          int   X, Y, height;
+          int  alpha;   // Show Pin Range toggle
+      } params_t;
+      
+
+   __DEVICE__ float3 drawTransparencyOverlay(float3 in, float matte, params_t params) {
+    // matte (aka HiLo_mask): 1 = pinned (show 'in'), 0 = not pinned (show checker)
+    float transparentColor = 0.30f;
+    float squareSize = _fmaxf(((float)params.height) / 64.0f, 2.0f); // avoid tiny/zero
+    int row = (int)_floorf(((float)params.X) / squareSize);
+    int col = (int)_floorf(((float)params.Y) / squareSize);
+    if (((row + col) % 2) == 0) transparentColor = 0.35f;
+
+    float3 checker = make_float3(transparentColor, transparentColor, transparentColor);
+    return mixFloat3(matte, checker, in);
+   }
+
+   __DEVICE__ float3 HiLoLumaMask (
+    float3 in,          // processed image
+    float3 base,        // original image (for pinning ends from)
+    float  factor,      // p_mix_pin
+    params_t P          // thresholds, TF, coords, alpha, height
+     ) {
+    // Mid-gray in display TF
+    float3 mid_grey_f3 = LinToGamma(make_float3(0.18f, 0.18f, 0.18f), (int)P.TF);
+    float  mid_grey    = mid_grey_f3.x;
+
+    // Thresholds in display TF (log-domain feather)
+    float Lo_min = mid_grey * _exp2f(P.LoThreshold - 0.5f * P.LoFeather);
+    float Lo_max = mid_grey * _exp2f(P.LoThreshold + 0.5f * P.LoFeather);
+    float Hi_min = mid_grey * _exp2f(P.HiThreshold - 0.5f * P.HiFeather);
+    float Hi_max = mid_grey * _exp2f(P.HiThreshold + 0.5f * P.HiFeather);
+
+    // Metric (max channel) in display TF
+    float  input_metric     = _fmaxf(_fmaxf(base.x, base.y), base.z);
+    float  input_metric_log = _log2f(_fmaxf(input_metric, 1e-10f));
+    float  Hi_min_log = _log2f(Hi_min), Hi_max_log = _log2f(Hi_max);
+    float  Lo_min_log = _log2f(Lo_min), Lo_max_log = _log2f(Lo_max);
+
+    // Shadows: 1 below Lo_min → 0 above Lo_max
+    float shadow_mask;
+    if (input_metric < Lo_min)           shadow_mask = 1.0f;
+    else if (input_metric > Lo_max)      shadow_mask = 0.0f;
+    else {
+        float denomLo = _fmaxf(Lo_max_log - Lo_min_log, 1e-6f);
+         float tLo     = (input_metric_log - Lo_min_log) / denomLo;
+         shadow_mask   = 1.0f - smootherstep(tLo);
+
+    }
+
+    // Highlights base: 1 below Hi_min → 0 above Hi_max, then invert to be 1 in highlights
+    float highlight_mask_base;
+    if (input_metric < Hi_min)           highlight_mask_base = 1.0f;
+    else if (input_metric > Hi_max)      highlight_mask_base = 0.0f;
+    else {
+        float denomHi        = _fmaxf(Hi_max_log - Hi_min_log, 1e-6f);
+        float tHi            = (input_metric_log - Hi_min_log) / denomHi;
+        // scalar smooth mix 1→0
+        highlight_mask_base = 1.0f - smootherstep(tHi);
+    }
+    float highlight_mask = 1.0f - highlight_mask_base; // 1 in highlights
+
+    // Final mask: 1 = pinned (shadows OR highlights), 0 = unpinned (midtones)
+    float HiLo_mask = _saturatef(shadow_mask + highlight_mask);
+
+    // 1) Pin the ends: blend base→in by HiLo_mask
+    float3 pinends = mixFloat3(HiLo_mask, in, base);
+
+    // 2) User factor over the whole result (0 = use 'in', 1 = use 'pinends')
+    float3 output = mixFloat3(factor, in, pinends);
+
+    // 3) Alpha (checker in UNPINNED only)
+    if (P.alpha) {
+      return drawTransparencyOverlay(in, _saturatef(HiLo_mask), P);
+
+    }
+
+    return output;
+   }
+
 
 //A function that applies contrast to only the luma channel in a CHEN color model image state before mixing it with the contrast applied to RGB
 
@@ -1005,6 +1025,18 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
     pivot = set_pivot(pivot, p_transfer_f);
     float3 out;
 
+    // Build the shared params (use your existing constants)
+      params_t pmask;
+      pmask.HiThreshold = 0.8f;
+      pmask.HiFeather   = 2.5f;
+      pmask.LoThreshold = -3.0f;
+      pmask.LoFeather   = 7.5f;
+      pmask.TF          = (float)p_transfer_f;
+      pmask.X           = p_X;
+      pmask.Y           = p_Y;        
+      pmask.height      = p_Height;   // scale checker to full frame height
+      pmask.alpha       = alpha_toggle;
+      
 
     //create a linear ramp to enable the view graph control
      float width = (float)p_Width;
@@ -1021,12 +1053,12 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
 
      
      //sanitize black and white points
-     if (p_transfer_f == 15) {p_shoulder_str += 5;}
+     if (p_transfer_f == 15) {p_shoulder_str += 5.0f;}
      p_w_p_pivot = _fminf(p_white_point, p_w_p_pivot );
-     p_shoulder_str= _fmaxf((10 - p_shoulder_str), 0.3f);
-     p_toe_str= _fmaxf((10 - p_toe_str), 0.17f);
+     p_shoulder_str= _fmaxf((10.0f - p_shoulder_str), 0.3f);
+     p_toe_str= _fmaxf((10.0f - p_toe_str), 0.17f);
 
-     p_black_point = p_black_point*.4;
+     p_black_point = p_black_point*.4f;
      p_black_point = 1.0f - p_black_point;
 
      p_b_p_pivot = _fminf((p_black_point - 0.05f) , p_b_p_pivot );
@@ -1038,16 +1070,16 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
      float rememberPivot = pivot;
      if (preservemidgray_toggle == 1) {
        
-       pivot = _fminf(0.90, _fmaxf(0.05, pivot));
+       pivot = _fminf(0.90f, _fmaxf(0.05f, pivot));
        p_white_point = _fmaxf(p_white_point, _fmaxf((pivot*1.1f), .7f));
        p_w_p_pivot = _fmaxf(_fmaxf(pivot*1.015f, p_w_p_pivot),p_w_p_pivot );
-       p_b_p_pivot = _fmaxf((1- _fmaxf(_fminf(0.6,(1-p_b_p_pivot)), pivot)), pivot);
-       if (pivot > 0.7) {
-         p_b_p_pivot = _fminf(pivot, (1 - p_b_p_pivot) * pivot+0.5);
+       p_b_p_pivot = _fmaxf((1.0f- _fmaxf(_fminf(0.6f,(1.0f-p_b_p_pivot)), pivot)), pivot);
+       if (pivot > 0.7f) {
+         p_b_p_pivot = _fminf(pivot, (1.0f - p_b_p_pivot) * pivot+0.5);
          }
-       p_black_point = p_black_point* 0.45 +.55;
-       p_toe_str = p_toe_str*.15 + (10*.15);
-       p_toe_str -= .05;
+       p_black_point = p_black_point* 0.45f +.55f;
+       p_toe_str = p_toe_str*.15f + (10.0f*.15f);
+       p_toe_str -= .05f;
 
      } else {pivot = rememberPivot;}
 
@@ -1164,7 +1196,7 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
 
 // exposure slider that works in linear
  if(exp_toggle == 1){
-    P_exposure = powf(2.0, P_exposure);
+    P_exposure = powerf(2.0, P_exposure);
     in_RGB = GammaToLin(in_RGB, p_transfer_f);
     ramp = GammaToLin(ramp, p_transfer_f);
     
@@ -1209,7 +1241,7 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
 
 // exposure slider that works in linear
    if (exp_toggle == 0) {
-    P_exposure = powf(2.0, P_exposure );
+    P_exposure = powerf(2.0, P_exposure );
     in_RGB = GammaToLin(in_RGB, p_transfer_f);
     ramp = GammaToLin(ramp, p_transfer_f);
     
@@ -1225,8 +1257,8 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
     out = in_RGB;
    
 
-out = HiLoLumaMask (in_RGB, clean, 0.85, 1.0, -4.0, 6, p_transfer_f, p_mix_pin,alpha_toggle, p_X, p_Y);
-ramp= HiLoLumaMask (ramp, clean_ramp, 0.85, 1.0, -4.0, 6, p_transfer_f, p_mix_pin,alpha_toggle, p_X, p_Y);
+out  = HiLoLumaMask(in_RGB, clean,      p_mix_pin, pmask);
+ramp = HiLoLumaMask(ramp,   clean_ramp, p_mix_pin, pmask);
     
 //hide curve overlay when showing the pinned range
  float opt_mem = opt_showcurve;
@@ -1235,7 +1267,7 @@ ramp= HiLoLumaMask (ramp, clean_ramp, 0.85, 1.0, -4.0, 6, p_transfer_f, p_mix_pi
       { 
          opt_showcurve = 0;
 
-    } else if (alpha_toggle = 0){opt_showcurve = opt_mem; }
+    } else if (alpha_toggle == 0){opt_showcurve = opt_mem; }
 
 
 //option to overlay a grayscale ramp on the bottom edge of the frame
