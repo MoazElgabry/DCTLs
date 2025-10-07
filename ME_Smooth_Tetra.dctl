@@ -2,22 +2,19 @@
 
 /*
 Written by Moaz Elgabry 
+moazelgabry.com
 
-ME_Smooth Tetra
+ ME_Smooth Tetra v0.1
 
 Native smooth sector map in an axis-locked basis
 - Neutrals preserved (operations vanish at c=0)
 - Six C∞ angular windows (partition of unity) -> tetrahedra "aware" of each other
 - Experemental chroma cap keeps output inside [0,1]^3 
 
-
 */
 
 
 // ---------- UI ----------
-DEFINE_UI_PARAMS(BLK_RGB, Black,  DCTLUI_SLIDER_FLOAT, 0.0, -0.25, 1.0, 0.001)
-DEFINE_UI_PARAMS(WHT_RGB, White,  DCTLUI_SLIDER_FLOAT, 1.0,  0.0,   1.25, 0.001)
-
 DEFINE_UI_PARAMS(RED_HUE, Red Hue,       DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
 DEFINE_UI_PARAMS(RED_SAT, Red Sat,       DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
 DEFINE_UI_PARAMS(RED_VAL, Red Value,     DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
@@ -80,7 +77,7 @@ __DEVICE__ inline void to_coords(float3 x,float3 blk,float3 n,float3 u,float3 v,
 {
     float3 d = sub3(x, blk);
     float L = _fmaxf(len3(sub3(add3(blk, muls(n,1.0f)), blk)), 1e-12f); // axis length if blk→blk+n
-    // normalize axis coordinate to [0,1] using actual |wht-blk|
+    // normalize axis coordinate to [0,1] using |wht-blk|
     *s  = dot3(d, n) / _fmaxf(dot3(sub3(add3(blk,muls(n,1.0f)), blk), n), 1e-12f); // fallback; replaced below
     // better: directly divide by |wht-blk|
 }
@@ -107,7 +104,7 @@ __DEVICE__ inline float canonical_angle(float3 dir,float3 blk,float3 n,float3 u,
     return _atan2f(cv, cu);
 }
 
-// analytic safe scale so N + t*C stays in [0,1]^3
+//  safe scale so N + t*C stays in [0,1]^3
 __DEVICE__ inline float safe_scale(float3 N, float3 C){
     float tmax = 1e9f;
     // per channel
@@ -124,13 +121,16 @@ __DEVICE__ inline float safe_scale(float3 N, float3 C){
 // ---------- entry ----------
 __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p_R, float p_G, float p_B)
 {
+    const float BLK_RGB = 0.0f;  // scene black level
+    const float WHT_RGB = 1.0f;  // scene white level
+
     // current axis endpoints
     float3 BLK = make_float3(BLK_RGB, BLK_RGB, BLK_RGB);
     float3 WHT = make_float3(WHT_RGB, WHT_RGB, WHT_RGB);
 
     // axis-locked basis
     float3 n,u,v; build_basis(BLK, WHT, &n, &u, &v);
-    float Lbw = axis_len(BLK, WHT, n);  // actual axis length
+    float Lbw = axis_len(BLK, WHT, n);  
 
     // input
     float3 P = make_float3(p_R, p_G, p_B);
@@ -140,7 +140,7 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
     float c = _sqrtf(cu*cu + cv*cv);
     float h = _atan2f(cv, cu);
 
-    // six angular centers (from canonical cube corners)
+    // six angular centers 
     float aR = canonical_angle(make_float3(1.0f,0.0f,0.0f), BLK, n, u, v);
     float aY = canonical_angle(make_float3(1.0f,1.0f,0.0f), BLK, n, u, v);
     float aG = canonical_angle(make_float3(0.0f,1.0f,0.0f), BLK, n, u, v);
@@ -163,30 +163,47 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
     // user controls combined by partition of unity
     float dHue = (PI/3.0f)*( wR*RED_HUE + wY*YEL_HUE + wG*GRN_HUE + wC*CYN_HUE + wB*BLU_HUE + wM*MAG_HUE );
     float dSat =            ( wR*RED_SAT + wY*YEL_SAT + wG*GRN_SAT + wC*CYN_SAT + wB*BLU_SAT + wM*MAG_SAT ); // octaves
-    float dVal =            ( wR*RED_VAL + wY*YEL_VAL + wG*GRN_VAL + wC*CYN_VAL + wB*BLU_VAL + wM*MAG_VAL );
+
 
     // chroma gate: vanish at c=0 -> greys untouched
     float sigma = CHROMA_SIGMA;
     float chi = 1.0f - _expf(-(c*c)/(sigma*sigma));
 
-    // native smooth response
+    // smooth response
     float h2  = h + chi * dHue;
     float c2  = c * _expf(chi * dSat * 0.69314718056f); // ln 2
 
-    // axis value shift (space-agnostic) – also chroma-gated
-    float s2  = s + chi * dVal;
+    // --- Value ---
+    
+    // sector-weighted raw UI 
+    float dVal_raw =  wR*RED_VAL + wY*YEL_VAL + wG*GRN_VAL + wC*CYN_VAL + wB*BLU_VAL + wM*MAG_VAL;
+    
+    // background scaling + soft-knee limiter 
+    const float VAL_RANGE  = 0.12f;  // target clean window on the axis (≈ ±12%)
+    const float VAL_SOFTK  = 0.80f;  // knee steepness
+    // softsign: x -> x / (1 + k*|x|)
+    float dVal_soft = dVal_raw / (1.0f + VAL_SOFTK * _fabs(dVal_raw));
+    float dVal      = VAL_RANGE * dVal_soft;
+    
+    // gentler onset near neutral - keeps greys untouched
+    const float VAL_CHI_EXP = 2.0f;  // 1→original; 2 calms near-grey; 3 even calmer
+    float chi_v = _powf(chi, VAL_CHI_EXP);
+    
+    // original value mapping, now safely bounded and neutral-friendly
+    float s2 = s + chi_v * dVal;
+    
 
     // reconstruct neutral and chroma vectors
     float3 N  = add3(BLK, muls(n, s2*Lbw));
     float3 C  = add3( muls(u, c2*_cosf(h2)), muls(v, c2*_sinf(h2)) );
 
-    // safety: cap chroma so N + C stays in [0,1]^3
+    // safety: cap chroma so N + C stays in [0,1]^3(not sure I should be doing this)
     float tmax = safe_scale(N, C);
     if (tmax < 1.0f) C = muls(C, CAP_MARGIN * tmax);
 
-    float3 outc = add3(N, C);
+    float3 out = add3(N, C);
 
-    if (CLAMP_OUT) outc = clamp01(outc);
-    return outc;
+    if (CLAMP_OUT) out = clamp01(out);
+    return out;
 }
 
