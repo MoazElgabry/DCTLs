@@ -1,0 +1,142 @@
+#line 2
+
+/*
+Written by Moaz Elgabry 
+
+ME_Smooth Tetra
+
+Boundary-Feathered Tetrahedral Interpolation (forward-only)
+
+*/
+
+
+// === UI ===
+DEFINE_UI_PARAMS(RED_R,   Red R,    DCTLUI_SLIDER_FLOAT, 1.0, -1.0, 3.0, 0.001)
+DEFINE_UI_PARAMS(RED_G,   Red G,    DCTLUI_SLIDER_FLOAT, 0.0, -2.0, 2.0, 0.001)
+DEFINE_UI_PARAMS(RED_B,   Red B,    DCTLUI_SLIDER_FLOAT, 0.0, -2.0, 2.0, 0.001)
+
+DEFINE_UI_PARAMS(GRN_R,   Green R,  DCTLUI_SLIDER_FLOAT, 0.0, -2.0, 2.0, 0.001)
+DEFINE_UI_PARAMS(GRN_G,   Green G,  DCTLUI_SLIDER_FLOAT, 1.0, -1.0, 3.0, 0.001)
+DEFINE_UI_PARAMS(GRN_B,   Green B,  DCTLUI_SLIDER_FLOAT, 0.0, -2.0, 2.0, 0.001)
+
+DEFINE_UI_PARAMS(BLU_R,   Blue R,   DCTLUI_SLIDER_FLOAT, 0.0, -2.0, 2.0, 0.001)
+DEFINE_UI_PARAMS(BLU_G,   Blue G,   DCTLUI_SLIDER_FLOAT, 0.0, -2.0, 2.0, 0.001)
+DEFINE_UI_PARAMS(BLU_B,   Blue B,   DCTLUI_SLIDER_FLOAT, 1.0, -1.0, 3.0, 0.001)
+
+DEFINE_UI_PARAMS(CYN_R,   Cyan R,   DCTLUI_SLIDER_FLOAT, 0.0, -2.0, 2.0, 0.001)
+DEFINE_UI_PARAMS(CYN_G,   Cyan G,   DCTLUI_SLIDER_FLOAT, 1.0, -1.0, 3.0, 0.001)
+DEFINE_UI_PARAMS(CYN_B,   Cyan B,   DCTLUI_SLIDER_FLOAT, 1.0, -1.0, 3.0, 0.001)
+
+DEFINE_UI_PARAMS(MAG_R,   Magenta R,DCTLUI_SLIDER_FLOAT, 1.0, -1.0, 3.0, 0.001)
+DEFINE_UI_PARAMS(MAG_G,   Magenta G,DCTLUI_SLIDER_FLOAT, 0.0, -2.0, 2.0, 0.001)
+DEFINE_UI_PARAMS(MAG_B,   Magenta B,DCTLUI_SLIDER_FLOAT, 1.0, -1.0, 3.0, 0.001)
+
+DEFINE_UI_PARAMS(YEL_R,   Yellow R, DCTLUI_SLIDER_FLOAT, 1.0, -1.0, 3.0, 0.001)
+DEFINE_UI_PARAMS(YEL_G,   Yellow G, DCTLUI_SLIDER_FLOAT, 1.0, -1.0, 3.0, 0.001)
+DEFINE_UI_PARAMS(YEL_B,   Yellow B, DCTLUI_SLIDER_FLOAT, 0.0, -2.0, 2.0, 0.001)
+
+DEFINE_UI_PARAMS(SMOOTH_W, Smooth Width, DCTLUI_SLIDER_FLOAT, 0.02, 0.0, 0.25, 0.001)
+DEFINE_UI_PARAMS(CLAMP_OUT, Clamp Output 0..1, DCTLUI_CHECK_BOX, 1)
+
+// === Helpers ===
+__DEVICE__ inline float satf(float x, float a, float b) {
+    return _fminf(_fmaxf((x - a) / (b - a), 0.0f), 1.0f);
+}
+
+__DEVICE__ inline float smootherstep01(float t) {
+    return t * t * (3.0f - 2.0f * t);
+}
+
+// Soft Heaviside across [-w, w]
+__DEVICE__ inline float softH(float x, float w) {
+    if (w <= 0.0f) return x > 0.0f ? 1.0f : 0.0f;
+    float t = satf(0.5f + x / (2.0f * w), 0.0f, 1.0f);
+    return smootherstep01(t);
+}
+
+__DEVICE__ inline float3 f3_add(float3 a, float3 b) {
+    return make_float3(a.x + b.x, a.y + b.y, a.z + b.z);
+}
+
+__DEVICE__ inline float3 f3_madd(float3 acc, float w, float3 v) {
+    // acc + w * v
+    return make_float3(acc.x + w * v.x, acc.y + w * v.y, acc.z + w * v.z);
+}
+
+// Region indices:
+// 0: r>g>b, 1: g>r>b, 2: g>b>r, 3: b>g>r, 4: b>r>g, 5: r>b>g
+__DEVICE__ float3 tetra_region_eval(int region, float3 p,
+                                    float3 red, float3 yel, float3 grn,
+                                    float3 cyn, float3 blu, float3 mag, float3 wht)
+{
+    float r = p.x, g = p.y, b = p.z;
+    switch (region) {
+        case 0: return r*red + g*(yel - red) + b*(wht - yel);
+        case 1: return r*(yel - grn) + g*grn + b*(wht - yel);
+        case 2: return r*(wht - cyn) + g*grn + b*(cyn - grn);
+        case 3: return r*(wht - cyn) + g*(cyn - blu) + b*blu;
+        case 4: return r*(mag - blu) + g*(wht - mag) + b*blu;
+        default:return r*red + g*(wht - mag) + b*(mag - red);
+    }
+}
+
+__DEVICE__ void permutation_weights(float r, float g, float b, float w, float weights[6]) {
+    float Hr_g = softH(r - g, w);
+    float Hg_r = softH(g - r, w);
+    float Hg_b = softH(g - b, w);
+    float Hb_g = softH(b - g, w);
+    float Hr_b = softH(r - b, w);
+    float Hb_r = softH(b - r, w);
+
+    weights[0] = Hr_g * Hg_b * Hr_b; // r>g>b
+    weights[1] = Hg_r * Hr_b * Hg_b; // g>r>b
+    weights[2] = Hg_b * Hb_r * Hg_r; // g>b>r
+    weights[3] = Hb_g * Hg_r * Hb_r; // b>g>r
+    weights[4] = Hb_r * Hr_g * Hb_g; // b>r>g
+    weights[5] = Hr_b * Hb_g * Hr_g; // r>b>g
+
+    const float eps = 1e-12f;
+    float sumw = eps;
+    for (int i = 0; i < 6; ++i) sumw += weights[i];
+    float inv = 1.0f / sumw;
+    for (int i = 0; i < 6; ++i) weights[i] *= inv;
+}
+
+__DEVICE__ inline float3 clamp01(float3 v) {
+    v.x = _fminf(_fmaxf(v.x, 0.0f), 1.0f);
+    v.y = _fminf(_fmaxf(v.y, 0.0f), 1.0f);
+    v.z = _fminf(_fmaxf(v.z, 0.0f), 1.0f);
+    return v;
+}
+
+// === Required exact signature ===
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p_R, float p_G, float p_B) 
+{
+
+    float3 p = make_float3(p_R, p_G, p_B);
+
+    // corners
+    float3 red = make_float3(RED_R, RED_G, RED_B);
+    float3 yel = make_float3(YEL_R, YEL_G, YEL_B);
+    float3 grn = make_float3(GRN_R, GRN_G, GRN_B);
+    float3 cyn = make_float3(CYN_R, CYN_G, CYN_B);
+    float3 blu = make_float3(BLU_R, BLU_G, BLU_B);
+    float3 mag = make_float3(MAG_R, MAG_G, MAG_B);
+    float3 wht = make_float3(1.0f, 1.0f, 1.0f); // fixed white
+
+    // weights
+    float W[6];
+    permutation_weights(p.x, p.y, p.z, SMOOTH_W, W);
+
+    // blend six region evaluations
+    float3 acc = make_float3(0.0f, 0.0f, 0.0f);
+    acc = f3_madd(acc, W[0], tetra_region_eval(0, p, red, yel, grn, cyn, blu, mag, wht));
+    acc = f3_madd(acc, W[1], tetra_region_eval(1, p, red, yel, grn, cyn, blu, mag, wht));
+    acc = f3_madd(acc, W[2], tetra_region_eval(2, p, red, yel, grn, cyn, blu, mag, wht));
+    acc = f3_madd(acc, W[3], tetra_region_eval(3, p, red, yel, grn, cyn, blu, mag, wht));
+    acc = f3_madd(acc, W[4], tetra_region_eval(4, p, red, yel, grn, cyn, blu, mag, wht));
+    acc = f3_madd(acc, W[5], tetra_region_eval(5, p, red, yel, grn, cyn, blu, mag, wht));
+
+    if (CLAMP_OUT) acc = clamp01(acc);
+    return acc;
+}
