@@ -1,0 +1,209 @@
+#line 2
+
+/*
+Written by Moaz Elgabry 
+moazelgabry.com
+
+ ME_Smooth Tetra v0.1
+
+Native smooth sector map in an axis-locked basis
+- Neutrals preserved (operations vanish at c=0)
+- Six C∞ angular windows (partition of unity) -> tetrahedra "aware" of each other
+- Experemental chroma cap keeps output inside [0,1]^3 
+
+*/
+
+
+// ---------- UI ----------
+DEFINE_UI_PARAMS(RED_HUE, Red Hue,       DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
+DEFINE_UI_PARAMS(RED_SAT, Red Sat,       DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
+DEFINE_UI_PARAMS(RED_VAL, Red Value,     DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
+
+DEFINE_UI_PARAMS(GRN_HUE, Green Hue,     DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
+DEFINE_UI_PARAMS(GRN_SAT, Green Sat,     DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
+DEFINE_UI_PARAMS(GRN_VAL, Green Value,   DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
+
+DEFINE_UI_PARAMS(BLU_HUE, Blue Hue,      DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
+DEFINE_UI_PARAMS(BLU_SAT, Blue Sat,      DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
+DEFINE_UI_PARAMS(BLU_VAL, Blue Value,    DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
+
+DEFINE_UI_PARAMS(CYN_HUE, Cyan Hue,      DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
+DEFINE_UI_PARAMS(CYN_SAT, Cyan Sat,      DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
+DEFINE_UI_PARAMS(CYN_VAL, Cyan Value,    DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
+
+DEFINE_UI_PARAMS(MAG_HUE, Magenta Hue,   DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
+DEFINE_UI_PARAMS(MAG_SAT, Magenta Sat,   DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
+DEFINE_UI_PARAMS(MAG_VAL, Magenta Value, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
+
+DEFINE_UI_PARAMS(YEL_HUE, Yellow Hue,    DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
+DEFINE_UI_PARAMS(YEL_SAT, Yellow Sat,    DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
+DEFINE_UI_PARAMS(YEL_VAL, Yellow Value,  DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
+
+// shape & safety
+DEFINE_UI_PARAMS(CHROMA_SIGMA, Chroma Softening, DCTLUI_SLIDER_FLOAT, 0.08, 0.01, 0.25, 0.001)
+DEFINE_UI_PARAMS(HUE_MAX_FRAC, Hue Limit [of 60°], DCTLUI_SLIDER_FLOAT, 1.0, 0.0, 1.5, 0.01)
+DEFINE_UI_PARAMS(CAP_MARGIN,   Cap Margin,         DCTLUI_SLIDER_FLOAT, 0.98, 0.90, 1.00, 0.001)
+DEFINE_UI_PARAMS(CLAMP_OUT,    Clamp 0..1,         DCTLUI_CHECK_BOX, 1)
+
+// ---------- math helpers ----------
+__DEVICE__ inline float3 add3(float3 a,float3 b){ return make_float3(a.x+b.x,a.y+b.y,a.z+b.z); }
+__DEVICE__ inline float3 sub3(float3 a,float3 b){ return make_float3(a.x-b.x,a.y-b.y,a.z-b.z); }
+__DEVICE__ inline float3 muls(float3 a,float s){ return make_float3(a.x*s,a.y*s,a.z*s); }
+__DEVICE__ inline float  dot3(float3 a,float3 b){ return a.x*b.x + a.y*b.y + a.z*b.z; }
+__DEVICE__ inline float3 cross3(float3 a,float3 b){ return make_float3(a.y*b.z-a.z*b.y, a.z*b.x-a.x*b.z, a.x*b.y-a.y*b.x); }
+__DEVICE__ inline float  len3(float3 a){ return _sqrtf(dot3(a,a)); }
+__DEVICE__ inline float3 norm3(float3 a){ float L=len3(a); if(L<1e-12f) return make_float3(0.57735f,0.57735f,0.57735f); return muls(a,1.0f/L); }
+__DEVICE__ inline float3 clamp01(float3 v){
+    v.x=_fminf(_fmaxf(v.x,0.0f),1.0f); v.y=_fminf(_fmaxf(v.y,0.0f),1.0f); v.z=_fminf(_fmaxf(v.z,0.0f),1.0f); return v;
+}
+__DEVICE__ inline float wrap_pi(float a){ const float PI=3.141592653589f,TW=6.28318530718f; a = a - TW*_floorf((a+PI)/TW); return a; }
+__DEVICE__ inline float ang_weight(float h,float center,float width){
+    float d=_fabs(wrap_pi(h-center)); if(d>=width) return 0.0f; float t=d/width; return 0.5f*(1.0f+_cosf(3.141592653589f*t));
+}
+
+// Build axis-locked orthonormal basis {n,u,v} from current blk→wht
+__DEVICE__ inline void build_basis(float3 blk,float3 wht,float3* n,float3* u,float3* v){
+    float3 d = sub3(wht, blk);
+    *n = norm3(d); // neutral axis direction
+    float3 a = make_float3(1.0f,0.0f,0.0f);
+    if (_fabs(dot3(*n,a)) > 0.9f) a = make_float3(0.0f,1.0f,0.0f);
+    float3 u_tmp = sub3(a, muls(*n, dot3(a,*n)));
+    *u = norm3(u_tmp);
+    *v = cross3(*n, *u);
+}
+
+// Project to basis and reconstruct
+__DEVICE__ inline void to_coords(float3 x,float3 blk,float3 n,float3 u,float3 v, float* s,float* cu,float* cv)
+{
+    float3 d = sub3(x, blk);
+    float L = _fmaxf(len3(sub3(add3(blk, muls(n,1.0f)), blk)), 1e-12f); // axis length if blk→blk+n
+    // normalize axis coordinate to [0,1] using |wht-blk|
+    *s  = dot3(d, n) / _fmaxf(dot3(sub3(add3(blk,muls(n,1.0f)), blk), n), 1e-12f); // fallback; replaced below
+    // better: directly divide by |wht-blk|
+}
+__DEVICE__ inline float axis_len(float3 blk,float3 wht,float3 n){
+    return _fmaxf(dot3(sub3(wht,blk), n), 1e-12f);
+}
+__DEVICE__ inline void to_coords_norm(float3 x,float3 blk,float3 n,float3 u,float3 v,float Lbw,
+                                      float* s,float* cu,float* cv){
+    float3 d = sub3(x, blk);
+    *s  = dot3(d, n) / Lbw;            // 0..1
+    *cu = dot3(d, u);                  // chroma components in plane
+    *cv = dot3(d, v);
+}
+__DEVICE__ inline float3 from_coords(float s,float cu,float cv,float3 blk,float3 wht,float3 n,float3 u,float3 v,float Lbw){
+    float3 N = add3(blk, muls(n, s*Lbw));
+    return add3(N, add3(muls(u,cu), muls(v,cv)));
+}
+
+// angles of the six canonical RGB directions in the {u,v} plane (for windows)
+__DEVICE__ inline float canonical_angle(float3 dir,float3 blk,float3 n,float3 u,float3 v){
+    // project corner direction into plane by removing axis component
+    float3 dp = sub3(dir, muls(n, dot3(dir, n)));
+    float cu = dot3(dp, u), cv = dot3(dp, v);
+    return _atan2f(cv, cu);
+}
+
+//  safe scale so N + t*C stays in [0,1]^3
+__DEVICE__ inline float safe_scale(float3 N, float3 C){
+    float tmax = 1e9f;
+    // per channel
+    if (C.x >  0.0f) tmax = _fminf(tmax, (1.0f - N.x)/C.x);
+    if (C.x <  0.0f) tmax = _fminf(tmax, (0.0f - N.x)/C.x);
+    if (C.y >  0.0f) tmax = _fminf(tmax, (1.0f - N.y)/C.y);
+    if (C.y <  0.0f) tmax = _fminf(tmax, (0.0f - N.y)/C.y);
+    if (C.z >  0.0f) tmax = _fminf(tmax, (1.0f - N.z)/C.z);
+    if (C.z <  0.0f) tmax = _fminf(tmax, (0.0f - N.z)/C.z);
+    if (!(tmax>0.0f)) tmax = 0.0f;
+    return tmax;
+}
+
+// ---------- entry ----------
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p_R, float p_G, float p_B)
+{
+    const float BLK_RGB = 0.0f;  // scene black level
+    const float WHT_RGB = 1.0f;  // scene white level
+
+    // current axis endpoints
+    float3 BLK = make_float3(BLK_RGB, BLK_RGB, BLK_RGB);
+    float3 WHT = make_float3(WHT_RGB, WHT_RGB, WHT_RGB);
+
+    // axis-locked basis
+    float3 n,u,v; build_basis(BLK, WHT, &n, &u, &v);
+    float Lbw = axis_len(BLK, WHT, n);  
+
+    // input
+    float3 P = make_float3(p_R, p_G, p_B);
+
+    // normalized axis coordinate and plane chroma
+    float s, cu, cv; to_coords_norm(P, BLK, n, u, v, Lbw, &s, &cu, &cv);
+    float c = _sqrtf(cu*cu + cv*cv);
+    float h = _atan2f(cv, cu);
+
+    // six angular centers 
+    float aR = canonical_angle(make_float3(1.0f,0.0f,0.0f), BLK, n, u, v);
+    float aY = canonical_angle(make_float3(1.0f,1.0f,0.0f), BLK, n, u, v);
+    float aG = canonical_angle(make_float3(0.0f,1.0f,0.0f), BLK, n, u, v);
+    float aC = canonical_angle(make_float3(0.0f,1.0f,1.0f), BLK, n, u, v);
+    float aB = canonical_angle(make_float3(0.0f,0.0f,1.0f), BLK, n, u, v);
+    float aM = canonical_angle(make_float3(1.0f,0.0f,1.0f), BLK, n, u, v);
+
+    // raised-cosine windows (half-width ≈ 60°, scaled by control)
+    const float PI = 3.141592653589f;
+    float halfW = (PI/3.0f)*HUE_MAX_FRAC;
+    float wR = ang_weight(h, aR, halfW);
+    float wY = ang_weight(h, aY, halfW);
+    float wG = ang_weight(h, aG, halfW);
+    float wC = ang_weight(h, aC, halfW);
+    float wB = ang_weight(h, aB, halfW);
+    float wM = ang_weight(h, aM, halfW);
+    float wsum = wR+wY+wG+wC+wB+wM + 1e-12f;
+    wR/=wsum; wY/=wsum; wG/=wsum; wC/=wsum; wB/=wsum; wM/=wsum;
+
+    // user controls combined by partition of unity
+    float dHue = (PI/3.0f)*( wR*RED_HUE + wY*YEL_HUE + wG*GRN_HUE + wC*CYN_HUE + wB*BLU_HUE + wM*MAG_HUE );
+    float dSat =            ( wR*RED_SAT + wY*YEL_SAT + wG*GRN_SAT + wC*CYN_SAT + wB*BLU_SAT + wM*MAG_SAT ); // octaves
+
+
+    // chroma gate: vanish at c=0 -> greys untouched
+    float sigma = CHROMA_SIGMA;
+    float chi = 1.0f - _expf(-(c*c)/(sigma*sigma));
+
+    // smooth response
+    float h2  = h + chi * dHue;
+    float c2  = c * _expf(chi * dSat * 0.69314718056f); // ln 2
+
+    // --- Value ---
+    
+    // sector-weighted raw UI 
+    float dVal_raw =  wR*RED_VAL + wY*YEL_VAL + wG*GRN_VAL + wC*CYN_VAL + wB*BLU_VAL + wM*MAG_VAL;
+    
+    // background scaling + soft-knee limiter 
+    const float VAL_RANGE  = 0.12f;  // target clean window on the axis (≈ ±12%)
+    const float VAL_SOFTK  = 0.80f;  // knee steepness
+    // softsign: x -> x / (1 + k*|x|)
+    float dVal_soft = dVal_raw / (1.0f + VAL_SOFTK * _fabs(dVal_raw));
+    float dVal      = VAL_RANGE * dVal_soft;
+    
+    // gentler onset near neutral - keeps greys untouched
+    const float VAL_CHI_EXP = 2.0f;  // 1→original; 2 calms near-grey; 3 even calmer
+    float chi_v = _powf(chi, VAL_CHI_EXP);
+    
+    // original value mapping, now safely bounded and neutral-friendly
+    float s2 = s + chi_v * dVal;
+    
+
+    // reconstruct neutral and chroma vectors
+    float3 N  = add3(BLK, muls(n, s2*Lbw));
+    float3 C  = add3( muls(u, c2*_cosf(h2)), muls(v, c2*_sinf(h2)) );
+
+    // safety: cap chroma so N + C stays in [0,1]^3(not sure I should be doing this)
+    float tmax = safe_scale(N, C);
+    if (tmax < 1.0f) C = muls(C, CAP_MARGIN * tmax);
+
+    float3 out = add3(N, C);
+
+    if (CLAMP_OUT) out = clamp01(out);
+    return out;
+}
+
