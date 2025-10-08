@@ -41,8 +41,8 @@ DEFINE_UI_PARAMS(YEL_VAL, Yellow Value,  DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.
 
 // shape & safety
 DEFINE_UI_PARAMS(CHROMA_SIGMA, Chroma Softening, DCTLUI_SLIDER_FLOAT, 0.08, 0.07, 0.25, 0.001)
-DEFINE_UI_PARAMS(HUE_MAX_FRAC, Hue Limit [of 60°], DCTLUI_SLIDER_FLOAT, 1.0, 0.8, 1.5, 0.01)
-DEFINE_UI_PARAMS(CAP_MARGIN,   Cap Margin,         DCTLUI_SLIDER_FLOAT, 0.98, 0.90, 1.00, 0.001)
+DEFINE_UI_PARAMS(HUE_MAX_FRAC, Hue Limit [of 60°], DCTLUI_SLIDER_FLOAT, 1.0, 0.88, 1.5, 0.01)
+DEFINE_UI_PARAMS(CAP_MARGIN,   Cap Margin,         DCTLUI_SLIDER_FLOAT, 1.0, 0.90, 1.00, 0.001)
 DEFINE_UI_PARAMS(CLAMP_OUT,    Clamp 0..1,         DCTLUI_CHECK_BOX, 1)
 
 // ---------- math helpers ----------
@@ -58,8 +58,13 @@ __DEVICE__ inline float3 clamp01(float3 v){
 }
 __DEVICE__ inline float wrap_pi(float a){ const float PI=3.141592653589f,TW=6.28318530718f; a = a - TW*_floorf((a+PI)/TW); return a; }
 __DEVICE__ inline float ang_weight(float h,float center,float width){
-    float d=_fabs(wrap_pi(h-center)); if(d>=width) return 0.0f; float t=d/width; return 0.5f*(1.0f+_cosf(3.141592653589f*t));
+    if (width <= 1e-6f) return 0.0f;
+    float d = _fabs(wrap_pi(h - center));
+    if (d > width) return 0.0f;                 // strict >
+    float t = d / (width + 1e-6f);              // avoid t==1
+    return 0.5f * (1.0f + _cosf(3.141592653589f * t));
 }
+
 
 
 
@@ -120,18 +125,27 @@ __DEVICE__ inline float canonical_angle(float3 dir, Basis B){
 
 
 //  safe scale so N + t*C stays in [0,1]^3
-__DEVICE__ inline float safe_scale(float3 N, float3 C){
+__DEVICE__ inline float safe_scale(float3 N, float3 C)
+{
+    // Early out when chroma is effectively zero
+    if (_fabs(C.x) + _fabs(C.y) + _fabs(C.z) < 1e-12f) { return 1.0f; }
+
     float tmax = 1e9f;
-    // per channel
-    if (C.x >  0.0f) tmax = _fminf(tmax, (1.0f - N.x)/C.x);
-    if (C.x <  0.0f) tmax = _fminf(tmax, (0.0f - N.x)/C.x);
-    if (C.y >  0.0f) tmax = _fminf(tmax, (1.0f - N.y)/C.y);
-    if (C.y <  0.0f) tmax = _fminf(tmax, (0.0f - N.y)/C.y);
-    if (C.z >  0.0f) tmax = _fminf(tmax, (1.0f - N.z)/C.z);
-    if (C.z <  0.0f) tmax = _fminf(tmax, (0.0f - N.z)/C.z);
-    if (!(tmax>0.0f)) tmax = 0.0f;
+    // Per-channel scale limits
+    if (C.x > 0.0f) { tmax = _fminf(tmax, (1.0f - N.x) / C.x); }
+    if (C.x < 0.0f) { tmax = _fminf(tmax, (0.0f - N.x) / C.x); }
+
+    if (C.y > 0.0f) { tmax = _fminf(tmax, (1.0f - N.y) / C.y); }
+    if (C.y < 0.0f) { tmax = _fminf(tmax, (0.0f - N.y) / C.y); }
+
+    if (C.z > 0.0f) { tmax = _fminf(tmax, (1.0f - N.z) / C.z); }
+    if (C.z < 0.0f) { tmax = _fminf(tmax, (0.0f - N.z) / C.z); }
+
+    if (!(tmax > 0.0f)) { tmax = 0.0f; }
+
     return tmax;
 }
+
 
 // ---------- entry ----------
 __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p_R, float p_G, float p_B)
@@ -167,7 +181,7 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
 
     // raised-cosine windows (half-width ≈ 60°, scaled by control)
     const float PI = 3.141592653589f;
-    float halfW = (PI/3.0f)*HUE_MAX_FRAC;
+    float halfW = (PI/3.0f) * (HUE_MAX_FRAC + 0.02f); // tiny overlap at default
     float wR = ang_weight(h, aR, halfW);
     float wY = ang_weight(h, aY, halfW);
     float wG = ang_weight(h, aG, halfW);
@@ -183,8 +197,9 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
 
 
     // chroma gate: vanish at c=0 -> greys untouched
-    float sigma = CHROMA_SIGMA;
-    float chi = 1.0f - _expf(-(c*c)/(sigma*sigma));
+    float sigma = _fmaxf(CHROMA_SIGMA, 1e-4f);
+    float chi   = 1.0f - _expf(-(c*c)/(sigma*sigma));
+
 
     // smooth response
     float h2  = h + chi * dHue;
@@ -196,7 +211,7 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
     float dVal_raw =  wR*RED_VAL + wY*YEL_VAL + wG*GRN_VAL + wC*CYN_VAL + wB*BLU_VAL + wM*MAG_VAL;
     
     // background scaling + soft-knee limiter 
-    const float VAL_RANGE  = 0.12f;  // target clean window on the axis (≈ ±12%)
+    const float VAL_RANGE  = 0.20f;  // target clean window on the axis (≈ ±20%)
     const float VAL_SOFTK  = 0.80f;  // knee steepness
     // softsign: x -> x / (1 + k*|x|)
     float dVal_soft = dVal_raw / (1.0f + VAL_SOFTK * _fabs(dVal_raw));
@@ -208,6 +223,12 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
     
     // original value mapping, now safely bounded and neutral-friendly
     float s2 = s + chi_v * dVal;
+    // soft limiter for s2 near [0,1], preserves midtone slope ~1
+    const float k = 0.02f; // knee width
+    float s2c = s2;
+    if (s2c < 0.0f) { s2c = -k * _logf(1.0f + (-s2c / k)); }
+    if (s2c > 1.0f) { s2c =  1.0f + k * _logf(1.0f + ((s2c - 1.0f) / k)); }
+    s2 = s2c;
     
 
     // reconstruct neutral and chroma vectors
