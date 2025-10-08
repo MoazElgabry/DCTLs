@@ -125,26 +125,36 @@ __DEVICE__ inline float canonical_angle(float3 dir, Basis B){
 
 
 //  safe scale so N + t*C stays in [0,1]^3
-__DEVICE__ inline float safe_scale(float3 N, float3 C)
+// Soft safe scale: smoothly limits so N + t*C stays within [0,1]^3
+// Soft safe scale: smoothly limits so N + t*C stays within [0,1]^3
+__DEVICE__ inline float safe_scale(float3 N, float3 C, float cap_margin)
 {
-    // Early out when chroma is effectively zero
     if (_fabs(C.x) + _fabs(C.y) + _fabs(C.z) < 1e-12f) { return 1.0f; }
 
-    float tmax = 1e9f;
-    // Per-channel scale limits
-    if (C.x > 0.0f) { tmax = _fminf(tmax, (1.0f - N.x) / C.x); }
-    if (C.x < 0.0f) { tmax = _fminf(tmax, (0.0f - N.x) / C.x); }
+    float tx = 1e9f, ty = 1e9f, tz = 1e9f;
+    if (C.x > 0.0f) { tx = (1.0f - N.x) / C.x; } else if (C.x < 0.0f) { tx = (0.0f - N.x) / C.x; }
+    if (C.y > 0.0f) { ty = (1.0f - N.y) / C.y; } else if (C.y < 0.0f) { ty = (0.0f - N.y) / C.y; }
+    if (C.z > 0.0f) { tz = (1.0f - N.z) / C.z; } else if (C.z < 0.0f) { tz = (0.0f - N.z) / C.z; }
 
-    if (C.y > 0.0f) { tmax = _fminf(tmax, (1.0f - N.y) / C.y); }
-    if (C.y < 0.0f) { tmax = _fminf(tmax, (0.0f - N.y) / C.y); }
+    // soft minimum via log-sum-exp
+    const float alpha = 0.05f;
+    float ia = -tx / alpha, ib = -ty / alpha, ic = -tz / alpha;
+    float m = _fmaxf(_fmaxf(ia, ib), ic);
+    float s = _expf(ia - m) + _expf(ib - m) + _expf(ic - m);
+    float t_soft = -alpha * (_logf(s) + m);
 
-    if (C.z > 0.0f) { tmax = _fminf(tmax, (1.0f - N.z) / C.z); }
-    if (C.z < 0.0f) { tmax = _fminf(tmax, (0.0f - N.z) / C.z); }
+    // soft knee around t=1
+    const float kneeW = 0.08f;
+    float d = _fmaxf(0.0f, 1.0f - t_soft);
+    float t = _fminf(_fmaxf(d / kneeW, 0.0f), 1.0f);
+    float smooth = t*t*(3.0f - 2.0f*t);
 
-    if (!(tmax > 0.0f)) { tmax = 0.0f; }
+    float hard = cap_margin * t_soft;
+    float scale = (1.0f - smooth) * 1.0f + smooth * hard;
 
-    return tmax;
+    return scale;
 }
+
 
 
 // ---------- entry ----------
@@ -236,8 +246,8 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
     float3 C  = add3( muls(B.u, c2 * _cosf(h2)), muls(B.v, c2 * _sinf(h2)) );
 
     // safety: cap chroma so N + C stays in [0,1]^3(not sure I should be doing this)
-    float tmax = safe_scale(N, C);
-    if (tmax < 1.0f) C = muls(C, CAP_MARGIN * tmax);
+    float scale = safe_scale(N, C, CAP_MARGIN);
+    C = muls(C, scale);
 
     float3 out = add3(N, C);
 
