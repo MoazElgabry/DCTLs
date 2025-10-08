@@ -40,8 +40,8 @@ DEFINE_UI_PARAMS(YEL_SAT, Yellow Sat,    DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.
 DEFINE_UI_PARAMS(YEL_VAL, Yellow Value,  DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
 
 // shape & safety
-DEFINE_UI_PARAMS(CHROMA_SIGMA, Chroma Softening, DCTLUI_SLIDER_FLOAT, 0.08, 0.01, 0.25, 0.001)
-DEFINE_UI_PARAMS(HUE_MAX_FRAC, Hue Limit [of 60°], DCTLUI_SLIDER_FLOAT, 1.0, 0.0, 1.5, 0.01)
+DEFINE_UI_PARAMS(CHROMA_SIGMA, Chroma Softening, DCTLUI_SLIDER_FLOAT, 0.08, 0.07, 0.25, 0.001)
+DEFINE_UI_PARAMS(HUE_MAX_FRAC, Hue Limit [of 60°], DCTLUI_SLIDER_FLOAT, 1.0, 0.8, 1.5, 0.01)
 DEFINE_UI_PARAMS(CAP_MARGIN,   Cap Margin,         DCTLUI_SLIDER_FLOAT, 0.98, 0.90, 1.00, 0.001)
 DEFINE_UI_PARAMS(CLAMP_OUT,    Clamp 0..1,         DCTLUI_CHECK_BOX, 1)
 
@@ -61,48 +61,63 @@ __DEVICE__ inline float ang_weight(float h,float center,float width){
     float d=_fabs(wrap_pi(h-center)); if(d>=width) return 0.0f; float t=d/width; return 0.5f*(1.0f+_cosf(3.141592653589f*t));
 }
 
+
+
+// ----------  Metal-safe helpers ----------
+
+typedef struct {
+    float3 n;   // neutral axis unit vector
+    float3 u;   // chroma basis 1
+    float3 v;   // chroma basis 2
+    float  Lbw; // |wht - blk| projected on n
+} Basis;
+
 // Build axis-locked orthonormal basis {n,u,v} from current blk→wht
-__DEVICE__ inline void build_basis(float3 blk,float3 wht,float3* n,float3* u,float3* v){
+__DEVICE__ inline Basis build_basis(float3 blk, float3 wht){
+    Basis B;
     float3 d = sub3(wht, blk);
-    *n = norm3(d); // neutral axis direction
-    float3 a = make_float3(1.0f,0.0f,0.0f);
-    if (_fabs(dot3(*n,a)) > 0.9f) a = make_float3(0.0f,1.0f,0.0f);
-    float3 u_tmp = sub3(a, muls(*n, dot3(a,*n)));
-    *u = norm3(u_tmp);
-    *v = cross3(*n, *u);
+    B.n = norm3(d); // axis direction
+
+    // pick a helper axis not too aligned with n
+    float3 a = make_float3(1.0f, 0.0f, 0.0f);
+    if (_fabs(dot3(B.n, a)) > 0.9f) a = make_float3(0.0f, 1.0f, 0.0f);
+
+    float3 u_tmp = sub3(a, muls(B.n, dot3(a, B.n)));
+    B.u = norm3(u_tmp);
+    B.v = cross3(B.n, B.u);
+
+    B.Lbw = _fmaxf(dot3(sub3(wht, blk), B.n), 1e-12f); // axis length
+    return B;
 }
 
-// Project to basis and reconstruct
-__DEVICE__ inline void to_coords(float3 x,float3 blk,float3 n,float3 u,float3 v, float* s,float* cu,float* cv)
-{
+// Project to basis and return (s, cu, cv)
+// s in [0,1] relative to current BLK/WHT; cu, cv are chroma-plane coords
+__DEVICE__ inline float3 to_coords_norm(float3 x, float3 blk, Basis B){
     float3 d = sub3(x, blk);
-    float L = _fmaxf(len3(sub3(add3(blk, muls(n,1.0f)), blk)), 1e-12f); // axis length if blk→blk+n
-    // normalize axis coordinate to [0,1] using |wht-blk|
-    *s  = dot3(d, n) / _fmaxf(dot3(sub3(add3(blk,muls(n,1.0f)), blk), n), 1e-12f); // fallback; replaced below
-    // better: directly divide by |wht-blk|
-}
-__DEVICE__ inline float axis_len(float3 blk,float3 wht,float3 n){
-    return _fmaxf(dot3(sub3(wht,blk), n), 1e-12f);
-}
-__DEVICE__ inline void to_coords_norm(float3 x,float3 blk,float3 n,float3 u,float3 v,float Lbw,
-                                      float* s,float* cu,float* cv){
-    float3 d = sub3(x, blk);
-    *s  = dot3(d, n) / Lbw;            // 0..1
-    *cu = dot3(d, u);                  // chroma components in plane
-    *cv = dot3(d, v);
-}
-__DEVICE__ inline float3 from_coords(float s,float cu,float cv,float3 blk,float3 wht,float3 n,float3 u,float3 v,float Lbw){
-    float3 N = add3(blk, muls(n, s*Lbw));
-    return add3(N, add3(muls(u,cu), muls(v,cv)));
+    float  s  = dot3(d, B.n) / B.Lbw;
+    float  cu = dot3(d, B.u);
+    float  cv = dot3(d, B.v);
+    return make_float3(s, cu, cv);
 }
 
-// angles of the six canonical RGB directions in the {u,v} plane (for windows)
-__DEVICE__ inline float canonical_angle(float3 dir,float3 blk,float3 n,float3 u,float3 v){
-    // project corner direction into plane by removing axis component
-    float3 dp = sub3(dir, muls(n, dot3(dir, n)));
-    float cu = dot3(dp, u), cv = dot3(dp, v);
+// Reconstruct from (s, cu, cv)
+__DEVICE__ inline float3 from_coords(float s, float cu, float cv, float3 blk, Basis B){
+    float3 N = add3(blk, muls(B.n, s * B.Lbw));
+    return add3(N, add3(muls(B.u, cu), muls(B.v, cv)));
+}
+
+// Angle of a canonical RGB direction in the {u,v} plane
+__DEVICE__ inline float canonical_angle(float3 dir, Basis B){
+    // remove axis component, then measure angle in the plane
+    float3 dp = sub3(dir, muls(B.n, dot3(dir, B.n)));
+    float cu = dot3(dp, B.u);
+    float cv = dot3(dp, B.v);
     return _atan2f(cv, cu);
 }
+
+
+
+
 
 //  safe scale so N + t*C stays in [0,1]^3
 __DEVICE__ inline float safe_scale(float3 N, float3 C){
@@ -129,24 +144,26 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
     float3 WHT = make_float3(WHT_RGB, WHT_RGB, WHT_RGB);
 
     // axis-locked basis
-    float3 n,u,v; build_basis(BLK, WHT, &n, &u, &v);
-    float Lbw = axis_len(BLK, WHT, n);  
+    Basis B = build_basis(BLK, WHT);
 
     // input
     float3 P = make_float3(p_R, p_G, p_B);
 
     // normalized axis coordinate and plane chroma
-    float s, cu, cv; to_coords_norm(P, BLK, n, u, v, Lbw, &s, &cu, &cv);
+    float3 scv = to_coords_norm(P, BLK, B);
+    float s  = scv.x;
+    float cu = scv.y;
+    float cv = scv.z;
     float c = _sqrtf(cu*cu + cv*cv);
     float h = _atan2f(cv, cu);
 
     // six angular centers 
-    float aR = canonical_angle(make_float3(1.0f,0.0f,0.0f), BLK, n, u, v);
-    float aY = canonical_angle(make_float3(1.0f,1.0f,0.0f), BLK, n, u, v);
-    float aG = canonical_angle(make_float3(0.0f,1.0f,0.0f), BLK, n, u, v);
-    float aC = canonical_angle(make_float3(0.0f,1.0f,1.0f), BLK, n, u, v);
-    float aB = canonical_angle(make_float3(0.0f,0.0f,1.0f), BLK, n, u, v);
-    float aM = canonical_angle(make_float3(1.0f,0.0f,1.0f), BLK, n, u, v);
+    float aR = canonical_angle(make_float3(1.0f,0.0f,0.0f), B);
+    float aY = canonical_angle(make_float3(1.0f,1.0f,0.0f), B);
+    float aG = canonical_angle(make_float3(0.0f,1.0f,0.0f), B);
+    float aC = canonical_angle(make_float3(0.0f,1.0f,1.0f), B);
+    float aB = canonical_angle(make_float3(0.0f,0.0f,1.0f), B);
+    float aM = canonical_angle(make_float3(1.0f,0.0f,1.0f), B);
 
     // raised-cosine windows (half-width ≈ 60°, scaled by control)
     const float PI = 3.141592653589f;
@@ -194,8 +211,8 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
     
 
     // reconstruct neutral and chroma vectors
-    float3 N  = add3(BLK, muls(n, s2*Lbw));
-    float3 C  = add3( muls(u, c2*_cosf(h2)), muls(v, c2*_sinf(h2)) );
+    float3 N  = add3(BLK, muls(B.n, s2 * B.Lbw));
+    float3 C  = add3( muls(B.u, c2 * _cosf(h2)), muls(B.v, c2 * _sinf(h2)) );
 
     // safety: cap chroma so N + C stays in [0,1]^3(not sure I should be doing this)
     float tmax = safe_scale(N, C);
