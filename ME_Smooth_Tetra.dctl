@@ -1,257 +1,305 @@
 #line 2
+/* 
+Written by Moaz ELgabry | moazelgabry.com
+ 
+ ME_Smooth Tetra v0.3.7
 
-/*
-Written by Moaz Elgabry 
-moazelgabry.com
+  - Native smooth sector map in an axis-locked basis
+  - Neutrals preserved (operations vanish at c=0)
+  - Six C∞ angular windows (partition of unity) -> tetrahedra "aware" of each other
 
- ME_Smooth Tetra v0.1
+ */
 
-Native smooth sector map in an axis-locked basis
-- Neutrals preserved (operations vanish at c=0)
-- Six C∞ angular windows (partition of unity) -> tetrahedra "aware" of each other
-- Experemental chroma cap keeps output inside [0,1]^3 
+/* ------------------------------------------------------------------------------------
+   Primary UI 
+------------------------------------------------------------------------------------ */
+DEFINE_UI_PARAMS(RED_HUE, [R] _ Red Hue, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
+DEFINE_UI_PARAMS(RED_SAT, [R] _ Red Sat, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
+DEFINE_UI_PARAMS(RED_VAL, [R] _ Red Value, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
+DEFINE_UI_PARAMS(GRN_HUE, [G] _ Green Hue, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
+DEFINE_UI_PARAMS(GRN_SAT, [G] _ Green Sat, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
+DEFINE_UI_PARAMS(GRN_VAL, [G] _ Green Value, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
+DEFINE_UI_PARAMS(BLU_HUE, [B] _ Blue Hue, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
+DEFINE_UI_PARAMS(BLU_SAT, [B] _ Blue Sat, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
+DEFINE_UI_PARAMS(BLU_VAL, [B] _ Blue Value, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
+DEFINE_UI_PARAMS(CYN_HUE, [C] _ Cyan Hue, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
+DEFINE_UI_PARAMS(CYN_SAT, [C] _ Cyan Sat, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
+DEFINE_UI_PARAMS(CYN_VAL, [C] _ Cyan Value, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
+DEFINE_UI_PARAMS(MAG_HUE, [M] _ Magenta Hue, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
+DEFINE_UI_PARAMS(MAG_SAT, [M] _ Magenta Sat, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
+DEFINE_UI_PARAMS(MAG_VAL, [M] _ Magenta Value, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
+DEFINE_UI_PARAMS(YEL_HUE, [Y] _ Yellow Hue, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
+DEFINE_UI_PARAMS(YEL_SAT, [Y] _ Yellow Sat, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
+DEFINE_UI_PARAMS(YEL_VAL, [Y] _ Yellow Value, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
 
-*/
+DEFINE_UI_PARAMS(HUE_SHARPNESS,  Hue Sharpness,  DCTLUI_SLIDER_FLOAT, 0.80, 0.60, 1.80, 0.01)
+DEFINE_UI_PARAMS(CLAMP_OUT,      Clamp Output,   DCTLUI_CHECK_BOX, 1)
 
+/* ------------------------------------------------------------------------------------
+   Secondary UI (tunables) 
+------------------------------------------------------------------------------------ */
+//DEFINE_UI_PARAMS(HUE_GATE_BIAS,  Hue Gate Bias, DCTLUI_SLIDER_FLOAT, 1.6420, 0.60, 2.00, 0.01)
+//DEFINE_UI_PARAMS(HUE_GATE_FLOOR, Hue Gate Floor, DCTLUI_SLIDER_FLOAT, 0.06, 0.00, 0.10, 0.001)
+//DEFINE_UI_PARAMS(HUE_GATE_MIX,   Hue Gate Mix, DCTLUI_SLIDER_FLOAT, 0.82, 0.00, 1.00, 0.01)
+//DEFINE_UI_PARAMS(HUE_GATE_K,     Hue Gate K, DCTLUI_SLIDER_FLOAT, 0.015, 0.001, 0.10, 0.001)
+//
+//DEFINE_UI_PARAMS(LOW_LUMA_START, Low Luma Start, DCTLUI_SLIDER_FLOAT, 0.081, 0.00, 0.10, 0.001)
+//DEFINE_UI_PARAMS(LOW_LUMA_END,   Low Luma End, DCTLUI_SLIDER_FLOAT, 0.25, 0.02, 0.25, 0.001)
+//
+//DEFINE_UI_PARAMS(BETA_LO,   Base Headroom β, DCTLUI_SLIDER_FLOAT, 6.00, 2.00, 12.0, 0.1)
+//DEFINE_UI_PARAMS(BETA_HI_0, Hi Cap β0, DCTLUI_SLIDER_FLOAT, 6.00, 2.00, 12.0, 0.1)
+//DEFINE_UI_PARAMS(BETA_HI_1, Hi Cap β1, DCTLUI_SLIDER_FLOAT, 16.0, 4.00, 32.0, 0.5)
+//DEFINE_UI_PARAMS(ALPHA_MID, Hi Cap α Mid, DCTLUI_SLIDER_FLOAT, 0.60, 0.20, 0.95, 0.01)
+//
+//DEFINE_UI_PARAMS(CAP_D0,    Cap Start Δα,  DCTLUI_SLIDER_FLOAT, 0.03, 0.00, 0.20, 0.001)
+//DEFINE_UI_PARAMS(CAP_D1,    Cap End Δα, DCTLUI_SLIDER_FLOAT, 0.10, 0.01, 0.40, 0.001)
+//DEFINE_UI_PARAMS(CAP_KNEE,  Cap Knee %, DCTLUI_SLIDER_FLOAT, 0.03, 0.005, 0.05, 0.001)
+//
+//DEFINE_UI_PARAMS(VAL_RANGE, Value Range, DCTLUI_SLIDER_FLOAT, 0.25, 0.00, 0.50, 0.005)
+//DEFINE_UI_PARAMS(VAL_BIAS,  Value Sat Bias, DCTLUI_SLIDER_FLOAT, 1.70, 0.80, 3.00, 0.01)
+//
+//DEFINE_UI_PARAMS(IDENT_EPS, Identity Epsilon, DCTLUI_SLIDER_FLOAT, 0.0001, 0.0, 0.0010, 0.00001)
 
-// ---------- UI ----------
-DEFINE_UI_PARAMS(RED_HUE, Red Hue,       DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
-DEFINE_UI_PARAMS(RED_SAT, Red Sat,       DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
-DEFINE_UI_PARAMS(RED_VAL, Red Value,     DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
+/* ------------------------------------------------------------------------------------
+   Helpers
+------------------------------------------------------------------------------------ */
+__DEVICE__ inline float3 add3(float3 a,float3 b){return make_float3(a.x+b.x,a.y+b.y,a.z+b.z);}
+__DEVICE__ inline float3 sub3(float3 a,float3 b){return make_float3(a.x-b.x,a.y-b.y,a.z-b.z);}
+__DEVICE__ inline float3 muls(float3 a,float s){return make_float3(a.x*s,a.y*s,a.z*s);}
+__DEVICE__ inline float  dot3(float3 a,float3 b){return a.x*b.x+a.y*b.y+a.z*b.z;}
+__DEVICE__ inline float3 cross3(float3 a,float3 b){return make_float3(a.y*b.z-a.z*b.y, a.z*b.x-a.x*b.z, a.x*b.y-a.y*b.x);}
+__DEVICE__ inline float  len3(float3 a){return _sqrtf(dot3(a,a));}
+__DEVICE__ inline float3 norm3(float3 a){float L=len3(a);return (L>1e-8f)?muls(a,1.0f/L):make_float3(0.577f,0.577f,0.577f);}
+__DEVICE__ inline float3 clamp01(float3 v){v.x=_fminf(_fmaxf(v.x,0.0f),1.0f);v.y=_fminf(_fmaxf(v.y,0.0f),1.0f);v.z=_fminf(_fmaxf(v.z,0.0f),1.0f);return v;}
+__DEVICE__ inline float wrap_pi(float a){const float TW=6.28318530718f,PI=3.141592653589f;return a - TW*_floorf((a+PI)/TW);}
+__DEVICE__ inline float smoothstep(float e0,float e1,float x){float d=_fmaxf(e1-e0,1e-12f);float t=_fminf(1.0f,_fmaxf(0.0f,(x-e0)/d));return t*t*(3.0f-2.0f*t);}
 
-DEFINE_UI_PARAMS(GRN_HUE, Green Hue,     DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
-DEFINE_UI_PARAMS(GRN_SAT, Green Sat,     DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
-DEFINE_UI_PARAMS(GRN_VAL, Green Value,   DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
-
-DEFINE_UI_PARAMS(BLU_HUE, Blue Hue,      DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
-DEFINE_UI_PARAMS(BLU_SAT, Blue Sat,      DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
-DEFINE_UI_PARAMS(BLU_VAL, Blue Value,    DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
-
-DEFINE_UI_PARAMS(CYN_HUE, Cyan Hue,      DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
-DEFINE_UI_PARAMS(CYN_SAT, Cyan Sat,      DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
-DEFINE_UI_PARAMS(CYN_VAL, Cyan Value,    DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
-
-DEFINE_UI_PARAMS(MAG_HUE, Magenta Hue,   DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
-DEFINE_UI_PARAMS(MAG_SAT, Magenta Sat,   DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
-DEFINE_UI_PARAMS(MAG_VAL, Magenta Value, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
-
-DEFINE_UI_PARAMS(YEL_HUE, Yellow Hue,    DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
-DEFINE_UI_PARAMS(YEL_SAT, Yellow Sat,    DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
-DEFINE_UI_PARAMS(YEL_VAL, Yellow Value,  DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
-
-// shape & safety
-DEFINE_UI_PARAMS(CHROMA_SIGMA, Chroma Softening, DCTLUI_SLIDER_FLOAT, 0.08, 0.07, 0.25, 0.001)
-DEFINE_UI_PARAMS(HUE_MAX_FRAC, Hue Limit [of 60°], DCTLUI_SLIDER_FLOAT, 1.0, 0.88, 1.5, 0.01)
-DEFINE_UI_PARAMS(CAP_MARGIN,   Cap Margin,         DCTLUI_SLIDER_FLOAT, 1.0, 0.90, 1.00, 0.001)
-DEFINE_UI_PARAMS(CLAMP_OUT,    Clamp 0..1,         DCTLUI_CHECK_BOX, 1)
-
-// ---------- math helpers ----------
-__DEVICE__ inline float3 add3(float3 a,float3 b){ return make_float3(a.x+b.x,a.y+b.y,a.z+b.z); }
-__DEVICE__ inline float3 sub3(float3 a,float3 b){ return make_float3(a.x-b.x,a.y-b.y,a.z-b.z); }
-__DEVICE__ inline float3 muls(float3 a,float s){ return make_float3(a.x*s,a.y*s,a.z*s); }
-__DEVICE__ inline float  dot3(float3 a,float3 b){ return a.x*b.x + a.y*b.y + a.z*b.z; }
-__DEVICE__ inline float3 cross3(float3 a,float3 b){ return make_float3(a.y*b.z-a.z*b.y, a.z*b.x-a.x*b.z, a.x*b.y-a.y*b.x); }
-__DEVICE__ inline float  len3(float3 a){ return _sqrtf(dot3(a,a)); }
-__DEVICE__ inline float3 norm3(float3 a){ float L=len3(a); if(L<1e-12f) return make_float3(0.57735f,0.57735f,0.57735f); return muls(a,1.0f/L); }
-__DEVICE__ inline float3 clamp01(float3 v){
-    v.x=_fminf(_fmaxf(v.x,0.0f),1.0f); v.y=_fminf(_fmaxf(v.y,0.0f),1.0f); v.z=_fminf(_fmaxf(v.z,0.0f),1.0f); return v;
+/* basis */
+typedef struct { float3 n,u,v; float Lbw; } Basis;
+__DEVICE__ inline Basis build_basis(float3 blk,float3 wht){
+  Basis B; float3 d=sub3(wht,blk);
+  B.n=norm3(d);
+  float3 a=make_float3(1,0,0); if(_fabs(B.n.x)>0.9f) a=make_float3(0,1,0);
+  float3 ut=sub3(a,muls(B.n,dot3(a,B.n))); B.u=norm3(ut);
+  B.v=cross3(B.u,B.n); if(dot3(cross3(B.u,B.v),B.n)<0.0f) B.v=muls(B.v,-1.0f);
+  B.Lbw=_fmaxf(dot3(d,B.n),1e-8f);
+  return B;
 }
-__DEVICE__ inline float wrap_pi(float a){ const float PI=3.141592653589f,TW=6.28318530718f; a = a - TW*_floorf((a+PI)/TW); return a; }
-__DEVICE__ inline float ang_weight(float h,float center,float width){
-    if (width <= 1e-6f) return 0.0f;
-    float d = _fabs(wrap_pi(h - center));
-    if (d > width) return 0.0f;                 // strict >
-    float t = d / (width + 1e-6f);              // avoid t==1
-    return 0.5f * (1.0f + _cosf(3.141592653589f * t));
+__DEVICE__ inline float3 to_coords(float3 x,float3 blk,Basis B){float3 d=sub3(x,blk);return make_float3(dot3(d,B.n)/B.Lbw,dot3(d,B.u),dot3(d,B.v));}
+__DEVICE__ inline float ang_of(float3 dir,Basis B){float3 dp=sub3(dir,muls(B.n,dot3(dir,B.n)));return _atan2f(dot3(dp,B.v),dot3(dp,B.u));}
+
+/* headroom */
+__DEVICE__ inline float headroom_hard(float3 N,float3 D){
+  const float BIG=1e8f;
+  float tx=(_fabs(D.x)<1e-8f)?BIG:(D.x>0.0f?(1.0f-N.x)/D.x:(0.0f-N.x)/D.x);
+  float ty=(_fabs(D.y)<1e-8f)?BIG:(D.y>0.0f?(1.0f-N.y)/D.y:(0.0f-N.y)/D.y);
+  float tz=(_fabs(D.z)<1e-8f)?BIG:(D.z>0.0f?(1.0f-N.z)/D.z:(0.0f-N.z)/D.z);
+  float m=_fminf(tx,_fminf(ty,tz));
+  return _fmaxf(m,0.0f);
+}
+__DEVICE__ inline float headroom_soft(float3 N,float3 D,float beta){
+  const float BIG=1e8f;
+  float tx=(_fabs(D.x)<1e-8f)?BIG:(D.x>0.0f?(1.0f-N.x)/D.x:(0.0f-N.x)/D.x);
+  float ty=(_fabs(D.y)<1e-8f)?BIG:(D.y>0.0f?(1.0f-N.y)/D.y:(0.0f-N.y)/D.y);
+  float tz=(_fabs(D.z)<1e-8f)?BIG:(D.z>0.0f?(1.0f-N.z)/D.z:(0.0f-N.z)/D.z);
+  float m=_fminf(tx,_fminf(ty,tz));
+  float ex=_expf(-beta*(tx-m)), ey=_expf(-beta*(ty-m)), ez=_expf(-beta*(tz-m));
+  float sm=m - (1.0f/_fmaxf(beta,1e-6f))*_logf(ex+ey+ez);
+  return _fmaxf(sm,0.0f);
+}
+__DEVICE__ inline float soft_min2(float a, float b, float k){
+  float m = _fminf(a,b);
+  float A = (a - m)/_fmaxf(k,1e-12f);
+  float B = (b - m)/_fmaxf(k,1e-12f);
+  // -k * log( exp(-a/k) + exp(-b/k) ) in a numerically stable way
+  return -_fmaxf(k,1e-12f) * (_logf(_expf(-A) + _expf(-B)) - m/_fmaxf(k,1e-12f));
 }
 
-
-
-
-// ----------  Metal-safe helpers ----------
 
 typedef struct {
-    float3 n;   // neutral axis unit vector
-    float3 u;   // chroma basis 1
-    float3 v;   // chroma basis 2
-    float  Lbw; // |wht - blk| projected on n
-} Basis;
+  float hue_gate_bias, hue_gate_floor, hue_gate_mix, hue_gate_k;
+  float low_luma_start, low_luma_end;
+  float beta_lo, beta_hi_0, beta_hi_1, alpha_mid;
+  float cap_d0, cap_d1, cap_knee;
+  float val_range, val_bias;
+  float UI_EPS;
+  } Tunables;
 
-// Build axis-locked orthonormal basis {n,u,v} from current blk→wht
-__DEVICE__ inline Basis build_basis(float3 blk, float3 wht){
-    Basis B;
-    float3 d = sub3(wht, blk);
-    B.n = norm3(d); // axis direction
-
-    // pick a helper axis not too aligned with n
-    float3 a = make_float3(1.0f, 0.0f, 0.0f);
-    if (_fabs(dot3(B.n, a)) > 0.9f) a = make_float3(0.0f, 1.0f, 0.0f);
-
-    float3 u_tmp = sub3(a, muls(B.n, dot3(a, B.n)));
-    B.u = norm3(u_tmp);
-    B.v = cross3(B.n, B.u);
-
-    B.Lbw = _fmaxf(dot3(sub3(wht, blk), B.n), 1e-12f); // axis length
-    return B;
-}
-
-// Project to basis and return (s, cu, cv)
-// s in [0,1] relative to current BLK/WHT; cu, cv are chroma-plane coords
-__DEVICE__ inline float3 to_coords_norm(float3 x, float3 blk, Basis B){
-    float3 d = sub3(x, blk);
-    float  s  = dot3(d, B.n) / B.Lbw;
-    float  cu = dot3(d, B.u);
-    float  cv = dot3(d, B.v);
-    return make_float3(s, cu, cv);
-}
-
-// Reconstruct from (s, cu, cv)
-__DEVICE__ inline float3 from_coords(float s, float cu, float cv, float3 blk, Basis B){
-    float3 N = add3(blk, muls(B.n, s * B.Lbw));
-    return add3(N, add3(muls(B.u, cu), muls(B.v, cv)));
-}
-
-// Angle of a canonical RGB direction in the {u,v} plane
-__DEVICE__ inline float canonical_angle(float3 dir, Basis B){
-    // remove axis component, then measure angle in the plane
-    float3 dp = sub3(dir, muls(B.n, dot3(dir, B.n)));
-    float cu = dot3(dp, B.u);
-    float cv = dot3(dp, B.v);
-    return _atan2f(cv, cu);
-}
-
-
-
-
-
-//  safe scale so N + t*C stays in [0,1]^3
-// Soft safe scale: smoothly limits so N + t*C stays within [0,1]^3
-// Soft safe scale: smoothly limits so N + t*C stays within [0,1]^3
-__DEVICE__ inline float safe_scale(float3 N, float3 C, float cap_margin)
-{
-    if (_fabs(C.x) + _fabs(C.y) + _fabs(C.z) < 1e-12f) { return 1.0f; }
-
-    float tx = 1e9f, ty = 1e9f, tz = 1e9f;
-    if (C.x > 0.0f) { tx = (1.0f - N.x) / C.x; } else if (C.x < 0.0f) { tx = (0.0f - N.x) / C.x; }
-    if (C.y > 0.0f) { ty = (1.0f - N.y) / C.y; } else if (C.y < 0.0f) { ty = (0.0f - N.y) / C.y; }
-    if (C.z > 0.0f) { tz = (1.0f - N.z) / C.z; } else if (C.z < 0.0f) { tz = (0.0f - N.z) / C.z; }
-
-    // soft minimum via log-sum-exp
-    const float alpha = 0.05f;
-    float ia = -tx / alpha, ib = -ty / alpha, ic = -tz / alpha;
-    float m = _fmaxf(_fmaxf(ia, ib), ic);
-    float s = _expf(ia - m) + _expf(ib - m) + _expf(ic - m);
-    float t_soft = -alpha * (_logf(s) + m);
-
-    // soft knee around t=1
-    const float kneeW = 0.08f;
-    float d = _fmaxf(0.0f, 1.0f - t_soft);
-    float t = _fminf(_fmaxf(d / kneeW, 0.0f), 1.0f);
-    float smooth = t*t*(3.0f - 2.0f*t);
-
-    float hard = cap_margin * t_soft;
-    float scale = (1.0f - smooth) * 1.0f + smooth * hard;
-
-    return scale;
-}
-
-
-
-// ---------- entry ----------
+/* ------------------------------------------------------------------------------------
+   main
+------------------------------------------------------------------------------------ */
 __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p_R, float p_G, float p_B)
-{
-    const float BLK_RGB = 0.0f;  // scene black level
-    const float WHT_RGB = 1.0f;  // scene white level
+  {
+  
+/* ------------------------------------------------------------------------------------
+   Tuning config
+------------------------------------------------------------------------------------ */
 
-    // current axis endpoints
-    float3 BLK = make_float3(BLK_RGB, BLK_RGB, BLK_RGB);
-    float3 WHT = make_float3(WHT_RGB, WHT_RGB, WHT_RGB);
+  Tunables cfg;
 
-    // axis-locked basis
-    Basis B = build_basis(BLK, WHT);
+   cfg.hue_gate_bias  = 1.64f;
+   cfg.hue_gate_floor = 0.06f;
+   cfg.hue_gate_mix   = 0.82f;
+   cfg.hue_gate_k     = 0.015f;
+  
+   cfg.low_luma_start = 0.081f;
+   cfg.low_luma_end   = 0.25f;
+  
+   cfg.beta_lo   = 6.0f;
+   cfg.beta_hi_0 = 6.0f;
+   cfg.beta_hi_1 = 16.0f;
+   cfg.alpha_mid = 0.60f;
+  
+   cfg.cap_d0   = 0.03f;
+   cfg.cap_d1   = 0.10f;
+   cfg.cap_knee = 0.03f;
+  
+   cfg.val_range = 0.25f;
+   cfg.val_bias  = 1.70f;
+   cfg.UI_EPS  = 1e-4f;
 
-    // input
-    float3 P = make_float3(p_R, p_G, p_B);
+   //cfg.hue_gate_bias  = HUE_GATE_BIAS;
+   //cfg.hue_gate_floor = HUE_GATE_FLOOR;
+   //cfg.hue_gate_mix   = HUE_GATE_MIX;
+   //cfg.hue_gate_k     = HUE_GATE_K;
+  
+   //cfg.low_luma_start = LOW_LUMA_START;
+   //cfg.low_luma_end   = LOW_LUMA_END;
+  
+   //cfg.beta_lo   = BETA_LO;
+   //cfg.beta_hi_0 = BETA_HI_0;
+   //cfg.beta_hi_1 = BETA_HI_1;
+   //cfg.alpha_mid = ALPHA_MID;
+  
+   //cfg.cap_d0   = CAP_D0;
+   //cfg.cap_d1   = CAP_D1;
+   //cfg.cap_knee = CAP_KNEE;
+  
+   //cfg.val_range = VAL_RANGE;
+   //cfg.val_bias  = VAL_BIAS;
+   //cfg.UI_EPS  = IDENT_EPS;
+     
+  const float3 BLK=make_float3(0,0,0), WHT=make_float3(1,1,1);
+  Basis B=build_basis(BLK,WHT);
 
-    // normalized axis coordinate and plane chroma
-    float3 scv = to_coords_norm(P, BLK, B);
-    float s  = scv.x;
-    float cu = scv.y;
-    float cv = scv.z;
-    float c = _sqrtf(cu*cu + cv*cv);
-    float h = _atan2f(cv, cu);
+  float3 P=make_float3(p_R,p_G,p_B);
+  float3 scv=to_coords(P,BLK,B);
+  float s=scv.x, cu=scv.y, cv=scv.z;
+  float c=_sqrtf(cu*cu+cv*cv);
+  float h=_atan2f(cv,cu);
 
-    // six angular centers 
-    float aR = canonical_angle(make_float3(1.0f,0.0f,0.0f), B);
-    float aY = canonical_angle(make_float3(1.0f,1.0f,0.0f), B);
-    float aG = canonical_angle(make_float3(0.0f,1.0f,0.0f), B);
-    float aC = canonical_angle(make_float3(0.0f,1.0f,1.0f), B);
-    float aB = canonical_angle(make_float3(0.0f,0.0f,1.0f), B);
-    float aM = canonical_angle(make_float3(1.0f,0.0f,1.0f), B);
+  /* anchors + circular softmax */
+  float aR=ang_of(make_float3(1,0,0),B);
+  float aY=ang_of(make_float3(1,1,0),B);
+  float aG=ang_of(make_float3(0,1,0),B);
+  float aC=ang_of(make_float3(0,1,1),B);
+  float aB=ang_of(make_float3(0,0,1),B);
+  float aM=ang_of(make_float3(1,0,1),B);
 
-    // raised-cosine windows (half-width ≈ 60°, scaled by control)
-    const float PI = 3.141592653589f;
-    float halfW = (PI/3.0f) * (HUE_MAX_FRAC + 0.02f); // tiny overlap at default
-    float wR = ang_weight(h, aR, halfW);
-    float wY = ang_weight(h, aY, halfW);
-    float wG = ang_weight(h, aG, halfW);
-    float wC = ang_weight(h, aC, halfW);
-    float wB = ang_weight(h, aB, halfW);
-    float wM = ang_weight(h, aM, halfW);
-    float wsum = wR+wY+wG+wC+wB+wM + 1e-12f;
-    wR/=wsum; wY/=wsum; wG/=wsum; wC/=wsum; wB/=wsum; wM/=wsum;
+  float kappa=_fminf(4.0f,3.0f*HUE_SHARPNESS);
+  float eR=_expf(kappa*_cosf(wrap_pi(h-aR)));
+  float eY=_expf(kappa*_cosf(wrap_pi(h-aY)));
+  float eG=_expf(kappa*_cosf(wrap_pi(h-aG)));
+  float eC=_expf(kappa*_cosf(wrap_pi(h-aC)));
+  float eB=_expf(kappa*_cosf(wrap_pi(h-aB)));
+  float eM=_expf(kappa*_cosf(wrap_pi(h-aM)));
+  float es=eR+eY+eG+eC+eB+eM+1e-8f;
+  float wR=eR/es, wY=eY/es, wG=eG/es, wC=eC/es, wB=eB/es, wM=eM/es;
 
-    // user controls combined by partition of unity
-    float dHue = (PI/3.0f)*( wR*RED_HUE + wY*YEL_HUE + wG*GRN_HUE + wC*CYN_HUE + wB*BLU_HUE + wM*MAG_HUE );
-    float dSat =            ( wR*RED_SAT + wY*YEL_SAT + wG*GRN_SAT + wC*CYN_SAT + wB*BLU_SAT + wM*MAG_SAT ); // octaves
+  /* local positive Sat ask (for regional cap) */
+  float sat_pos_local=_fmaxf(0.0f,wR*RED_SAT)+_fmaxf(0.0f,wY*YEL_SAT)+_fmaxf(0.0f,wG*GRN_SAT)+_fmaxf(0.0f,wC*CYN_SAT)+_fmaxf(0.0f,wB*BLU_SAT)+_fmaxf(0.0f,wM*MAG_SAT);
 
+  const float PI=3.141592653589f, LN2=0.69314718056f;
+  float dHue=(PI/3.0f)*(wR*RED_HUE+wY*YEL_HUE+wG*GRN_HUE+wC*CYN_HUE+wB*BLU_HUE+wM*MAG_HUE);
+  float dSat=(wR*RED_SAT+wY*YEL_SAT+wG*GRN_SAT+wC*CYN_SAT+wB*BLU_SAT+wM*MAG_SAT);
+  float dVal=(wR*RED_VAL+wY*YEL_VAL+wG*GRN_VAL+wC*CYN_VAL+wB*BLU_VAL+wM*MAG_VAL);
 
-    // chroma gate: vanish at c=0 -> greys untouched
-    float sigma = _fmaxf(CHROMA_SIGMA, 1e-4f);
-    float chi   = 1.0f - _expf(-(c*c)/(sigma*sigma));
+  /* early identity */
+  if (_fabs(dHue)+_fabs(dSat)+_fabs(dVal) < cfg.UI_EPS){
+    float3 r = P;
+    if (CLAMP_OUT) r = clamp01(r);
+    return r;
+  }
 
+  /* neutral and base direction */
+  float3 N0=add3(BLK,muls(B.n,s*B.Lbw));
+  float ch=_cosf(h), sh=_sinf(h);
+  float3 dir0=add3(muls(B.u,ch),muls(B.v,sh));
 
-    // smooth response
-    float h2  = h + chi * dHue;
-    float c2  = c * _expf(chi * dSat * 0.69314718056f); // ln 2
+  /* smooth normalized chroma (alpha0) — low-β soft headroom */
+  float R0s=headroom_soft(N0,dir0,cfg.beta_lo);
+  float alpha0=(R0s>1e-8f)?_fminf(c/R0s,1.0f):0.0f;
 
-    // --- Value ---
-    
-    // sector-weighted raw UI 
-    float dVal_raw =  wR*RED_VAL + wY*YEL_VAL + wG*GRN_VAL + wC*CYN_VAL + wB*BLU_VAL + wM*MAG_VAL;
-    
-    // background scaling + soft-knee limiter 
-    const float VAL_RANGE  = 0.20f;  // target clean window on the axis (≈ ±20%)
-    const float VAL_SOFTK  = 0.80f;  // knee steepness
-    // softsign: x -> x / (1 + k*|x|)
-    float dVal_soft = dVal_raw / (1.0f + VAL_SOFTK * _fabs(dVal_raw));
-    float dVal      = VAL_RANGE * dVal_soft;
-    
-    // gentler onset near neutral - keeps greys untouched
-    const float VAL_CHI_EXP = 2.0f;  // 1→original; 2 calms near-grey; 3 even calmer
-    float chi_v = _powf(chi, VAL_CHI_EXP);
-    
-    // original value mapping, now safely bounded and neutral-friendly
-    float s2 = s + chi_v * dVal;
-    // soft limiter for s2 near [0,1], preserves midtone slope ~1
-    const float k = 0.02f; // knee width
-    float s2c = s2;
-    if (s2c < 0.0f) { s2c = -k * _logf(1.0f + (-s2c / k)); }
-    if (s2c > 1.0f) { s2c =  1.0f + k * _logf(1.0f + ((s2c - 1.0f) / k)); }
-    s2 = s2c;
-    
+  /* hue/sat engagement gate: blend of relative & absolute chroma + floor; fade from black */
+  float alpha_abs = c / (c + cfg.hue_gate_k);
+  float a_mix     = (1.0f - cfg.hue_gate_mix)*alpha0 + cfg.hue_gate_mix*alpha_abs;
+  float a_floor   = _fmaxf(a_mix, cfg.hue_gate_floor);
+  float chi       = _powf(a_floor, cfg.hue_gate_bias);
+  float chi_s     = smoothstep(cfg.low_luma_start, cfg.low_luma_end, s);  // 0→1 across low luma band
+  chi *= chi_s;
 
-    // reconstruct neutral and chroma vectors
-    float3 N  = add3(BLK, muls(B.n, s2 * B.Lbw));
-    float3 C  = add3( muls(B.u, c2 * _cosf(h2)), muls(B.v, c2 * _sinf(h2)) );
+  float h2=h+chi*dHue;
+  float ch2=_cosf(h2), sh2=_sinf(h2);
+  float3 dir=add3(muls(B.u,ch2),muls(B.v,sh2));
 
-    // safety: cap chroma so N + C stays in [0,1]^3(not sure I should be doing this)
-    float scale = safe_scale(N, C, CAP_MARGIN);
-    C = muls(C, scale);
+  /* Value weighted toward saturation */
+  float dVal_soft=dVal/(1.0f+0.8f*_fabs(dVal));
+  float g_val=_powf(alpha0,cfg.val_bias);
+  float s2=_fminf(_fmaxf(s + cfg.val_range*dVal_soft*g_val, 0.0f), 1.0f);
+  float3 N=add3(BLK,muls(B.n,s2*B.Lbw));
 
-    float3 out = add3(N, C);
+  /* desired radius purely from user saturation */
+  float sat_gain = _expf(chi * dSat * LN2); // 2^dSat
+  float c_des    = c * sat_gain;
 
-    if (CLAMP_OUT) out = clamp01(out);
-    return out;
+  /* regional cap */
+  float R_hard = headroom_hard(N, dir);
+  if (R_hard < 1e-6f){
+    float3 outN = add3(BLK, muls(B.n, s2 * B.Lbw));
+    if (CLAMP_OUT) outN = clamp01(outN);
+    return outN;
+  }
+
+  float overshoot = (c_des > R_hard) ? (c_des / _fmaxf(R_hard,1e-6f)) : 1.0f;
+  float beta_eff  = cfg.beta_hi_0 + cfg.beta_hi_1 * smoothstep(cfg.alpha_mid, 1.0f, overshoot);
+  float R_soft_hi = headroom_soft(N, dir, beta_eff);
+
+  float need_up = smoothstep(R_hard + cfg.cap_d0, R_hard + cfg.cap_d1, c_des);
+  float g_up    = _fminf(1.0f, sat_pos_local * need_up);
+
+  float soft_gap = _fmaxf(R_hard - R_soft_hi, 0.0f);
+  float R_cap    = _fmaxf(R_hard - g_up * soft_gap, 0.0f);
+
+  float kcap     = cfg.cap_knee * R_cap + 1e-6f;  // soft knee relative to room
+  float c_keep   = soft_min2(c_des, R_cap, kcap);
+
+  /* near black, softly prefer a geometrically “safe” radius */
+  float c_safe_des = c * (R_cap / _fmaxf(R0s, 1e-6f));
+  float c_safe     = soft_min2(c_safe_des, R_cap, kcap);
+  float w_dark     = 1.0f - smoothstep(cfg.low_luma_start, cfg.low_luma_end, s);
+  float c2         = (1.0f - w_dark) * c_keep + w_dark * c_safe;
+
+  float3 Cprime = muls(dir, c2);
+
+  /* neutral-axis luminance preservation */
+  float Y_in=dot3(P,B.n);
+  float YC=dot3(Cprime,B.n);
+  float Y_target=Y_in + (s2 - s)*B.Lbw;
+  float s_fix=(Y_target - YC)/B.Lbw;
+
+  if(s_fix<0.0f || s_fix>1.0f){
+    float s_clamp=_fminf(_fmaxf(s_fix,0.0f),1.0f);
+    float need=Y_target - s_clamp*B.Lbw;
+    float YCeps=_fabs(YC)+1e-8f;
+    float a=_fminf(1.0f,_fmaxf(0.0f,need/YCeps));
+    Cprime=muls(Cprime,a);
+    YC=dot3(Cprime,B.n);
+    s_fix=(Y_target - YC)/B.Lbw;
+  }
+
+  float3 N_out=add3(BLK,muls(B.n,s_fix*B.Lbw));
+  float3 out=add3(N_out,Cprime);
+
+  if (CLAMP_OUT) out=clamp01(out);
+  return out;
 }
-
