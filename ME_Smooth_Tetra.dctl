@@ -38,27 +38,27 @@ DEFINE_UI_PARAMS(CLAMP_OUT,      Clamp Output,   DCTLUI_CHECK_BOX, 1)
 /* ------------------------------------------------------------------------------------
    Secondary UI (tunables) 
 ------------------------------------------------------------------------------------ */
- //DEFINE_UI_PARAMS(HUE_GATE_BIAS,  Hue Gate Bias, DCTLUI_SLIDER_FLOAT, 1.9, 0.60, 2.00, 0.01)
- //DEFINE_UI_PARAMS(HUE_GATE_FLOOR, Hue Gate Floor, DCTLUI_SLIDER_FLOAT, 0.06, 0.00, 0.10, 0.001)
- //DEFINE_UI_PARAMS(HUE_GATE_MIX,   Hue Gate Mix, DCTLUI_SLIDER_FLOAT, 0.95, 0.00, 1.00, 0.01)
- //DEFINE_UI_PARAMS(HUE_GATE_K,     Hue Gate K, DCTLUI_SLIDER_FLOAT, 0.10, 0.001, 0.10, 0.001)
- //
- //DEFINE_UI_PARAMS(LOW_LUMA_START, Low Luma Start, DCTLUI_SLIDER_FLOAT, 0.081, 0.00, 0.10, 0.001)
- //DEFINE_UI_PARAMS(LOW_LUMA_END,   Low Luma End, DCTLUI_SLIDER_FLOAT, 0.12, 0.02, 0.25, 0.001)
- //
- //DEFINE_UI_PARAMS(BETA_LO,   Base Headroom β, DCTLUI_SLIDER_FLOAT, 6.00, 2.00, 12.0, 0.1)
- //DEFINE_UI_PARAMS(BETA_HI_0, Hi Cap β0, DCTLUI_SLIDER_FLOAT, 6.00, 2.00, 12.0, 0.1)
- //DEFINE_UI_PARAMS(BETA_HI_1, Hi Cap β1, DCTLUI_SLIDER_FLOAT, 16.0, 4.00, 32.0, 0.5)
- //DEFINE_UI_PARAMS(ALPHA_MID, Hi Cap α Mid, DCTLUI_SLIDER_FLOAT, 0.60, 0.20, 0.95, 0.01)
- //
- //DEFINE_UI_PARAMS(CAP_D0,    Cap Start Δα,  DCTLUI_SLIDER_FLOAT, 0.03, 0.00, 0.20, 0.001)
- //DEFINE_UI_PARAMS(CAP_D1,    Cap End Δα, DCTLUI_SLIDER_FLOAT, 0.10, 0.01, 0.40, 0.001)
- //DEFINE_UI_PARAMS(CAP_KNEE,  Cap Knee %, DCTLUI_SLIDER_FLOAT, 0.03, 0.005, 0.05, 0.001)
- //
- //DEFINE_UI_PARAMS(VAL_RANGE, Value Range, DCTLUI_SLIDER_FLOAT, 0.25, 0.00, 0.50, 0.005)
- //DEFINE_UI_PARAMS(VAL_BIAS,  Value Sat Bias, DCTLUI_SLIDER_FLOAT, 1.70, 0.80, 3.00, 0.01)
- //
- //DEFINE_UI_PARAMS(IDENT_EPS, Identity Epsilon, DCTLUI_SLIDER_FLOAT, 0.0001, 0.0, 0.0010, 0.00001)
+//DEFINE_UI_PARAMS(HUE_GATE_BIAS,  Hue Gate Bias, DCTLUI_SLIDER_FLOAT, .958, 0.60, 2.00, 0.01)
+//DEFINE_UI_PARAMS(HUE_GATE_FLOOR, Hue Gate Floor, DCTLUI_SLIDER_FLOAT, 0.06, 0.00, 0.10, 0.001)
+//DEFINE_UI_PARAMS(HUE_GATE_MIX,   Hue Gate Mix, DCTLUI_SLIDER_FLOAT, 0.775, 0.00, 1.00, 0.01)
+//DEFINE_UI_PARAMS(HUE_GATE_K,     Hue Gate K, DCTLUI_SLIDER_FLOAT, 0.031, 0.001, 0.10, 0.001)
+//
+//DEFINE_UI_PARAMS(LOW_LUMA_START, Low Luma Start, DCTLUI_SLIDER_FLOAT, 0.081, 0.00, 0.10, 0.001)
+//DEFINE_UI_PARAMS(LOW_LUMA_END,   Low Luma End, DCTLUI_SLIDER_FLOAT, 0.12, 0.02, 0.25, 0.001)
+//
+//DEFINE_UI_PARAMS(BETA_LO,   Base Headroom β, DCTLUI_SLIDER_FLOAT, 6.00, 2.00, 12.0, 0.1)
+//DEFINE_UI_PARAMS(BETA_HI_0, Hi Cap β0, DCTLUI_SLIDER_FLOAT, 6.00, 2.00, 12.0, 0.1)
+//DEFINE_UI_PARAMS(BETA_HI_1, Hi Cap β1, DCTLUI_SLIDER_FLOAT, 16.0, 4.00, 32.0, 0.5)
+//DEFINE_UI_PARAMS(ALPHA_MID, Hi Cap α Mid, DCTLUI_SLIDER_FLOAT, 0.60, 0.20, 0.95, 0.01)
+//
+//DEFINE_UI_PARAMS(CAP_D0,    Cap Start Δα,  DCTLUI_SLIDER_FLOAT, 0.03, 0.00, 0.20, 0.001)
+//DEFINE_UI_PARAMS(CAP_D1,    Cap End Δα, DCTLUI_SLIDER_FLOAT, 0.10, 0.01, 0.40, 0.001)
+//DEFINE_UI_PARAMS(CAP_KNEE,  Cap Knee %, DCTLUI_SLIDER_FLOAT, 0.03, 0.005, 0.05, 0.001)
+//
+//DEFINE_UI_PARAMS(VAL_RANGE, Value Range, DCTLUI_SLIDER_FLOAT, 0.25, 0.00, 0.50, 0.005)
+//DEFINE_UI_PARAMS(VAL_BIAS,  Value Sat Bias, DCTLUI_SLIDER_FLOAT, 1.70, 0.80, 3.00, 0.01)
+//
+//DEFINE_UI_PARAMS(IDENT_EPS, Identity Epsilon, DCTLUI_SLIDER_FLOAT, 0.0001, 0.0, 0.0010, 0.00001)
 
 /* ------------------------------------------------------------------------------------
    Helpers
@@ -173,30 +173,30 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
     Tunables cfg;
 
 
-    //cfg.hue_gate_bias  = HUE_GATE_BIAS;
-    //cfg.hue_gate_floor = HUE_GATE_FLOOR;
-    //cfg.hue_gate_mix   = HUE_GATE_MIX;
-    //cfg.hue_gate_k     = HUE_GATE_K;
-    //
-    //cfg.low_luma_start = LOW_LUMA_START;
-    //cfg.low_luma_end   = LOW_LUMA_END;
-    //
-    //cfg.beta_lo   = BETA_LO;
-    //cfg.beta_hi_0 = BETA_HI_0;
-    //cfg.beta_hi_1 = BETA_HI_1;
-    //cfg.alpha_mid = ALPHA_MID;
-    //
-    //cfg.cap_d0   = CAP_D0;
-    //cfg.cap_d1   = CAP_D1;
-    //cfg.cap_knee = CAP_KNEE;
-    //
-    //cfg.val_range = VAL_RANGE;
-    //cfg.val_bias  = VAL_BIAS;
-    //cfg.UI_EPS  = IDENT_EPS;
+   //cfg.hue_gate_bias  = HUE_GATE_BIAS;
+   //cfg.hue_gate_floor = HUE_GATE_FLOOR;
+   //cfg.hue_gate_mix   = HUE_GATE_MIX;
+   //cfg.hue_gate_k     = HUE_GATE_K;
+   //
+   //cfg.low_luma_start = LOW_LUMA_START;
+   //cfg.low_luma_end   = LOW_LUMA_END;
+   //
+   //cfg.beta_lo   = BETA_LO;
+   //cfg.beta_hi_0 = BETA_HI_0;
+   //cfg.beta_hi_1 = BETA_HI_1;
+   //cfg.alpha_mid = ALPHA_MID;
+   //
+   //cfg.cap_d0   = CAP_D0;
+   //cfg.cap_d1   = CAP_D1;
+   //cfg.cap_knee = CAP_KNEE;
+   //
+   //cfg.val_range = VAL_RANGE;
+   //cfg.val_bias  = VAL_BIAS;
+   //cfg.UI_EPS  = IDENT_EPS;
  // ---------------- Tunables (your defaults kept) ----------------
   
-  cfg.hue_gate_bias  = 1.9f;  cfg.hue_gate_floor = 0.06f;
-  cfg.hue_gate_mix   = 0.95f;  cfg.hue_gate_k     = 0.10f;
+  cfg.hue_gate_bias  = 0.958f;  cfg.hue_gate_floor = 0.06f;
+  cfg.hue_gate_mix   = 0.775f;  cfg.hue_gate_k     = 0.031f;
   cfg.low_luma_start = 0.081f; cfg.low_luma_end   = 0.12f;
   cfg.beta_lo        = 6.0f;   cfg.beta_hi_0      = 6.0f;
   cfg.beta_hi_1      = 16.0f;  cfg.alpha_mid      = 0.60f;
