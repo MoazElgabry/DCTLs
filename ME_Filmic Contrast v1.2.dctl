@@ -1,7 +1,51 @@
 #line 2
-//Flimic Contrast V1.2.1
-//written by Moaz Elgabry 
-// moazelgabry.com
+/*
+
+Flimic Contrast V1.2.3
+written by Moaz Elgabry 
+moazelgabry.com
+
+*/
+DEFINE_UI_PARAMS(P_exposure,  Exposure 🌞, DCTLUI_SLIDER_FLOAT, 0.0, -4, 4.0, 0.001)
+DEFINE_UI_PARAMS(contrast, Contrast 🌓 , DCTLUI_SLIDER_FLOAT, 0.0, -0.5, 1, 0.0001)
+DEFINE_UI_PARAMS(pivot, Relative Pivot 📌, DCTLUI_SLIDER_FLOAT, 0.0, -1, 1, 0.001)
+
+
+DEFINE_UI_PARAMS(p_white_point, ⚪ White Point  :⚪, DCTLUI_SLIDER_FLOAT, 1.015, 0.0, 1.018, 0.0001)
+DEFINE_UI_PARAMS(p_w_p_pivot, ├ Shoulder  ╭, DCTLUI_SLIDER_FLOAT, 0.6, 0.2, .997, 0.1)
+DEFINE_UI_PARAMS(p_shoulder_str,└ Fall off ╭   , DCTLUI_SLIDER_FLOAT, 6, 0.0, 9, 0.001)
+
+DEFINE_UI_PARAMS(p_black_point, ⚫ Black Point  :⚫, DCTLUI_SLIDER_FLOAT, 0.0001, 0.0001, .5, 0.0001)
+DEFINE_UI_PARAMS(p_b_p_pivot, ├ Toe     ⌣  , DCTLUI_SLIDER_FLOAT, 0.5, 0.0, 0.8, 0.001)
+DEFINE_UI_PARAMS(p_toe_str, └ Fall off   ⌣   , DCTLUI_SLIDER_FLOAT, 2.0, 0.0, 10.0, 0.001)
+
+
+DEFINE_UI_PARAMS(p_mix_contrast, Linear / Rolled: , DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 1.0, 0.01)
+DEFINE_UI_PARAMS(p_mix_sat, Preserve Color 🖍️, DCTLUI_SLIDER_FLOAT, .5, 0.0, 1.0, 0.01)
+DEFINE_UI_PARAMS(p_mix_pin, Pin Hi-LO Ends, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 1.0, 0.01)
+DEFINE_UI_PARAMS(p_popmid, Pop mids, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 3.5, 0.001)
+DEFINE_UI_PARAMS(p_flare, Flare, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
+//DEFINE_UI_PARAMS(p_hi, HI Thresh, DCTLUI_SLIDER_FLOAT, 1.5, -15.0, 15.0, 0.001)
+//DEFINE_UI_PARAMS(p_his, Hi feather, DCTLUI_SLIDER_FLOAT, 1.5, -15.0, 15.0, 0.001)
+//DEFINE_UI_PARAMS(p_lo, Low Threshold, DCTLUI_SLIDER_FLOAT, -3.3, -15.0, 15.0, 0.001)
+//DEFINE_UI_PARAMS(p_los, Low feather, DCTLUI_SLIDER_FLOAT, 4.5,-15.0, 20.0, 0.001)
+//DEFINE_UI_PARAMS(p_ohi, OG high Threshold, DCTLUI_SLIDER_FLOAT, 1.4,-15.0, 15.0, 0.001)
+//DEFINE_UI_PARAMS(p_ohis, OG high feather, DCTLUI_SLIDER_FLOAT, 2.3,-15.0, 15.0, 0.001)
+//DEFINE_UI_PARAMS(p_olo, OG lo Threshold , DCTLUI_SLIDER_FLOAT, 0.0,-15.0, 15.0, 0.001)
+//DEFINE_UI_PARAMS(p_olos, OG lo feather, DCTLUI_SLIDER_FLOAT, 0.0,-15.0, 15.0, 0.001)
+
+
+
+DEFINE_UI_PARAMS(bypass, 🚫 Bypass, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_PARAMS(opt_showcurve, 📈 Show Curve, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_PARAMS(opt_ramp, 📏 Show Ramp, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_PARAMS(opt_ramp_scope, =Wide aspect overlays =, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_PARAMS(exp_toggle, Tone-mapped exposure, DCTLUI_CHECK_BOX, 0)
+
+DEFINE_UI_PARAMS(preservemidgray_toggle, Preserve Mid-gray, DCTLUI_CHECK_BOX, 1)
+DEFINE_UI_PARAMS(alpha_toggle, Show Pin Range, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_PARAMS(p_transfer_f, Transfer function, DCTLUI_COMBO_BOX, 2, {logc3, logc4, di, aces_cct, log3g10, slog3, bmd_f5, clog3, dlog, fLog, fLog2, vlog, g22, g24, g26, linear}, {ARRI LogC3, ARRI LogC4,  DaVinci Intermediate, ACEScct, RED Log3G10, Sony S-Log3, BMD Film Gen 5, Canon Log 3, DJI D-Log, FujiFilm F-Log, FujiFilm F-Log2, Panasonic V-Log, Gamma 2.2, Gamma 2.4, Gamma 2.6, Linear})
+
 
 
 //functions for Transfer function conversion
@@ -605,6 +649,22 @@
  __DEVICE__ float3 powf3(float3 base, float exp) {
      return make_float3(powerf(base.x, exp), powerf(base.y, exp), powerf(base.z, exp));
      }
+__DEVICE__ float remapAsymSigned(float u, float negMin, float posMax) {
+    // u        : UI slider in [-1..1]
+    // negMin   : negative extreme (eg -0.10)
+    // posMax   : positive extreme (eg  0.15)
+
+    u = _clampf(u, -1.0f, 1.0f);
+
+    // Concise signed easing:
+    //  - square for gentle mid response
+    //  - restore sign
+    float s = u * _fabs(u);
+
+    // Single-line asymmetric scale
+    return (s < 0.0f) ? s * -negMin : s * posMax;
+   }
+
      
 
 //functions to apply transfer function conversions
@@ -878,7 +938,23 @@
     x = _clampf(x, 0.0f, 1.0f);
     return 3.0f * powerf(x, 2.0f) - 2.0f * powerf(x, 3.0f);}
 
-
+    __DEVICE__ float saturate1(float x) { return _clampf(x, 0.0f, 1.0f); }
+    
+    // “minimal at half” shaping. x in [0..1].
+    __DEVICE__ float gentleRamp(float x) {
+        x = saturate1(x);
+        // smootherstep then a power gives a very soft onset
+        x = smootherstep(x);
+        return x * x * x;  // x^3
+    }
+    
+    // Soft union combine. Avoids double counting.
+    __DEVICE__ float softUnion(float a, float b) {
+        a = saturate1(a);
+        b = saturate1(b);
+        return 1.0f - (1.0f - a) * (1.0f - b);
+    }
+    
       typedef struct {
           float HiThreshold, HiFeather, LoThreshold, LoFeather, TF;
           int   X, Y, height;
@@ -898,54 +974,50 @@
     return mixFloat3(matte, checker, in);
    }
 
+   __DEVICE__ float HiLoMaskValue(float3 metricRGB, params_t P)
+   {
+    float3 mid_grey_f3 = LinToGamma(make_float3(0.18f), (int)P.TF);
+    float mid_grey = mid_grey_f3.x;
+
+    float Lo_min = mid_grey * _exp2f(P.LoThreshold - 0.5f * P.LoFeather);
+    float Lo_max = mid_grey * _exp2f(P.LoThreshold + 0.5f * P.LoFeather);
+    float Hi_min = mid_grey * _exp2f(P.HiThreshold - 0.5f * P.HiFeather);
+    float Hi_max = mid_grey * _exp2f(P.HiThreshold + 0.5f * P.HiFeather);
+
+    float m = _fmaxf(_fmaxf(metricRGB.x, metricRGB.y), metricRGB.z);
+    float mlog = _log2f(_fmaxf(m, 1e-10f));
+
+    float Lo_min_log = _log2f(Lo_min), Lo_max_log = _log2f(Lo_max);
+    float Hi_min_log = _log2f(Hi_min), Hi_max_log = _log2f(Hi_max);
+
+    float shadow_mask;
+    if (m < Lo_min) shadow_mask = 1.0f;
+    else if (m > Lo_max) shadow_mask = 0.0f;
+    else {
+        float t = (mlog - Lo_min_log) / _fmaxf(Lo_max_log - Lo_min_log, 1e-6f);
+        shadow_mask = 1.0f - smootherstep(t);
+    }
+
+    float highlight_mask_base;
+    if (m < Hi_min) highlight_mask_base = 1.0f;
+    else if (m > Hi_max) highlight_mask_base = 0.0f;
+    else {
+        float t = (mlog - Hi_min_log) / _fmaxf(Hi_max_log - Hi_min_log, 1e-6f);
+        highlight_mask_base = 1.0f - smootherstep(t);
+    }
+
+    float highlight_mask = 1.0f - highlight_mask_base;
+    return _saturatef(shadow_mask + highlight_mask);
+   }
+   
    __DEVICE__ float3 HiLoLumaMask (
     float3 in,          // processed image
     float3 base,        // original image (for pinning ends from)
     float  factor,      // p_mix_pin
     params_t P          // thresholds, TF, coords, alpha, height
      ) {
-    // Mid-gray in display TF
-    float3 mid_grey_f3 = LinToGamma(make_float3(0.18f, 0.18f, 0.18f), (int)P.TF);
-    float  mid_grey    = mid_grey_f3.x;
-
-    // Thresholds in display TF (log-domain feather)
-    float Lo_min = mid_grey * _exp2f(P.LoThreshold - 0.5f * P.LoFeather);
-    float Lo_max = mid_grey * _exp2f(P.LoThreshold + 0.5f * P.LoFeather);
-    float Hi_min = mid_grey * _exp2f(P.HiThreshold - 0.5f * P.HiFeather);
-    float Hi_max = mid_grey * _exp2f(P.HiThreshold + 0.5f * P.HiFeather);
-
-    // Metric (max channel) in display TF
-    float  input_metric     = _fmaxf(_fmaxf(base.x, base.y), base.z);
-    float  input_metric_log = _log2f(_fmaxf(input_metric, 1e-10f));
-    float  Hi_min_log = _log2f(Hi_min), Hi_max_log = _log2f(Hi_max);
-    float  Lo_min_log = _log2f(Lo_min), Lo_max_log = _log2f(Lo_max);
-
-    // Shadows: 1 below Lo_min → 0 above Lo_max
-    float shadow_mask;
-    if (input_metric < Lo_min)           shadow_mask = 1.0f;
-    else if (input_metric > Lo_max)      shadow_mask = 0.0f;
-    else {
-        float denomLo = _fmaxf(Lo_max_log - Lo_min_log, 1e-6f);
-         float tLo     = (input_metric_log - Lo_min_log) / denomLo;
-         shadow_mask   = 1.0f - smootherstep(tLo);
-
-    }
-
-    // Highlights base: 1 below Hi_min → 0 above Hi_max, then invert to be 1 in highlights
-    float highlight_mask_base;
-    if (input_metric < Hi_min)           highlight_mask_base = 1.0f;
-    else if (input_metric > Hi_max)      highlight_mask_base = 0.0f;
-    else {
-        float denomHi        = _fmaxf(Hi_max_log - Hi_min_log, 1e-6f);
-        float tHi            = (input_metric_log - Hi_min_log) / denomHi;
-        // scalar smooth mix 1→0
-        highlight_mask_base = 1.0f - smootherstep(tHi);
-    }
-    float highlight_mask = 1.0f - highlight_mask_base; // 1 in highlights
-
-    // Final mask: 1 = pinned (shadows OR highlights), 0 = unpinned (midtones)
-    float HiLo_mask = _saturatef(shadow_mask + highlight_mask);
-
+    
+    float HiLo_mask = HiLoMaskValue(base, P);
     // 1) Pin the ends: blend base→in by HiLo_mask
     float3 pinends = mixFloat3(HiLo_mask, in, base);
 
@@ -986,39 +1058,6 @@
 
 
 
-
-DEFINE_UI_PARAMS(P_exposure,  Exposure 🌞, DCTLUI_SLIDER_FLOAT, 0.0, -4, 4.0, 0.001)
-DEFINE_UI_PARAMS(contrast, Contrast 🌓 , DCTLUI_SLIDER_FLOAT, 0.0, -0.5, 1, 0.0001)
-DEFINE_UI_PARAMS(pivot, Relative Pivot 📌, DCTLUI_SLIDER_FLOAT, 0.0, -1, 1, 0.001)
-
-
-DEFINE_UI_PARAMS(p_white_point, ⚪ White Point  :⚪, DCTLUI_SLIDER_FLOAT, 1.015, 0.0, 1.018, 0.0001)
-DEFINE_UI_PARAMS(p_w_p_pivot, ├ Shoulder  ╭, DCTLUI_SLIDER_FLOAT, 0.6, 0.2, .997, 0.1)
-DEFINE_UI_PARAMS(p_shoulder_str,└ Fall off ╭   , DCTLUI_SLIDER_FLOAT, 6, 0.0, 9, 0.001)
-
-DEFINE_UI_PARAMS(p_black_point, ⚫ Black Point  :⚫, DCTLUI_SLIDER_FLOAT, 0.0001, 0.0001, .5, 0.0001)
-DEFINE_UI_PARAMS(p_b_p_pivot, ├ Toe     ⌣  , DCTLUI_SLIDER_FLOAT, 0.5, 0.0, 0.8, 0.001)
-DEFINE_UI_PARAMS(p_toe_str, └ Fall off   ⌣   , DCTLUI_SLIDER_FLOAT, 2.0, 0.0, 10.0, 0.001)
-
-
-DEFINE_UI_PARAMS(p_mix_contrast, Linear / S curve: , DCTLUI_SLIDER_FLOAT, 1.0, 0.0, 1.0, 0.01)
-DEFINE_UI_PARAMS(p_mix_sat, Preserve Color 🖍️, DCTLUI_SLIDER_FLOAT, .5, 0.0, 1.0, 0.01)
-DEFINE_UI_PARAMS(p_mix_pin, Pin Hi-LO Ends, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 1.0, 0.01)
-
-
-DEFINE_UI_PARAMS(bypass, 🚫 Bypass, DCTLUI_CHECK_BOX, 0)
-DEFINE_UI_PARAMS(opt_showcurve, 📈 Show Curve, DCTLUI_CHECK_BOX, 0)
-DEFINE_UI_PARAMS(opt_ramp, 📏 Show Ramp, DCTLUI_CHECK_BOX, 0)
-DEFINE_UI_PARAMS(opt_ramp_scope, =Wide aspect overlays =, DCTLUI_CHECK_BOX, 0)
-DEFINE_UI_PARAMS(exp_toggle, Tone-mapped exposure, DCTLUI_CHECK_BOX, 0)
-
-DEFINE_UI_PARAMS(preservemidgray_toggle, Preserve Mid-gray, DCTLUI_CHECK_BOX, 1)
-DEFINE_UI_PARAMS(alpha_toggle, Show Pin Range, DCTLUI_CHECK_BOX, 0)
-DEFINE_UI_PARAMS(p_transfer_f, Transfer function, DCTLUI_COMBO_BOX, 2, {logc3, logc4, di, aces_cct, log3g10, slog3, bmd_f5, clog3, dlog, fLog, fLog2, vlog, g22, g24, g26, linear}, {ARRI LogC3, ARRI LogC4,  DaVinci Intermediate, ACEScct, RED Log3G10, Sony S-Log3, BMD Film Gen 5, Canon Log 3, DJI D-Log, FujiFilm F-Log, FujiFilm F-Log2, Panasonic V-Log, Gamma 2.2, Gamma 2.4, Gamma 2.6, Linear})
-
-
-
-
 __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p_R, float p_G, float p_B) {
 
     const float3 clean = make_float3(p_R, p_G, p_B);
@@ -1026,12 +1065,42 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
     pivot = set_pivot(pivot, p_transfer_f);
     float3 out;
 
+      // --- Adaptive shadow/Highlight feathering ---
+      // Base 
+      const float LoFeather_base = 7.5f;
+      const float HiFeather_base     = 2.5f;
+      
+      // How much extra feather you are willing to add at “max influence”
+      // Units are the same as your LoFeather (stops in log2 domain width)
+      const float HiFeather_extraMax = 1.5f;   // typically 1.5–3.0 is sensible
+      const float LoFeather_extraMax = 4.0f;  // tweak: 3..8 is a sensible range
+      
+      // Pin influence: only ramps up near the top end
+      float pinN = gentleRamp(p_mix_pin);   // 0..1, very small around 0.5
+      
+      // Contrast influence respects asymmetric slider range [-0.5 .. 1.0]
+      float cN;
+      if (contrast >= 0.0f)  cN = contrast / 1.0f;
+      else                   cN = (-contrast) / 0.5f;
+      cN = gentleRamp(cN);   // 0..1, very small around mid travel
+      
+      // Combine without “double increase”
+      float featherDrive = softUnion(pinN, cN);
+      // Highlights respond a bit later and less aggressively
+      float hiDrive = featherDrive * featherDrive; // square tightens response
+
+
     // Build the shared params 
       params_t pmask;
       pmask.HiThreshold = 0.8f;
-      pmask.HiFeather   = 2.5f;
-      pmask.LoThreshold = -3.0f;
-      pmask.LoFeather   = 7.5f;
+      pmask.HiFeather = _clampf(
+                                 HiFeather_base + HiFeather_extraMax * hiDrive,
+                                 HiFeather_base,
+                                 HiFeather_base + HiFeather_extraMax);
+      pmask.LoThreshold = -3.0f;      
+      pmask.LoFeather = _clampf(LoFeather_base + LoFeather_extraMax * featherDrive,
+                                LoFeather_base,
+                                LoFeather_base + LoFeather_extraMax);
       pmask.TF          = (float)p_transfer_f;
       pmask.X           = p_X;
       pmask.Y           = p_Y;        
@@ -1111,9 +1180,9 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
      float3 scopeY = LinToGamma(make_float3(.9f,.9f,.9f), p_transfer_f);
 
 
-        float overlayR = ramp.x >= (Y - 5.0f) / height && ramp.x <= (Y + 5.0f) / height ? scopeY.x : 0.0f;
-        float overlayG = ramp.y >= (Y - 5.0f) / height && ramp.y <= (Y + 5.0f) / height ? scopeY.y : 0.0f;
-        float overlayB = ramp.z >= (Y - 5.0f) / height && ramp.z <= (Y + 5.0f) / height ? scopeY.z : 0.0f;
+        float overlayR = ramp.x >= (Y - 3.0f) / height && ramp.x <= (Y + 3.0f) / height ? scopeY.x : 0.0f;
+        float overlayG = ramp.y >= (Y - 3.0f) / height && ramp.y <= (Y + 3.0f) / height ? scopeY.y : 0.0f;
+        float overlayB = ramp.z >= (Y - 3.0f) / height && ramp.z <= (Y + 3.0f) / height ? scopeY.z : 0.0f;
         out.x = overlayR == 0.0f ? out.x : overlayR;
         out.y = overlayG == 0.0f ? out.y : overlayG;
         out.z = overlayB == 0.0f ? out.z : overlayB;
@@ -1133,25 +1202,6 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
 
                          }  
 
-                      //if (rX < p_w_p_pivot+0.001f && rX > p_w_p_pivot- 0.001f && rY > 0.0f && rY< 1.1f) {
-                      //float3 scopeR = LinToGamma(make_float3(.8f,.8f,.8f), p_transfer_f);
-                      //float3 scopeG = LinToGamma(make_float3(.1f,.1f,.1f), p_transfer_f);
-                      //float3 scopeB = LinToGamma(make_float3(.01f,.01f,.01f), p_transfer_f);
-                      //
-                      //out.x = scopeR.x;
-                      //out.y = scopeG.x;
-                      //out.z = scopeB.x;
-                      //    }
-    
-                      //if (rX < p_b_p_pivot+0.001f && rX > p_b_p_pivot- 0.001f && rY > 0.0f && rY< 1.1f) {
-                      //float3 scopeR = LinToGamma(make_float3(.01f,.01f,.01f), p_transfer_f);
-                      //float3 scopeG = LinToGamma(make_float3(.3f,.3f,.3f), p_transfer_f);
-                      //float3 scopeB = LinToGamma(make_float3(.7f,.7f,.7f), p_transfer_f);
-
-                      //out.x = scopeR.x;
-                      //out.y = scopeG.x;
-                      //out.z = scopeB.x;
-                      //}
 
                     } 
                     //wide aspect mode off
@@ -1166,26 +1216,6 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
                         out.y = scopeG.x;
                         out.z = scopeB.x;
                          }   
-
-                  //if (rX < p_w_p_pivot+0.001f && rX > p_w_p_pivot- 0.001f) {
-                  //    float3 scopeR = LinToGamma(make_float3(.8f,.8f,.8f), p_transfer_f);
-                  //    float3 scopeG = LinToGamma(make_float3(.1f,.1f,.1f), p_transfer_f);
-                  //    float3 scopeB = LinToGamma(make_float3(.01f,.01f,.01f), p_transfer_f);
-
-                  //    out.x = scopeR.x;
-                  //    out.y = scopeG.x;
-                  //    out.z = scopeB.x;
-                  //     }
-
-                  //if (rX < p_b_p_pivot+0.001f && rX > p_b_p_pivot- 0.001f) {
-                  //    float3 scopeR = LinToGamma(make_float3(.01f,.01f,.01f), p_transfer_f);
-                  //    float3 scopeG = LinToGamma(make_float3(.3f,.3f,.3f), p_transfer_f);
-                  //    float3 scopeB = LinToGamma(make_float3(.7f,.7f,.7f), p_transfer_f);
-
-                  //    out.x = scopeR.x;
-                  //    out.y = scopeG.x;
-                  //    out.z = scopeB.x;
-                  //    }
                     
                 }
       }
@@ -1210,14 +1240,17 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
     ramp = LinToGamma(ramp, p_transfer_f);
          }     
 
+
+
+
 //apply compression to the white and black points
      in_RGB = apply_white_point(in_RGB, p_white_point, p_w_p_pivot, p_shoulder_str);
      ramp = apply_white_point(ramp, p_white_point, p_w_p_pivot, p_shoulder_str);
 
      in_RGB = apply_black_point(in_RGB, p_black_point, p_b_p_pivot, p_toe_str);           
      ramp = apply_black_point(ramp, p_black_point, p_b_p_pivot, p_toe_str);
-     const float3 in_toned = in_RGB;
-     const float3 ramp_toned = ramp;
+      float3 in_toned = in_RGB;
+      float3 ramp_toned = ramp;
 
 
 //apply contrast operations
@@ -1239,6 +1272,40 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
      ramp = _mix(ramp_linear, ramp_rolling, p_mix_contrast);
 
 
+//pop-mids slider to control exposure of areas in the image outside of the pinning mask to perceptually pop the mid tones while maintaining exposure
+
+// Big bite: away from mid-grey
+params_t pmask_big = pmask;
+
+pmask_big.HiThreshold = 1.04f;   // start affecting a few stops above mid
+pmask_big.HiFeather = 1.85f;   // start affecting a few stops above mid
+pmask_big.LoThreshold += 1.61f;   // start affecting a few stops above mid
+pmask_big.LoFeather += -4.4f;   // start affecting a few stops above mid
+
+// Small bite: extreme ends only
+params_t pmask_small = pmask;
+pmask_small.HiThreshold = 1.02f; // ceiling
+pmask_small.HiFeather   = 1.51f;
+pmask_small.LoThreshold = -2.9f;
+pmask_small.LoFeather   = 4.5f;
+
+
+// Evaluate the SAME function twice
+float bigMask   = HiLoMaskValue(clean, pmask_big);
+float smallMask = HiLoMaskValue(clean, pmask_small);
+float bandMask = saturate1(bigMask - smallMask);
+float ramp_bigMask   = HiLoMaskValue(clean_ramp, pmask_big);
+float ramp_smallMask = HiLoMaskValue(clean_ramp, pmask_small);
+float ramp_bandMask = saturate1(ramp_bigMask - ramp_smallMask);
+
+
+   
+   float3 pop     = LinToGamma(GammaToLin(in_RGB, p_transfer_f) * powerf(2.0f, -p_popmid), p_transfer_f);
+   float3 popramp = LinToGamma(GammaToLin(ramp,   p_transfer_f) * powerf(2.0f, -p_popmid), p_transfer_f);
+
+
+ in_RGB = mixFloat3(bandMask, in_RGB, pop);
+ ramp = mixFloat3(ramp_bandMask, ramp, popramp);
 
 // exposure slider that works in linear
    if (exp_toggle == 0) {
@@ -1260,6 +1327,11 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
 
 out  = HiLoLumaMask(in_RGB, clean,      p_mix_pin, pmask);
 ramp = HiLoLumaMask(ramp,   clean_ramp, p_mix_pin, pmask);
+
+// Flare control through linear offset
+p_flare = remapAsymSigned(p_flare, -0.01f, 0.01f);
+out = LinToGamma( GammaToLin(out, p_transfer_f)+p_flare, p_transfer_f);
+ramp = LinToGamma( GammaToLin(ramp, p_transfer_f)+p_flare, p_transfer_f);
     
 //hide curve overlay when showing the pinned range
  float opt_mem = opt_showcurve;
