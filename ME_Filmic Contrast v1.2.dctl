@@ -976,7 +976,7 @@ __DEVICE__ float remapAsymSigned(float u, float negMin, float posMax) {
 
    __DEVICE__ float HiLoMaskValue(float3 metricRGB, params_t P)
    {
-    float3 mid_grey_f3 = LinToGamma(make_float3(0.18f), (int)P.TF);
+    float3 mid_grey_f3 = LinToGamma(make_float3(0.18f, 0.18f, 0.18f), (int)P.TF);
     float mid_grey = mid_grey_f3.x;
 
     float Lo_min = mid_grey * _exp2f(P.LoThreshold - 0.5f * P.LoFeather);
