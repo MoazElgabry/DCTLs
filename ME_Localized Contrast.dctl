@@ -1,0 +1,634 @@
+#line 2
+/*
+
+ME Localized S-Curve DWG v1.0
+by Moaz Elgabry
+moazelgabry.com
+
+Localized, smooth, range-limited contrast shaping.
+
+*/
+
+
+
+DEFINE_UI_PARAMS(p_amount, Amount, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
+DEFINE_UI_PARAMS(p_region, Region, DCTLUI_COMBO_BOX, 1, {shadows, mids, highlights, custom}, {Shadows, Midtones, Highlights, Custom})
+DEFINE_UI_PARAMS(p_center_shift, Center Shift, DCTLUI_SLIDER_FLOAT, 0.0, -0.5, 0.5, 0.001)
+DEFINE_UI_PARAMS(p_width, Range Width, DCTLUI_SLIDER_FLOAT, 0.35, 0.05, 1.0, 0.001)
+DEFINE_UI_PARAMS(p_mix, Mix, DCTLUI_SLIDER_FLOAT, 1.0, 0.0, 1.0, 0.001)
+DEFINE_UI_PARAMS(p_input_space, Input Space, DCTLUI_COMBO_BOX, 0, {DI, Linear, ACEScct}, {DaVinci Intermediate, Linear, ACEScct})
+DEFINE_UI_PARAMS(p_bypass, Bypass, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_PARAMS(p_luma_mix, Luma Mix, DCTLUI_SLIDER_FLOAT, 0.5, 0.0, 1.0, 0.001)
+DEFINE_UI_PARAMS(p_guide, Guide, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_PARAMS(p_curve, Curve Overlay, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_PARAMS(p_safe_range, Safe Range, DCTLUI_CHECK_BOX, 1)
+
+__DEVICE__ float saturatef(float x) {
+    return _fminf(_fmaxf(x, 0.0f), 1.0f);
+}
+
+__DEVICE__ float smootherstep01(float x) {
+    x = saturatef(x);
+    return x * x * x * (x * (x * 6.0f - 15.0f) + 10.0f);
+}
+
+__DEVICE__ float di_to_linear(float t) {
+    const float a = 0.0075f;
+    const float b = 7.0f;
+    const float c = 0.07329248f;
+    const float m = 10.44426855f;
+    const float log_cut = 0.02740668f;
+
+    return (t > log_cut) ? _exp2f((t / c) - b) - a : t / m;
+}
+
+__DEVICE__ float linear_to_di(float x) {
+    const float a = 0.0075f;
+    const float b = 7.0f;
+    const float c = 0.07329248f;
+    const float m = 10.44426855f;
+    const float lin_cut = 0.00262409f;
+
+    x = _fmaxf(x, 0.0f);
+    return (x > lin_cut) ? (_log2f(x + a) + b) * c : x * m;
+}
+
+// ACEScct OETF / inverse OETF (ACEScct <-> linear)
+__DEVICE__ float acescct_to_linear(float x) {
+    const float cut2 = 0.155251141552511f;
+    const float A = 10.5402377416545f;
+    const float B = 0.0729055341958355f;
+    const float C = 9.72f;
+    const float D = 17.52f;
+
+    return (x <= cut2) ? (x - B) / A : _exp2f(x * D - C);
+}
+
+__DEVICE__ float linear_to_acescct(float x) {
+    const float cut1 = 0.0078125f;
+    const float A = 10.5402377416545f;
+    const float B = 0.0729055341958355f;
+    const float C = 9.72f;
+    const float D = 17.52f;
+
+    x = _fmaxf(x, 0.0f);
+    return (x <= cut1) ? A * x + B : (_log2f(x) + C) / D;
+}
+
+__DEVICE__ float3 di_to_linear3(float3 in) {
+    return make_float3(di_to_linear(in.x), di_to_linear(in.y), di_to_linear(in.z));
+}
+
+__DEVICE__ float3 linear_to_di3(float3 in) {
+    return make_float3(linear_to_di(in.x), linear_to_di(in.y), linear_to_di(in.z));
+}
+
+// ============================================================================
+// Stop-based tonal range definitions
+// ============================================================================
+
+// ColorSpace: Defines midgray for a specific input space.
+// Extend later by adding new space IDs and mappings. Midgray is defined in linear light.
+struct ColorSpace {
+    int space_id;
+    float midgray_lin;  // Midgray in linear light
+};
+
+// TonaRegion: Defines a tonal range in stops relative to midgray
+struct TonaRegion {
+    float center_stops;   // Center position in stops from midgray
+    float width_stops;    // Total width in stops
+};
+
+// Space IDs for encode->linear mapping. ++Add new ones here.
+#define SPACE_DI 0
+#define SPACE_LINEAR 1
+#define SPACE_ACEScct 2
+
+// Custom mode center range in stops from midgray (both directions).
+// Increase to allow the custom center to reach deeper shadows/highlights.
+__CONSTANT__ float k_custom_center_range_stops = 11.0f;
+
+// Range expansion with amount (code-level tuning).
+// Small pushes expand little; heavy pushes expand more.
+__CONSTANT__ float k_range_expand = 0.6f;
+__CONSTANT__ float k_range_expand_power = 2.0f;
+
+// Amount sensitivity by tonal group (shadows/highlights are more constrained).
+__CONSTANT__ float k_amount_scale_mid = 1.0f;
+__CONSTANT__ float k_amount_scale_sh = 0.6f;
+// Deep shadow/highlight taper (smoothly approaches this in extremes).
+__CONSTANT__ float k_amount_scale_extreme = 0.2f;
+
+// Convert a code value to linear for the selected input space
+__DEVICE__ float code_to_linear_space(float code, int space_id) {
+    if (space_id == SPACE_DI) {
+        return di_to_linear(code);
+    }
+    if (space_id == SPACE_ACEScct) {
+        return acescct_to_linear(code);
+    }
+    // SPACE_LINEAR
+    return code;
+}
+
+// Convert linear to code for the selected input space
+__DEVICE__ float linear_to_code_space(float lin, int space_id) {
+    if (space_id == SPACE_DI) {
+        return linear_to_di(lin);
+    }
+    if (space_id == SPACE_ACEScct) {
+        return linear_to_acescct(lin);
+    }
+    // SPACE_LINEAR
+    return lin;
+}
+
+// Get ColorSpace definition based on input space
+__DEVICE__ ColorSpace get_color_space(int input_space) {
+    ColorSpace cs;
+    cs.space_id = input_space == SPACE_DI ? SPACE_DI : (input_space == SPACE_ACEScct ? SPACE_ACEScct : SPACE_LINEAR);
+    cs.midgray_lin = 0.18f;  // Standard midgray in linear light
+    return cs;
+}
+
+// Convert stops relative to midgray into DI code value
+// stops: positive = brighter, negative = darker
+__DEVICE__ float stops_to_di_code(float stops, ColorSpace cs) {
+    float target_lin = cs.midgray_lin * _powf(2.0f, stops);
+    float target_code = linear_to_code_space(target_lin, cs.space_id);
+    return linear_to_di(code_to_linear_space(target_code, cs.space_id));
+}
+
+// Get tonal region definition by index
+// Ranges chosen to naturally divide the tonal spectrum with reasonable defaults
+__DEVICE__ TonaRegion get_tonal_region(int region) {
+    TonaRegion tr;
+    
+    if (region == 0) {
+        // Shadows: -3 to -1 stops from midgray
+        tr.center_stops = -3.0f;
+        tr.width_stops = 6.0f;
+    }
+    else if (region == 1) {
+        // Midtones: -0.5 to +1.5 stops from midgray (as specified)
+        tr.center_stops = 0.0f;
+        tr.width_stops = 10.0f;
+    }
+    else if (region == 2) {
+        // Highlights: +1 to +3 stops from midgray
+        tr.center_stops = 2.0f;
+        tr.width_stops = 6.0f;
+    }
+    else {
+        // Custom: center at midgray, 2-stop width
+        tr.center_stops = 0.5f;
+        tr.width_stops = 6.0f;
+    }
+    
+    return tr;
+}
+
+// Remap center shift so full slider travel maps to a constrained stop range,
+// while keeping center_shift = 0 at the region's nominal center.
+__DEVICE__ float remap_center_stops(int region, float center_shift) {
+    TonaRegion tr = get_tonal_region(region);
+    float base = tr.center_stops;
+    float range = tr.width_stops * 4.0f;
+
+    if (region == 2) {
+        // Highlights: constrain to [0, base + 0.5*range].
+        float max_s = base + 0.5f * range;
+        float min_s = 0.0f;
+        if (center_shift >= 0.0f) {
+            float t = center_shift / 0.5f;
+            return base + t * (max_s - base);
+        }
+        float t = center_shift / 0.5f;
+        return base + t * (base - min_s);
+    }
+    if (region == 0) {
+        // Shadows: constrain to [base - 0.5*range, 0 stop].
+        float min_s = base - 0.5f * range;
+        float max_s = 0.0f;
+        if (center_shift >= 0.0f) {
+            float t = center_shift / 0.5f;
+            return base + t * (max_s - base);
+        }
+        float t = center_shift / 0.5f;
+        return base + t * (base - min_s);
+    }
+
+    return base + center_shift * range;
+}
+
+// Calculate center in DI code from region selection and user adjustments
+__DEVICE__ float default_center_from_region(int region, float center_shift, int input_space) {
+    ColorSpace cs = get_color_space(input_space);
+    TonaRegion tr = get_tonal_region(region);
+
+    // Convert region's center stops to DI code value.
+    // Center Shift is scaled to cover the full region width in stops.
+    float center_stops = remap_center_stops(region, center_shift);
+    if (region == 3) {
+        center_stops = center_shift * k_custom_center_range_stops * 2.0f;
+    }
+    return stops_to_di_code(center_stops, cs);
+}
+
+// Calculate region width in DI code from stop-based definition
+__DEVICE__ float default_width_from_region(int region, int input_space, float user_width) {
+    if (region == 3) {
+        return user_width;
+    }
+
+    ColorSpace cs = get_color_space(input_space);
+    TonaRegion tr = get_tonal_region(region);
+
+    float half = 0.5f * tr.width_stops;
+    float low_code = stops_to_di_code(tr.center_stops - half, cs);
+    float high_code = stops_to_di_code(tr.center_stops + half, cs);
+    return _fmaxf(0.001f, high_code - low_code);
+}
+
+// Center in stops for tone-group logic and custom mode behavior.
+__DEVICE__ float center_stops_from_region(int region, float center_shift) {
+    TonaRegion tr = get_tonal_region(region);
+    float center_stops = remap_center_stops(region, center_shift);
+    if (region == 3) {
+        center_stops = center_shift * k_custom_center_range_stops * 2.0f;
+    }
+    return center_stops;
+}
+
+// Compute center position in stops from midgray using DI code center.
+__DEVICE__ float center_stops_from_center_di(float center_di, int input_space) {
+    ColorSpace cs = get_color_space(input_space);
+    float center_lin = di_to_linear(center_di);
+    return _log2f(_fmaxf(center_lin, 1e-6f) / _fmaxf(cs.midgray_lin, 1e-6f));
+}
+
+// Amount scaling by tonal group. Shadows/highlights are more constrained.
+__DEVICE__ float amount_scale_for_center(float center_stops, int safe_range) {
+    float abs_c = _fabs(center_stops);
+    if (abs_c <= 0.5f) {
+        return k_amount_scale_mid;
+    }
+    // Smoothly ramp down to shadow/highlight scale.
+    float t = _fminf((abs_c - 0.75f) / 1.25f, 1.0f);
+    t = smootherstep01(t);
+    float base = k_amount_scale_mid + (k_amount_scale_sh - k_amount_scale_mid) * t;
+    // Additional smooth taper into deep extremes (starts after ~2.0 stops).
+    float t2 = _fminf(_fmaxf((abs_c - 2.0f) / 4.0f, 0.0f), 1.0f);
+    t2 = smootherstep01(t2);
+    float scale = base + (k_amount_scale_extreme - base) * t2;
+    // Safe range: don't diminish more than the safe-range scaling.
+    float min_scale = safe_range ? 0.2f : 0.0f;
+    return _fmaxf(scale, min_scale);
+}
+
+// Range expansion as amount increases (gradual, exponential-like).
+__DEVICE__ float expand_width_by_amount(float width, float amount) {
+    float a = _fabs(amount);
+    float e = _expf(k_range_expand_power * a);
+    float denom = _expf(k_range_expand_power) - 1.0f;
+    float w = 1.0f + k_range_expand * (e - 1.0f) / _fmaxf(denom, 1e-6f);
+    return width * w;
+}
+
+__DEVICE__ float localized_s_curve(float x, float amount, float center, float width) {
+    // x, center in DI domain. width is normalized full-width (0..1).
+    // Compact-support odd polynomial shape:
+    // - zero effect at center crossing (no luminance offset)
+    // - smooth roll-in/out to zero at range boundaries
+    // - positive amount => local contrast increase around selected range
+
+    float halfW = _fmaxf(0.0005f, 0.5f * width);
+    float t = (x - center) / halfW;      // nominal active range: t in [-1, 1]
+    // Smooth odd polynomial envelope with zero slope at |t|=1 and t=0.
+    float t2 = t * t;
+    float env = saturatef(1.0f - t2); // 1 at center, 0 at edges/outside
+    env = env * env;                  // smooth falloff without sign flips
+
+    float delta = amount * t * env * 0.5f;
+    return x + delta;
+}
+
+// ============================================================================
+// Guide overlay (stepped gradient + clipping proximity warning)
+// ============================================================================
+__CONSTANT__ float k_guide_strip_height = 0.08f;
+__CONSTANT__ float k_guide_ramp_height = 0.06f;
+__CONSTANT__ int k_guide_steps = 21;
+__CONSTANT__ float k_guide_midgray_lin = 0.18f;
+__CONSTANT__ float k_guide_close_thresh = 1.0f / 256.0f;
+// Flat-curve warning threshold for the ramp (smaller = more sensitive).
+__CONSTANT__ float k_guide_flat_thresh = 1.0f / 64.0f;
+// Shadow sensitivity scaling (lower = less sensitive in shadows).
+__CONSTANT__ float k_guide_shadow_sensitivity = 0.5f;
+// Curve overlay settings
+__CONSTANT__ float k_curve_height = 0.10f;
+__CONSTANT__ float k_curve_thickness = 0.003f;
+// Black bar detection (used for overlay drawing area), in DI code space.
+__CONSTANT__ float k_black_threshold = 0.01f;
+__CONSTANT__ int k_assume_centered = 1;
+
+__DEVICE__ float guide_step_value_code(int step, int input_space) {
+    int middle = k_guide_steps / 2;
+    float stops = (float)(step - middle);
+    float lin = k_guide_midgray_lin * _exp2f(stops);
+    return linear_to_code_space(lin, input_space);
+}
+
+// Guide step value in DI code space (internal working space)
+__DEVICE__ float guide_step_value_di(int step) {
+    int middle = k_guide_steps / 2;
+    float stops = (float)(step - middle);
+    float lin = k_guide_midgray_lin * _exp2f(stops);
+    return linear_to_di(lin);
+}
+
+__DEVICE__ float3 encode_warn_color(float3 lin_rgb, int input_space) {
+    return make_float3(
+        linear_to_code_space(lin_rgb.x, input_space),
+        linear_to_code_space(lin_rgb.y, input_space),
+        linear_to_code_space(lin_rgb.z, input_space)
+    );
+}
+
+// Convert DI code value to selected output space (via linear)
+__DEVICE__ float di_code_to_space(float di_code, int output_space) {
+    float lin = di_to_linear(di_code);
+    return linear_to_code_space(lin, output_space);
+}
+
+__DEVICE__ float3 guide_step_color(float code_val, int too_close, int flat_warn, int input_space) {
+    float v = saturatef(code_val);
+    if (too_close) {
+        return encode_warn_color(make_float3(1.0f, 0.15f, 0.15f), input_space);
+    }
+    if (flat_warn) {
+        return encode_warn_color(make_float3(1.0f, 0.95f, 0.2f), input_space);
+    }
+    return make_float3(v, v, v);
+}
+
+// Apply the tool's processing to a given input color (in selected input space).
+// ============================================================================
+// Post-contrast cohesion controls (code-level tuning)
+// ============================================================================
+// Max local separation in stops after contrast. Lower = tighter tonal spacing.
+__CONSTANT__ float k_max_separation_stops = 4.0f;
+// Softness of the limiter knee. Higher = softer roll-off into the limit.
+__CONSTANT__ float k_limit_softness = 2.0f;
+// Expansion factor beyond the limit (0..1). Higher = more gradual expansion.
+__CONSTANT__ float k_limit_expand = 0.6f;
+// Cohesion blend toward original after limiting. 0 = off, 1 = full return.
+__CONSTANT__ float k_cohesion = 0.1f;
+
+// Soft limit contrast-induced separation by stops in linear light, with gradual expansion.
+// Uses a smooth rational knee to avoid harsh clipping and numerical instability.
+__DEVICE__ float soft_limit_stops(float stops, float max_stops) {
+    float abs_s = _fabs(stops);
+    if (abs_s <= max_stops) {
+        return stops;
+    }
+
+    float over = abs_s - max_stops;
+    // Soft knee: asymptotically increases, no hard corner.
+    float soft_over = (over * k_limit_expand) / (1.0f + over / _fmaxf(1e-6f, k_limit_softness));
+    float abs_out = max_stops + soft_over;
+    return _copysignf(abs_out, stops);
+}
+
+// Apply the tool's processing to a given input color (in selected input space).
+__DEVICE__ float3 process_color(float3 inRGB, int input_space, int region, float center_shift, float width_user, float amount, float mix, float luma_mix, int safe_range) {
+    // Assume DWG primaries. Process luminance in linear light for hue stability.
+    float3 linRGB = make_float3(
+        code_to_linear_space(inRGB.x, input_space),
+        code_to_linear_space(inRGB.y, input_space),
+        code_to_linear_space(inRGB.z, input_space)
+    );
+
+    // DaVinci Wide Gamut luminance coefficients (used in this repo already).
+    const float3 dwgY = make_float3(0.27411851f, 0.87363190f, -0.14775041f);
+
+    float Ylin = _fmaxf(1e-6f, linRGB.x * dwgY.x + linRGB.y * dwgY.y + linRGB.z * dwgY.z);
+    float Ydi = linear_to_di(Ylin);
+
+    float center = default_center_from_region(region, center_shift, input_space);
+    center = _fmaxf(center, 0.0f);
+
+    float center_stops = center_stops_from_center_di(center, input_space);
+    float amount_scale = amount_scale_for_center(center_stops, safe_range);
+    float amount_scaled = amount * amount_scale;
+
+    float width = default_width_from_region(region, input_space, width_user);
+    width = expand_width_by_amount(width, amount_scaled);
+
+    float YdiShaped = localized_s_curve(Ydi, amount_scaled, center, width);
+    // Cohesion control: limit separation in stops, then blend back toward original.
+    YdiShaped = _fmaxf(0.0f, YdiShaped);
+    float YlinShaped = di_to_linear(YdiShaped);
+    YlinShaped = _fminf(_fmaxf(YlinShaped, 1e-6f), 1e6f);
+    float YlinSafe = _fmaxf(Ylin, 1e-6f);
+    float ratio = YlinShaped / YlinSafe;
+    float stops = _log2f(ratio);
+    float stops_soft = soft_limit_stops(stops, k_max_separation_stops);
+    float ratio_soft = _exp2f(stops_soft);
+    float YlinLimited = YlinSafe * ratio_soft;
+    float YlinCohesive = YlinSafe + (YlinLimited - YlinSafe) * (1.0f - k_cohesion);
+
+    float gain = YlinCohesive / YlinSafe;
+    float3 lumaShapedLin = linRGB * gain;
+
+    // RGB-path shaping: apply the same curve per channel in DI code space.
+    float r_di = linear_to_di(linRGB.x);
+    float g_di = linear_to_di(linRGB.y);
+    float b_di = linear_to_di(linRGB.z);
+    float r_di_s = localized_s_curve(r_di, amount_scaled, center, width);
+    float g_di_s = localized_s_curve(g_di, amount_scaled, center, width);
+    float b_di_s = localized_s_curve(b_di, amount_scaled, center, width);
+    float3 rgbShapedLin = make_float3(
+        di_to_linear(_fmaxf(0.0f, r_di_s)),
+        di_to_linear(_fmaxf(0.0f, g_di_s)),
+        di_to_linear(_fmaxf(0.0f, b_di_s))
+    );
+
+    // Blend between RGB shaping and luma-only shaping.
+    float blend = (amount >= 0.0f) ? luma_mix : (1.0f - luma_mix);
+    float3 shapedLin = make_float3(
+        rgbShapedLin.x + (lumaShapedLin.x - rgbShapedLin.x) * blend,
+        rgbShapedLin.y + (lumaShapedLin.y - rgbShapedLin.y) * blend,
+        rgbShapedLin.z + (lumaShapedLin.z - rgbShapedLin.z) * blend
+    );
+
+    float3 mixedLin = make_float3(
+        linRGB.x + (shapedLin.x - linRGB.x) * mix,
+        linRGB.y + (shapedLin.y - linRGB.y) * mix,
+        linRGB.z + (shapedLin.z - linRGB.z) * mix
+    );
+
+    return make_float3(
+        linear_to_code_space(mixedLin.x, input_space),
+        linear_to_code_space(mixedLin.y, input_space),
+        linear_to_code_space(mixedLin.z, input_space)
+    );
+}
+
+// Detect black bar thickness (left, top, right, bottom)
+__DEVICE__ int4 get_black_bar_thickness(int p_Width, int p_Height, __TEXTURE__ p_TexR, __TEXTURE__ p_TexG, __TEXTURE__ p_TexB, float black_threshold, int input_space) {
+    int4 thickness = make_int4(0, 0, 0, 0);
+
+    int left = 0;
+    int right = p_Height / 2;
+    int center_x = p_Width / 2;
+
+    while (left < right) {
+        int mid = (left + right) / 2;
+        float r = linear_to_di(code_to_linear_space(_tex2D(p_TexR, center_x, mid), input_space));
+        float g = linear_to_di(code_to_linear_space(_tex2D(p_TexG, center_x, mid), input_space));
+        float b = linear_to_di(code_to_linear_space(_tex2D(p_TexB, center_x, mid), input_space));
+        if (_fabs(r) > black_threshold || _fabs(g) > black_threshold || _fabs(b) > black_threshold) {
+            right = mid;
+        } else {
+            left = mid + 1;
+        }
+    }
+    thickness.y = left;
+
+    left = 0;
+    right = p_Height / 2;
+    while (left < right) {
+        int mid = (left + right) / 2;
+        float r = linear_to_di(code_to_linear_space(_tex2D(p_TexR, center_x, p_Height - 1 - mid), input_space));
+        float g = linear_to_di(code_to_linear_space(_tex2D(p_TexG, center_x, p_Height - 1 - mid), input_space));
+        float b = linear_to_di(code_to_linear_space(_tex2D(p_TexB, center_x, p_Height - 1 - mid), input_space));
+        if (_fabs(r) > black_threshold || _fabs(g) > black_threshold || _fabs(b) > black_threshold) {
+            right = mid;
+        } else {
+            left = mid + 1;
+        }
+    }
+    thickness.w = left;
+
+    left = 0;
+    right = p_Width / 2;
+    int center_y = p_Height / 2;
+    while (left < right) {
+        int mid = (left + right) / 2;
+        float r = linear_to_di(code_to_linear_space(_tex2D(p_TexR, mid, center_y), input_space));
+        float g = linear_to_di(code_to_linear_space(_tex2D(p_TexG, mid, center_y), input_space));
+        float b = linear_to_di(code_to_linear_space(_tex2D(p_TexB, mid, center_y), input_space));
+        if (_fabs(r) > black_threshold || _fabs(g) > black_threshold || _fabs(b) > black_threshold) {
+            right = mid;
+        } else {
+            left = mid + 1;
+        }
+    }
+    thickness.x = left;
+
+    left = 0;
+    right = p_Width / 2;
+    while (left < right) {
+        int mid = (left + right) / 2;
+        float r = linear_to_di(code_to_linear_space(_tex2D(p_TexR, p_Width - 1 - mid, center_y), input_space));
+        float g = linear_to_di(code_to_linear_space(_tex2D(p_TexG, p_Width - 1 - mid, center_y), input_space));
+        float b = linear_to_di(code_to_linear_space(_tex2D(p_TexB, p_Width - 1 - mid, center_y), input_space));
+        if (_fabs(r) > black_threshold || _fabs(g) > black_threshold || _fabs(b) > black_threshold) {
+            right = mid;
+        } else {
+            left = mid + 1;
+        }
+    }
+    thickness.z = left;
+
+    return thickness;
+}
+
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, __TEXTURE__ p_TexR, __TEXTURE__ p_TexG, __TEXTURE__ p_TexB) {
+    float3 inRGB = make_float3(_tex2D(p_TexR, p_X, p_Y), _tex2D(p_TexG, p_X, p_Y), _tex2D(p_TexB, p_X, p_Y));
+
+    float amount_use = p_safe_range ? (p_amount * 0.25f) : p_amount;
+    float3 out_color = p_bypass ? inRGB : process_color(inRGB, p_input_space, p_region, p_center_shift, p_width, amount_use, p_mix, p_luma_mix, p_safe_range);
+
+    if (p_guide || p_curve) {
+        int4 bar = get_black_bar_thickness(p_Width, p_Height, p_TexR, p_TexG, p_TexB, k_black_threshold, p_input_space);
+        if (k_assume_centered) {
+            int min_lr = (int)_fminf((float)bar.x, (float)bar.z);
+            int min_tb = (int)_fminf((float)bar.y, (float)bar.w);
+            bar = make_int4(min_lr, min_tb, min_lr, min_tb);
+        }
+
+        int eff_w = p_Width - bar.x - bar.z;
+        int eff_h = p_Height - bar.y - bar.w;
+        if (eff_w < 2 || eff_h < 2) {
+            return out_color;
+        }
+
+        int x_in = p_X - bar.x;
+        int y_in = p_Y - bar.y;
+        if (x_in < 0 || y_in < 0 || x_in >= eff_w || y_in >= eff_h) {
+            return out_color;
+        }
+
+        float x = (float)x_in / (float)(eff_w - 1);
+        float y = (float)y_in / (float)(eff_h - 1);
+        float guide_top = 1.0f - (k_guide_strip_height + k_guide_ramp_height);
+
+        if (p_curve) {
+            // Full-frame curve overlay in DI code domain (internal working space).
+            float3 c = process_color(make_float3(x, x, x), SPACE_DI, p_region, p_center_shift, p_width, amount_use, p_mix, p_luma_mix, p_safe_range);
+            float o_di = saturatef(c.x);
+            float y_curve = 1.0f - o_di;
+            if (_fabs(y - y_curve) < k_curve_thickness) {
+                float w = linear_to_code_space(1.0f, p_input_space);
+                return make_float3(w, w, w);
+            }
+        }
+
+        if (p_guide && y >= guide_top && y <= (guide_top + k_guide_strip_height)) {
+            int middle = k_guide_steps / 2;
+            int step = (int)_fminf((float)k_guide_steps - 1.0f, _fmaxf(0.0f, x * k_guide_steps));
+            float v0 = guide_step_value_di(step);
+            float v1 = guide_step_value_di(_fminf(step + 1, k_guide_steps - 1));
+            float v_1 = guide_step_value_di(_fmaxf(step - 1, 0));
+
+            float3 c0 = process_color(make_float3(v0, v0, v0), SPACE_DI, p_region, p_center_shift, p_width, amount_use, p_mix, p_luma_mix, p_safe_range);
+            float3 c1 = process_color(make_float3(v1, v1, v1), SPACE_DI, p_region, p_center_shift, p_width, amount_use, p_mix, p_luma_mix, p_safe_range);
+            float3 c_1 = process_color(make_float3(v_1, v_1, v_1), SPACE_DI, p_region, p_center_shift, p_width, amount_use, p_mix, p_luma_mix, p_safe_range);
+
+            float o0 = c0.x;
+            float o1 = c1.x;
+            float o_1 = c_1.x;
+            int interior = (step > 0) && (step < (k_guide_steps - 1));
+            float step_stops = (float)(step - middle);
+            float shadow_t = saturatef((-step_stops) / 7.0f); // 0 at mid/highs, 1 at ~7 stops below midgray
+            shadow_t = smootherstep01(shadow_t);
+            // Reduce sensitivity more in deep shadows
+            float deep_shadow_scale = k_guide_shadow_sensitivity * k_guide_shadow_sensitivity;
+            float shadow_scale = 1.0f + (deep_shadow_scale - 1.0f) * shadow_t;
+            float close_thresh = k_guide_close_thresh * shadow_scale;
+            float flat_thresh = k_guide_flat_thresh * shadow_scale;
+
+            int too_close = interior && ((_fabs(o1 - o0) < close_thresh) || (_fabs(o0 - o_1) < close_thresh));
+            float slope_avg = 0.5f * (_fabs(o0 - o_1) + _fabs(o1 - o0));
+            int deep_shadow = step_stops <= -8.0f;
+            int flat_warn = interior && !deep_shadow && (slope_avg < flat_thresh);
+            float disp = di_code_to_space(o0, p_input_space);
+            return guide_step_color(disp, too_close, flat_warn, p_input_space);
+        } else if (p_guide && y >= (guide_top + k_guide_strip_height) && y <= (guide_top + k_guide_strip_height + k_guide_ramp_height)) {
+            int middle = k_guide_steps / 2;
+            float steps_range = (float)(k_guide_steps - 1);
+            float stops = (x * steps_range) - (float)middle;
+            float lin = k_guide_midgray_lin * _exp2f(stops);
+            float v = linear_to_di(lin);
+            float3 c = process_color(make_float3(v, v, v), SPACE_DI, p_region, p_center_shift, p_width, amount_use, p_mix, p_luma_mix, p_safe_range);
+            float o = c.x;
+            float disp = di_code_to_space(o, p_input_space);
+            return make_float3(disp, disp, disp);
+        }
+    }
+
+    return out_color;
+}
