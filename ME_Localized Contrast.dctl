@@ -244,9 +244,9 @@ __DEVICE__ float default_width_from_region(int region, int input_space, float us
     ColorSpace cs = get_color_space(input_space);
     TonaRegion tr = get_tonal_region(region);
 
-    float half = 0.5f * tr.width_stops;
-    float low_code = stops_to_di_code(tr.center_stops - half, cs);
-    float high_code = stops_to_di_code(tr.center_stops + half, cs);
+    float half_w = 0.5f * tr.width_stops;
+    float low_code = stops_to_di_code(tr.center_stops - half_w, cs);
+    float high_code = stops_to_di_code(tr.center_stops + half_w, cs);
     return _fmaxf(0.001f, high_code - low_code);
 }
 
