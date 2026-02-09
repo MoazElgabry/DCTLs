@@ -225,7 +225,6 @@ __DEVICE__ float remap_center_stops(int region, float center_shift) {
 // Calculate center in DI code from region selection and user adjustments
 __DEVICE__ float default_center_from_region(int region, float center_shift, int input_space) {
     ColorSpace cs = get_color_space(input_space);
-    TonaRegion tr = get_tonal_region(region);
 
     // Convert region's center stops to DI code value.
     // Center Shift is scaled to cover the full region width in stops.
