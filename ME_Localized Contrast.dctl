@@ -19,9 +19,24 @@ DEFINE_UI_PARAMS(p_mix, Mix, DCTLUI_SLIDER_FLOAT, 1.0, 0.0, 1.0, 0.001)
 DEFINE_UI_PARAMS(p_input_space, Input Space, DCTLUI_COMBO_BOX, 0, {DI, Linear, ACEScct}, {DaVinci Intermediate, Linear, ACEScct})
 DEFINE_UI_PARAMS(p_bypass, Bypass, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(p_luma_mix, Luma Mix, DCTLUI_SLIDER_FLOAT, 0.5, 0.0, 1.0, 0.001)
-DEFINE_UI_PARAMS(p_guide, Guide, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_PARAMS(p_guide, Guide Ramp, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(p_curve, Curve Overlay, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(p_safe_range, Safe Range, DCTLUI_CHECK_BOX, 1)
+
+/*----------- Tooltips -----------------*/
+#if ((__RESOLVE_VER_MAJOR__ > 19)) || ((__RESOLVE_VER_MAJOR__ == 19) && (__RESOLVE_VER_MINOR__ >= 1))
+DEFINE_UI_TOOLTIP(Amount, "Local contrast strength. Positive increases separation, negative compresses. Safe Range scales strength down to reduce extremes.")
+DEFINE_UI_TOOLTIP(Region, "Target tonal band. Shadows/Midtones/Highlights use stop-based ranges around midgray; Custom centers on the Center Shift value.")
+DEFINE_UI_TOOLTIP(Center Shift, "Moves the center in stops. Shadows/Highlights are constrained to avoid crossing midgray; Custom spans a wider stop range.")
+DEFINE_UI_TOOLTIP(Range Width, "Width of the affected range available only in custom mode. Auto‑expands with higher Amount for smoother roll‑off.")
+DEFINE_UI_TOOLTIP(Mix, "Blends between original and processed signal.")
+DEFINE_UI_TOOLTIP(Input Space, "this should match the color space of the input footage for correct tonal targeting.")
+DEFINE_UI_TOOLTIP(Bypass, "Disables processing (passes input through).")
+DEFINE_UI_TOOLTIP(Luma Mix, "Blends luma‑only vs RGB shaping.")
+DEFINE_UI_TOOLTIP(Guide Ramp, "Shows stepped/ramp guide. Red = steps too close (risk of clipping/flat areas). Yellow = low slope (flat curve warning).")
+DEFINE_UI_TOOLTIP(Curve Overlay, "Draws the curve response on the image for the current settings.")
+DEFINE_UI_TOOLTIP(Safe Range, "Constrains Amount in extreme shadows/highlights and applies cohesion limiting to reduce harsh separation.")
+#endif
 
 __DEVICE__ float saturatef(float x) {
     return _fminf(_fmaxf(x, 0.0f), 1.0f);
