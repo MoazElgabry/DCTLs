@@ -1,7 +1,7 @@
 #line 2
 /*
 
-ME Localized Contrast v1.1
+ME Localized Contrast v1.2
 by Moaz Elgabry
 moazelgabry.com
 buymeacoffee.com/moazelgabry
@@ -9,9 +9,12 @@ buymeacoffee.com/moazelgabry
 Localized, smooth, range-limited contrast shaping.
 
 Changelog:
+v1.2 - *Added a new Highlight Pivot Point toggle that draws a green guide over the pivot-centered middle band to help align exposure targets when shaping contrast.
+       *Improved the chroma/luma protection logic in constrained shadow/highlight regions to better preserve color integrity while still allowing effective contrast shaping.
+       *Better mapping of regional amount limits to the safety slider, with more gradual relaxation of constraints as safety increases.
 v1.1 - *Reworked the tool for safer contrast shaping under extreme pushes: substantial tuning was added so results stay controlled and image integrity is protected, even at aggressive settings.
        *Replaced the old Safe Range toggle with a new Safety Fader: a smooth, gradual control that expands freedom progressively instead of hard-jumping between constrained/unconstrained behavior.
-       *Added stability logic that keeps contrast growth usable and avoids “breaking” the image when pushing Amount/Center/Width in difficult regions.
+       *Added stability logic that keeps contrast growth usable and avoids "breaking" the image when pushing Amount/Center/Width in difficult regions.
 v1.0 - Initial release
 
 
@@ -24,12 +27,13 @@ DEFINE_UI_PARAMS(p_region, Region, DCTLUI_COMBO_BOX, 1, {shadows, mids, highligh
 DEFINE_UI_PARAMS(p_center_shift, Center Shift, DCTLUI_SLIDER_FLOAT, 0.0, -0.5, 0.5, 0.001)
 DEFINE_UI_PARAMS(p_width, Range Width, DCTLUI_SLIDER_FLOAT, 0.35, 0.1, 1.0, 0.001)
 DEFINE_UI_PARAMS(p_symmetry_bias, Symmetry Bias, DCTLUI_SLIDER_FLOAT, 0.0, -0.5, 0.5, 0.001)
-DEFINE_UI_PARAMS(p_preserve_mid_gray, Preserve Mid Gray, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_PARAMS(p_preserve_mid_gray, Preserve Exposure, DCTLUI_CHECK_BOX, 1)
+DEFINE_UI_PARAMS(p_highlight_pivot_point, Highlight Pivot Point, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(p_bypass, Bypass, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(p_guide, Guide Ramp, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(p_curve, Curve Overlay, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(p_safety, Safety Fader, DCTLUI_SLIDER_FLOAT, 0.25, 0.25, 1.0, 0.001)
-DEFINE_UI_PARAMS(p_input_space, Input Space, DCTLUI_COMBO_BOX, 0, {DI, Linear, ACEScct}, {DaVinci Intermediate, Linear, ACEScct})
+DEFINE_UI_PARAMS(p_input_space, Input Space, DCTLUI_COMBO_BOX, 1, {Linear, DI, ACEScct, LogC3}, {Linear, DaVinci Intermediate, ACEScct, ARRI LogC3})
 
 
 /*----------- Tooltips -----------------*/
@@ -37,13 +41,14 @@ DEFINE_UI_PARAMS(p_input_space, Input Space, DCTLUI_COMBO_BOX, 0, {DI, Linear, A
 DEFINE_UI_TOOLTIP(Amount, "Local contrast strength. Positive increases separation, negative compresses.")
 DEFINE_UI_TOOLTIP(Region, "Target tonal band. Shadows/Midtones/Highlights use stop-based ranges around midgray; Custom centers on the Center Shift value.")
 DEFINE_UI_TOOLTIP(Center Shift, "Moves the center in stops. Shadows/Highlights are constrained to avoid crossing midgray; Custom spans a wider stop range.")
-DEFINE_UI_TOOLTIP(Range Width, "Width of the affected range available only in custom mode. Auto‑expands with higher Amount for smoother roll‑off.")
+DEFINE_UI_TOOLTIP(Range Width, "Width of the affected range available only in custom mode. Auto-expands with higher Amount for smoother roll-off.")
 DEFINE_UI_TOOLTIP(Input Space, "this should match the color space of the input footage for correct tonal targeting.")
 DEFINE_UI_TOOLTIP(Bypass, "Disables processing (passes input through).")
 DEFINE_UI_TOOLTIP(Symmetry Bias, "Biases localized contrast toward one side of the center. 0 = symmetric, + favors highlights side, - favors shadows side.")
-DEFINE_UI_TOOLTIP(Preserve Mid Gray, "Applies a global linear gain so processed mid gray returns to its original working-space value.")
+DEFINE_UI_TOOLTIP(Preserve Exposure, "Applies a global linear gain so the processed image mid-gray returns to its original working-space value.")
+DEFINE_UI_TOOLTIP(Highlight Pivot Point, "Draws a green guide over the pivot-centered middle band to help you align the operation around your targets when the image subject is not exactly at mid gray.")
 DEFINE_UI_TOOLTIP(Guide Ramp, "Shows stepped/ramp guide. Red = steps too close (risk of clipping/flat areas). Yellow = low slope (flat curve warning).")
-DEFINE_UI_TOOLTIP(Curve Overlay, "Draws the curve response on the image for the current settings.")
+DEFINE_UI_TOOLTIP(Curve Overlay, "Draws the curve response on the image to visualize the current settings. the curve is encoded in the output space of the tool, so it reflects the actual applied contrast shaping.")
 DEFINE_UI_TOOLTIP(Safety Fader, "Controls how tightly Amount is constrained. Lower values are safer; higher values allow more range.")
 #endif
 
@@ -99,12 +104,32 @@ __DEVICE__ float linear_to_acescct(float x) {
     return (x <= cut1) ? A * x + B : (_log2f(x) + C) / D;
 }
 
-__DEVICE__ float3 di_to_linear3(float3 in) {
-    return make_float3(di_to_linear(in.x), di_to_linear(in.y), di_to_linear(in.z));
+// ARRI LogC3 OETF / inverse OETF (LogC3 <-> linear), EI800 form.
+__DEVICE__ float logc3_to_linear(float x) {
+    const float cut = 0.010591f;
+    const float a = 5.555556f;
+    const float b = 0.052272f;
+    const float c = 0.247190f;
+    const float d = 0.385537f;
+    const float e = 5.367655f;
+    const float f = 0.092809f;
+    const float cut_code = e * cut + f;
+
+    float lin = (x < cut_code) ? ((x - f) / e) : ((_exp10f((x - d) / c) - b) / a);
+    return _fmaxf(lin, 0.0f);
 }
 
-__DEVICE__ float3 linear_to_di3(float3 in) {
-    return make_float3(linear_to_di(in.x), linear_to_di(in.y), linear_to_di(in.z));
+__DEVICE__ float linear_to_logc3(float x) {
+    const float cut = 0.010591f;
+    const float a = 5.555556f;
+    const float b = 0.052272f;
+    const float c = 0.247190f;
+    const float d = 0.385537f;
+    const float e = 5.367655f;
+    const float f = 0.092809f;
+
+    x = _fmaxf(x, 0.0f);
+    return (x < cut) ? (e * x + f) : (c * _log10f(a * x + b) + d);
 }
 
 // ============================================================================
@@ -112,7 +137,6 @@ __DEVICE__ float3 linear_to_di3(float3 in) {
 // ============================================================================
 
 // ColorSpace: Defines midgray for a specific input space.
-// Extend later by adding new space IDs and mappings. Midgray is defined in linear light.
 struct ColorSpace {
     int space_id;
     float midgray_lin;  // Midgray in linear light
@@ -124,10 +148,33 @@ struct TonaRegion {
     float width_stops;    // Total width in stops
 };
 
+// Shared input bundle for contrast processing paths.
+struct ProcessInput {
+    int input_space;
+    int region;
+    float center_shift;
+    float width_user;
+    float amount;
+    float symmetry_bias;
+    float safety;
+    int preserve_mid_gray;
+};
+
+// Derived curve state used across shaping and overlays.
+struct CurveState {
+    float center;
+    float width;
+    float amount_scaled;
+    float halfW;
+    float bmin;
+    float bmax;
+};
+
 // Space IDs for encode->linear mapping. ++Add new ones here.
-#define SPACE_DI 0
-#define SPACE_LINEAR 1
+#define SPACE_LINEAR 0
+#define SPACE_DI 1
 #define SPACE_ACEScct 2
+#define SPACE_LOGC3 3
 
 // Custom mode center range in stops from midgray (both directions).
 // Increase to allow the custom center to reach deeper shadows/highlights.
@@ -148,6 +195,9 @@ __CONSTANT__ float k_safety_taper_relax = 0.25f;
 // Adaptive chroma protection in constrained shadow/highlight regions.
 __CONSTANT__ float k_chroma_protect_strength = 0.9f;
 __CONSTANT__ float k_chroma_protect_boundary_fraction = 0.35f;
+__CONSTANT__ float k_pivot_overlay_alpha = 0.35f;
+__CONSTANT__ float k_neg_hs_safety_start = 0.3f;
+__CONSTANT__ float k_neg_hs_mix_max = 0.7f;
 
 // Amount sensitivity by tonal group (shadows/highlights are more constrained).
 __CONSTANT__ float k_amount_scale_mid = 1.0f;
@@ -155,6 +205,8 @@ __CONSTANT__ float k_amount_scale_sh = 0.6f;
 // DaVinci Intermediate practical headroom from the official BMD white paper.
 __CONSTANT__ float k_di_above_midgray_stops = 9.12f;
 __CONSTANT__ float k_di_below_midgray_stops = 9.0f;
+// Soft transition width (in stops) near DI headroom clamp boundaries.
+__CONSTANT__ float k_di_headroom_soft_stops = 0.35f;
 // Deep shadow/highlight taper (smoothly approaches this in extremes).
 __CONSTANT__ float k_amount_scale_extreme = 0.4f;
 // In Custom mode, narrow widths reduce effective amount to keep behavior controlled.
@@ -167,32 +219,46 @@ __CONSTANT__ float k_safety_max = 1.0f;
 
 // Convert a code value to linear for the selected input space
 __DEVICE__ float code_to_linear_space(float code, int space_id) {
+    if (space_id == SPACE_LINEAR) {
+        return code;
+    }
     if (space_id == SPACE_DI) {
         return di_to_linear(code);
     }
     if (space_id == SPACE_ACEScct) {
         return acescct_to_linear(code);
     }
-    // SPACE_LINEAR
+    if (space_id == SPACE_LOGC3) {
+        return logc3_to_linear(code);
+    }
     return code;
 }
 
 // Convert linear to code for the selected input space
 __DEVICE__ float linear_to_code_space(float lin, int space_id) {
+    if (space_id == SPACE_LINEAR) {
+        return lin;
+    }
     if (space_id == SPACE_DI) {
         return linear_to_di(lin);
     }
     if (space_id == SPACE_ACEScct) {
         return linear_to_acescct(lin);
     }
-    // SPACE_LINEAR
+    if (space_id == SPACE_LOGC3) {
+        return linear_to_logc3(lin);
+    }
     return lin;
 }
 
 // Get ColorSpace definition based on input space
 __DEVICE__ ColorSpace get_color_space(int input_space) {
     ColorSpace cs;
-    cs.space_id = input_space == SPACE_DI ? SPACE_DI : (input_space == SPACE_ACEScct ? SPACE_ACEScct : SPACE_LINEAR);
+    if (input_space == SPACE_DI || input_space == SPACE_ACEScct || input_space == SPACE_LOGC3 || input_space == SPACE_LINEAR) {
+        cs.space_id = input_space;
+    } else {
+        cs.space_id = SPACE_LINEAR;
+    }
     cs.midgray_lin = 0.18f;  // Standard midgray in linear light
     return cs;
 }
@@ -213,12 +279,12 @@ __DEVICE__ TonaRegion get_tonal_region(int region) {
     if (region == 0) {
         // Shadows: narrower default span for more center-shift headroom.
         tr.center_stops = -2.5f;
-        tr.width_stops = 4.5f;
+        tr.width_stops = 4.0f;
     }
     else if (region == 1) {
         // Midtones: -0.5 to +1.5 stops from midgray (as specified)
         tr.center_stops = 0.0f;
-        tr.width_stops = 10.0f;
+        tr.width_stops = 8.0f;
     }
     else if (region == 2) {
         // Highlights: +1 to +3 stops from midgray
@@ -251,11 +317,27 @@ __DEVICE__ float remap_center_stops(int region, float center_shift) {
         // Shadows do not cross above midgray.
         max_s = 0.0f;
     }
-
     // Clamp to DI practical stop headroom from midgray.
     min_s = _fmaxf(min_s, -k_di_below_midgray_stops);
     max_s = _fminf(max_s,  k_di_above_midgray_stops);
-    base = _fminf(_fmaxf(base, min_s), max_s);
+    // Smooth clamp near boundaries to avoid a hard "wall" feel.
+    if (base <= min_s) {
+        base = min_s;
+    } else if (base >= max_s) {
+        base = max_s;
+    } else {
+        float soft = _fmaxf(k_di_headroom_soft_stops, 1e-6f);
+        if (base < (min_s + soft)) {
+            float t = (base - min_s) / soft;
+            float s = smootherstep01(t);
+            base = min_s + (base - min_s) * s;
+        } else if (base > (max_s - soft)) {
+            float d = (max_s - base);
+            float t = d / soft;
+            float s = smootherstep01(t);
+            base = max_s - (max_s - base) * s;
+        }
+    }
 
     // Shared remap rule for all modes: same derivation, different bounds.
     float u = _fminf(_fmaxf(center_shift / 0.5f, -1.0f), 1.0f);
@@ -423,18 +505,10 @@ __CONSTANT__ float k_guide_flat_thresh = 1.0f / 28.0f;
 // Shadow sensitivity scaling (lower = less sensitive in shadows).
 __CONSTANT__ float k_guide_shadow_sensitivity = 0.5f;
 // Curve overlay settings
-__CONSTANT__ float k_curve_height = 0.10f;
 __CONSTANT__ float k_curve_thickness = 0.003f;
 // Black bar detection (used for overlay drawing area), in DI code space.
 __CONSTANT__ float k_black_threshold = 0.01f;
 __CONSTANT__ int k_assume_centered = 1;
-
-__DEVICE__ float guide_step_value_code(int step, int input_space) {
-    int middle = k_guide_steps / 2;
-    float stops = (float)(step - middle);
-    float lin = k_guide_midgray_lin * _exp2f(stops);
-    return linear_to_code_space(lin, input_space);
-}
 
 // Guide step value in DI code space (internal working space)
 __DEVICE__ float guide_step_value_di(int step) {
@@ -497,75 +571,61 @@ __DEVICE__ float soft_limit_stops(float stops, float max_stops) {
     return _copysignf(abs_out, stops);
 }
 
-// Compute linear gain that restores processed mid gray to original mid gray.
-__DEVICE__ float midgray_preserve_gain(int input_space, float amount, float symmetry_bias, float center, float width, float amount_scaled) {
-    ColorSpace cs = get_color_space(input_space);
-    float mid_code_in = linear_to_code_space(cs.midgray_lin, input_space);
-    float mid_lin_in = _fmaxf(1e-6f, code_to_linear_space(mid_code_in, input_space));
-
-    float mid_di = linear_to_di(mid_lin_in);
-    float mid_di_shaped = _fmaxf(0.0f, localized_s_curve(mid_di, amount_scaled, center, width, symmetry_bias));
-    float mid_lin_shaped = di_to_linear(mid_di_shaped);
-    mid_lin_shaped = _fminf(_fmaxf(mid_lin_shaped, 1e-6f), 1e6f);
-
-    float ratio = mid_lin_shaped / mid_lin_in;
-    float stops = _log2f(ratio);
-    float stops_soft = soft_limit_stops(stops, k_max_separation_stops);
-    float ratio_soft = _exp2f(stops_soft);
-    float mid_lin_luma = mid_lin_in + (mid_lin_in * ratio_soft - mid_lin_in) * (1.0f - k_cohesion);
-
-    float mid_lin_rgb = di_to_linear(_fmaxf(0.0f, localized_s_curve(mid_di, amount_scaled, center, width, symmetry_bias)));
-
-    float blend = (amount >= 0.0f) ? 1.0f : 0.0f;
-    float mid_lin_out = mid_lin_rgb + (mid_lin_luma - mid_lin_rgb) * blend;
-    mid_lin_out = _fmaxf(mid_lin_out, 1e-6f);
-
-    return mid_lin_in / mid_lin_out;
+__DEVICE__ ProcessInput make_process_input(int input_space, int region, float center_shift, float width_user, float amount, float symmetry_bias, float safety, int preserve_mid_gray) {
+    ProcessInput p;
+    p.input_space = input_space;
+    p.region = region;
+    p.center_shift = center_shift;
+    p.width_user = width_user;
+    p.amount = amount;
+    p.symmetry_bias = symmetry_bias;
+    p.safety = safety;
+    p.preserve_mid_gray = preserve_mid_gray;
+    return p;
 }
 
-// Apply the tool's processing to a given input color (in selected input space).
-__DEVICE__ float3 process_color(float3 inRGB, int input_space, int region, float center_shift, float width_user, float amount, float symmetry_bias, float safety, int preserve_mid_gray) {
-    // Assume DWG primaries. Process luminance in linear light for hue stability.
+// Rec.709 luma in linear -> DI code for scene sampling / overlays.
+__DEVICE__ float luminance_di_from_code(float3 code_rgb, int input_space) {
     float3 linRGB = make_float3(
-        code_to_linear_space(inRGB.x, input_space),
-        code_to_linear_space(inRGB.y, input_space),
-        code_to_linear_space(inRGB.z, input_space)
+        code_to_linear_space(code_rgb.x, input_space),
+        code_to_linear_space(code_rgb.y, input_space),
+        code_to_linear_space(code_rgb.z, input_space)
     );
-
-    // Rec.709 linear luminance coefficients (non-negative, stable for luma mixing).
     const float3 rec709Y = make_float3(0.2126f, 0.7152f, 0.0722f);
-
     float Ylin = _fmaxf(1e-6f, linRGB.x * rec709Y.x + linRGB.y * rec709Y.y + linRGB.z * rec709Y.z);
-    float Ydi = linear_to_di(Ylin);
+    return linear_to_di(Ylin);
+}
 
-    float center = default_center_from_region(region, center_shift, input_space);
+// Derive center/width/amount and support bounds once, shared by processing and overlays.
+__DEVICE__ CurveState solve_curve_state(ProcessInput p) {
+    CurveState s;
+
+    float center = default_center_from_region(p.region, p.center_shift, p.input_space);
     center = _fmaxf(center, 0.0f);
 
-    float center_stops = center_stops_from_center_di(center, input_space);
-    float amount_scale = amount_scale_for_center(center_stops, safety);
-    float amount_scaled_base = amount * amount_scale;
-    float amount_scaled = amount_scaled_base;  // Drives curve strength
-    float amount_for_width = amount_scaled_base; // Drives width expansion
-    if (region == 3) {
-        float custom_scale = custom_amount_scale_from_width(width_user);
+    float center_stops = center_stops_from_center_di(center, p.input_space);
+    float amount_scale = amount_scale_for_center(center_stops, p.safety);
+    float amount_scaled_base = p.amount * amount_scale;
+    float amount_scaled = amount_scaled_base;
+    float amount_for_width = amount_scaled_base;
+    if (p.region == 3) {
+        float custom_scale = custom_amount_scale_from_width(p.width_user);
         amount_scaled *= custom_scale;
         amount_for_width *= custom_scale;
     }
 
-    float base_width = default_width_from_region(region, input_space, width_user);
+    float base_width = default_width_from_region(p.region, p.input_space, p.width_user);
     float width = expand_width_by_amount(base_width, amount_for_width);
 
-    // Region-aware support fit (single solve): keep support inside valid bounds by
-    // shifting center first; reduce amount/width only if the requested width cannot fit.
     const float dmin = 0.0f + k_curve_domain_margin;
     const float dmax = 1.0f - k_curve_domain_margin;
-    ColorSpace cs_bounds = get_color_space(input_space);
+    ColorSpace cs_bounds = get_color_space(p.input_space);
     float midgray_di = stops_to_di_code(0.0f, cs_bounds);
     float bmin = dmin;
     float bmax = dmax;
-    if (region == 0) {
+    if (p.region == 0) {
         bmax = midgray_di;
-    } else if (region == 2) {
+    } else if (p.region == 2) {
         bmin = midgray_di;
     }
     float region_max_width = _fmaxf(0.001f, bmax - bmin);
@@ -586,7 +646,10 @@ __DEVICE__ float3 process_color(float3 inRGB, int input_space, int region, float
     float halfW = 0.5f * width;
     float cmin = bmin + halfW;
     float cmax = bmax - halfW;
-    if (cmin <= cmax) {
+    if (p.region == 1) {
+        // Midtones: allow support overhang near domain edges so center can travel farther.
+        center = _fminf(_fmaxf(center, bmin), bmax);
+    } else if (cmin <= cmax) {
         center = _fminf(_fmaxf(center, cmin), cmax);
     } else {
         width = region_max_width;
@@ -594,10 +657,70 @@ __DEVICE__ float3 process_color(float3 inRGB, int input_space, int region, float
         center = 0.5f * (bmin + bmax);
     }
 
-    // Enforce monotonic/stable shaping after final geometry is known.
-    amount_scaled = limit_amount_for_stability(amount_scaled, width, symmetry_bias, safety);
+    amount_scaled = limit_amount_for_stability(amount_scaled, width, p.symmetry_bias, p.safety);
 
-    float YdiShaped = localized_s_curve(Ydi, amount_scaled, center, width, symmetry_bias);
+    s.center = center;
+    s.width = width;
+    s.amount_scaled = amount_scaled;
+    s.halfW = 0.5f * width;
+    s.bmin = bmin;
+    s.bmax = bmax;
+    return s;
+}
+
+// Pivot highlight band: use effective width, capped to +-1 stop around pivot.
+__DEVICE__ float pivot_half_range_di(CurveState s, int input_space) {
+    float center_stops = center_stops_from_center_di(s.center, input_space);
+    ColorSpace cs = get_color_space(input_space);
+    float lo = stops_to_di_code(center_stops - 1.0f, cs);
+    float hi = stops_to_di_code(center_stops + 1.0f, cs);
+    float one_stop_half = 0.5f * _fabs(hi - lo);
+    return _fmaxf(0.001f, _fminf(s.halfW, one_stop_half));
+}
+
+// Compute linear gain that restores processed mid gray to original mid gray.
+__DEVICE__ float midgray_preserve_gain(ProcessInput p, CurveState s) {
+    ColorSpace cs = get_color_space(p.input_space);
+    float mid_code_in = linear_to_code_space(cs.midgray_lin, p.input_space);
+    float mid_lin_in = _fmaxf(1e-6f, code_to_linear_space(mid_code_in, p.input_space));
+
+    float mid_di = linear_to_di(mid_lin_in);
+    float mid_di_shaped = _fmaxf(0.0f, localized_s_curve(mid_di, s.amount_scaled, s.center, s.width, p.symmetry_bias));
+    float mid_lin_shaped = di_to_linear(mid_di_shaped);
+    mid_lin_shaped = _fminf(_fmaxf(mid_lin_shaped, 1e-6f), 1e6f);
+
+    float ratio = mid_lin_shaped / mid_lin_in;
+    float stops = _log2f(ratio);
+    float stops_soft = soft_limit_stops(stops, k_max_separation_stops);
+    float ratio_soft = _exp2f(stops_soft);
+    float mid_lin_luma = mid_lin_in + (mid_lin_in * ratio_soft - mid_lin_in) * (1.0f - k_cohesion);
+
+    float mid_lin_rgb = di_to_linear(_fmaxf(0.0f, localized_s_curve(mid_di, s.amount_scaled, s.center, s.width, p.symmetry_bias)));
+
+    float blend = (p.amount >= 0.0f) ? 1.0f : 0.0f;
+    float mid_lin_out = mid_lin_rgb + (mid_lin_luma - mid_lin_rgb) * blend;
+    mid_lin_out = _fmaxf(mid_lin_out, 1e-6f);
+
+    return mid_lin_in / mid_lin_out;
+}
+
+// Apply the tool's processing to a given input color (in selected input space).
+__DEVICE__ float3 process_color(float3 inRGB, ProcessInput p) {
+    // Assume DWG primaries. Process luminance in linear light for hue stability.
+    float3 linRGB = make_float3(
+        code_to_linear_space(inRGB.x, p.input_space),
+        code_to_linear_space(inRGB.y, p.input_space),
+        code_to_linear_space(inRGB.z, p.input_space)
+    );
+
+    // Rec.709 linear luminance coefficients (non-negative, stable for luma mixing).
+    const float3 rec709Y = make_float3(0.2126f, 0.7152f, 0.0722f);
+
+    float Ylin = _fmaxf(1e-6f, linRGB.x * rec709Y.x + linRGB.y * rec709Y.y + linRGB.z * rec709Y.z);
+    float Ydi = linear_to_di(Ylin);
+    CurveState s = solve_curve_state(p);
+
+    float YdiShaped = localized_s_curve(Ydi, s.amount_scaled, s.center, s.width, p.symmetry_bias);
     // Cohesion control: limit separation in stops, then blend back toward original.
     YdiShaped = _fmaxf(0.0f, YdiShaped);
     float YlinShaped = di_to_linear(YdiShaped);
@@ -617,9 +740,9 @@ __DEVICE__ float3 process_color(float3 inRGB, int input_space, int region, float
     float r_di = linear_to_di(linRGB.x);
     float g_di = linear_to_di(linRGB.y);
     float b_di = linear_to_di(linRGB.z);
-    float r_di_s = localized_s_curve(r_di, amount_scaled, center, width, symmetry_bias);
-    float g_di_s = localized_s_curve(g_di, amount_scaled, center, width, symmetry_bias);
-    float b_di_s = localized_s_curve(b_di, amount_scaled, center, width, symmetry_bias);
+    float r_di_s = localized_s_curve(r_di, s.amount_scaled, s.center, s.width, p.symmetry_bias);
+    float g_di_s = localized_s_curve(g_di, s.amount_scaled, s.center, s.width, p.symmetry_bias);
+    float b_di_s = localized_s_curve(b_di, s.amount_scaled, s.center, s.width, p.symmetry_bias);
     float3 rgbShapedLin = make_float3(
         di_to_linear(_fmaxf(0.0f, r_di_s)),
         di_to_linear(_fmaxf(0.0f, g_di_s)),
@@ -627,13 +750,13 @@ __DEVICE__ float3 process_color(float3 inRGB, int input_space, int region, float
     );
 
     // Blend between RGB shaping and luma-only shaping.
-    float blend = (amount >= 0.0f) ? 1.0f : 0.0f;
-    if (region == 0 || region == 2) {
-        float gap = (region == 0) ? (bmax - (center + halfW)) : ((center - halfW) - bmin);
+    float blend = (p.amount >= 0.0f) ? 1.0f : 0.0f;
+    if (p.region == 0 || p.region == 2) {
+        float gap = (p.region == 0) ? (s.bmax - (s.center + s.halfW)) : ((s.center - s.halfW) - s.bmin);
         gap = _fmaxf(gap, 0.0f);
-        float fade = _fmaxf(1e-6f, k_chroma_protect_boundary_fraction * halfW);
+        float fade = _fmaxf(1e-6f, k_chroma_protect_boundary_fraction * s.halfW);
         float near_boundary = 1.0f - smootherstep01(_fminf(gap / fade, 1.0f));
-        float amount_stress = _fminf(_fabs(amount_scaled) / _fmaxf(0.8f * width, 1e-6f), 1.0f);
+        float amount_stress = _fminf(_fabs(s.amount_scaled) / _fmaxf(0.8f * s.width, 1e-6f), 1.0f);
         amount_stress = smootherstep01(amount_stress);
         float protect = k_chroma_protect_strength * near_boundary * amount_stress;
         blend = blend + (1.0f - blend) * protect;
@@ -645,15 +768,36 @@ __DEVICE__ float3 process_color(float3 inRGB, int input_space, int region, float
     );
 
     float3 mixedLin = shapedLin;
-    if (preserve_mid_gray) {
-        float g_mid = midgray_preserve_gain(input_space, amount, symmetry_bias, center, width, amount_scaled);
+
+    // Optional hue/saturation recovery for negative contrast at higher Safety.
+    // Robust approach: blend chroma vectors while preserving processed luminance.
+    if (p.amount < 0.0f) {
+        float t = saturatef((p.safety - k_neg_hs_safety_start) / _fmaxf(1.0f - k_neg_hs_safety_start, 1e-6f));
+        t = smootherstep01(t);
+        float hs_mix = k_neg_hs_mix_max * t;
+        if (hs_mix > 0.0f) {
+            float Yproc = _fmaxf(1e-6f, mixedLin.x * rec709Y.x + mixedLin.y * rec709Y.y + mixedLin.z * rec709Y.z);
+            float Ysrc = _fmaxf(1e-6f, linRGB.x * rec709Y.x + linRGB.y * rec709Y.y + linRGB.z * rec709Y.z);
+            float3 Cproc = make_float3(mixedLin.x - Yproc, mixedLin.y - Yproc, mixedLin.z - Yproc);
+            float3 Csrc = make_float3(linRGB.x - Ysrc, linRGB.y - Ysrc, linRGB.z - Ysrc);
+            float3 Cmix = make_float3(
+                Cproc.x + (Csrc.x - Cproc.x) * hs_mix,
+                Cproc.y + (Csrc.y - Cproc.y) * hs_mix,
+                Cproc.z + (Csrc.z - Cproc.z) * hs_mix
+            );
+            mixedLin = make_float3(Yproc + Cmix.x, Yproc + Cmix.y, Yproc + Cmix.z);
+        }
+    }
+
+    if (p.preserve_mid_gray) {
+        float g_mid = midgray_preserve_gain(p, s);
         mixedLin = make_float3(mixedLin.x * g_mid, mixedLin.y * g_mid, mixedLin.z * g_mid);
     }
 
     return make_float3(
-        linear_to_code_space(mixedLin.x, input_space),
-        linear_to_code_space(mixedLin.y, input_space),
-        linear_to_code_space(mixedLin.z, input_space)
+        linear_to_code_space(mixedLin.x, p.input_space),
+        linear_to_code_space(mixedLin.y, p.input_space),
+        linear_to_code_space(mixedLin.z, p.input_space)
     );
 }
 
@@ -732,9 +876,12 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, __TEXTU
 
     float amount_use = p_amount * p_safety;
     float overlay_amount = p_bypass ? 0.0f : amount_use;
-    float3 out_color = p_bypass ? inRGB : process_color(inRGB, p_input_space, p_region, p_center_shift, p_width, amount_use, p_symmetry_bias, p_safety, p_preserve_mid_gray);
+    ProcessInput p_proc = make_process_input(p_input_space, p_region, p_center_shift, p_width, amount_use, p_symmetry_bias, p_safety, p_preserve_mid_gray);
+    ProcessInput p_overlay = make_process_input(p_input_space, p_region, p_center_shift, p_width, overlay_amount, p_symmetry_bias, p_safety, p_preserve_mid_gray);
+    ProcessInput p_overlay_di = make_process_input(SPACE_DI, p_region, p_center_shift, p_width, overlay_amount, p_symmetry_bias, p_safety, p_preserve_mid_gray);
+    float3 out_color = p_bypass ? inRGB : process_color(inRGB, p_proc);
 
-    if (p_guide || p_curve) {
+    if (p_guide || p_curve || p_highlight_pivot_point) {
         int4 bar = get_black_bar_thickness(p_Width, p_Height, p_TexR, p_TexG, p_TexB, k_black_threshold, p_input_space);
         if (k_assume_centered) {
             int min_lr = (int)_fminf((float)bar.x, (float)bar.z);
@@ -758,6 +905,51 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, __TEXTU
         float y = (float)y_in / (float)(eff_h - 1);
         float guide_top = 1.0f - (k_guide_strip_height + k_guide_ramp_height);
 
+        if (p_highlight_pivot_point) {
+            CurveState s_overlay = solve_curve_state(p_overlay);
+            float ydi_px = luminance_di_from_code(inRGB, p_input_space);
+            float pivot_half = pivot_half_range_di(s_overlay, p_input_space);
+            float center_stops = center_stops_from_center_di(s_overlay.center, p_input_space);
+            float y_stops = center_stops_from_center_di(ydi_px, p_input_space);
+            float dist_stops = _fabs(y_stops - center_stops);
+
+            float hi_stops = center_stops_from_center_di(s_overlay.center + pivot_half, p_input_space);
+            float lo_stops = center_stops_from_center_di(s_overlay.center - pivot_half, p_input_space);
+            float edge_stops = 0.5f * _fabs(hi_stops - lo_stops);
+
+            // Solid center band: +-0.5 stop. Outer half fades smoothly to zero.
+            const float core_stops = 0.5f;
+            float alpha = 0.0f;
+            int in_core = dist_stops <= core_stops;
+            if (dist_stops <= core_stops) {
+                alpha = k_pivot_overlay_alpha;
+            } else {
+                float fade_span = _fmaxf(edge_stops - core_stops, 1e-6f);
+                float t = saturatef((dist_stops - core_stops) / fade_span);
+                alpha = k_pivot_overlay_alpha * (1.0f - smootherstep01(t));
+            }
+
+            if (alpha > 0.0f) {
+                float3 pivot_green = encode_warn_color(make_float3(0.08f, 0.95f, 0.08f), p_input_space);
+                // Yellow-green for smoother transition from the core band.
+                float3 pivot_yellow = encode_warn_color(make_float3(0.78f, 0.95f, 0.10f), p_input_space);
+                float3 pivot_color = pivot_yellow;
+                if (in_core) {
+                    float core_t = smootherstep01(saturatef(dist_stops / _fmaxf(core_stops, 1e-6f)));
+                    pivot_color = make_float3(
+                        pivot_green.x + (pivot_yellow.x - pivot_green.x) * core_t,
+                        pivot_green.y + (pivot_yellow.y - pivot_green.y) * core_t,
+                        pivot_green.z + (pivot_yellow.z - pivot_green.z) * core_t
+                    );
+                }
+                out_color = make_float3(
+                    out_color.x + (pivot_color.x - out_color.x) * alpha,
+                    out_color.y + (pivot_color.y - out_color.y) * alpha,
+                    out_color.z + (pivot_color.z - out_color.z) * alpha
+                );
+            }
+        }
+
         if (p_curve) {
             // Fixed linear reference (identity) curve: dashed, 50% alpha, slightly dimmer than white.
             float y_ref = 1.0f - x;
@@ -775,8 +967,9 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, __TEXTU
                 }
             }
             // Full-frame curve overlay in DI code domain (internal working space).
-            float3 c = process_color(make_float3(x, x, x), SPACE_DI, p_region, p_center_shift, p_width, overlay_amount, p_symmetry_bias, p_safety, p_preserve_mid_gray);
-            float o_di = saturatef(c.x);
+            float3 c = process_color(make_float3(x, x, x), p_overlay_di);
+            // Do not clamp for display: values above/below visible range naturally go off-screen.
+            float o_di = c.x;
             float y_curve = 1.0f - o_di;
             if (_fabs(y - y_curve) < k_curve_thickness) {
                 float w = linear_to_code_space(1.0f, p_input_space);
@@ -791,9 +984,9 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, __TEXTU
             float v1 = guide_step_value_di(_fminf(step + 1, k_guide_steps - 1));
             float v_1 = guide_step_value_di(_fmaxf(step - 1, 0));
 
-            float3 c0 = process_color(make_float3(v0, v0, v0), SPACE_DI, p_region, p_center_shift, p_width, overlay_amount, p_symmetry_bias, p_safety, p_preserve_mid_gray);
-            float3 c1 = process_color(make_float3(v1, v1, v1), SPACE_DI, p_region, p_center_shift, p_width, overlay_amount, p_symmetry_bias, p_safety, p_preserve_mid_gray);
-            float3 c_1 = process_color(make_float3(v_1, v_1, v_1), SPACE_DI, p_region, p_center_shift, p_width, overlay_amount, p_symmetry_bias, p_safety, p_preserve_mid_gray);
+            float3 c0 = process_color(make_float3(v0, v0, v0), p_overlay_di);
+            float3 c1 = process_color(make_float3(v1, v1, v1), p_overlay_di);
+            float3 c_1 = process_color(make_float3(v_1, v_1, v_1), p_overlay_di);
 
             float o0 = c0.x;
             float o1 = c1.x;
@@ -820,7 +1013,7 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, __TEXTU
             float stops = (x * steps_range) - (float)middle;
             float lin = k_guide_midgray_lin * _exp2f(stops);
             float v = linear_to_di(lin);
-            float3 c = process_color(make_float3(v, v, v), SPACE_DI, p_region, p_center_shift, p_width, overlay_amount, p_symmetry_bias, p_safety, p_preserve_mid_gray);
+            float3 c = process_color(make_float3(v, v, v), p_overlay_di);
             float o = c.x;
             float disp = di_code_to_space(o, p_input_space);
             return make_float3(disp, disp, disp);
