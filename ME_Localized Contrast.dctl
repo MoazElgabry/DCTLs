@@ -1,7 +1,7 @@
 #line 2
 /*
 
-ME Localized Contrast v1.2
+ME Localized Contrast v1.2.1
 by Moaz Elgabry
 moazelgabry.com
 buymeacoffee.com/moazelgabry
@@ -9,13 +9,14 @@ buymeacoffee.com/moazelgabry
 Localized, smooth, range-limited contrast shaping.
 
 Changelog:
-v1.2 - *Added a new Highlight Pivot Point toggle that draws a green guide over the pivot-centered middle band to help align exposure targets when shaping contrast.
-       *Improved the chroma/luma protection logic in constrained shadow/highlight regions to better preserve color integrity while still allowing effective contrast shaping.
-       *Better mapping of regional amount limits to the safety slider, with more gradual relaxation of constraints as safety increases.
-v1.1 - *Reworked the tool for safer contrast shaping under extreme pushes: substantial tuning was added so results stay controlled and image integrity is protected, even at aggressive settings.
-       *Replaced the old Safe Range toggle with a new Safety Fader: a smooth, gradual control that expands freedom progressively instead of hard-jumping between constrained/unconstrained behavior.
-       *Added stability logic that keeps contrast growth usable and avoids "breaking" the image when pushing Amount/Center/Width in difficult regions.
-v1.0 - Initial release
+V1.2.1 - *Refined the chroma protection logic for negative Amount settings to better preserve color integrity while still allowing effective contrast shaping, especially in shadow regions. 
+v1.2   - *Added a new Highlight Pivot Point toggle that draws a green guide over the pivot-centered middle band to help align exposure targets when shaping contrast.
+         *Improved the chroma/luma protection logic in constrained shadow/highlight regions to better preserve color integrity while still allowing effective contrast shaping.
+         *Better mapping of regional amount limits to the safety slider, with more gradual relaxation of constraints as safety increases.
+v1.1   - *Reworked the tool for safer contrast shaping under extreme pushes: substantial tuning was added so results stay controlled and image integrity is protected, even at aggressive settings.
+         *Replaced the old Safe Range toggle with a new Safety Fader: a smooth, gradual control that expands freedom progressively instead of hard-jumping between constrained/unconstrained behavior.
+         *Added stability logic that keeps contrast growth usable and avoids "breaking" the image when pushing Amount/Center/Width in difficult regions.
+v1.0   - Initial release
 
 
 */
@@ -155,6 +156,7 @@ struct ProcessInput {
     float center_shift;
     float width_user;
     float amount;
+    float amount_ui;
     float symmetry_bias;
     float safety;
     int preserve_mid_gray;
@@ -196,8 +198,24 @@ __CONSTANT__ float k_safety_taper_relax = 0.25f;
 __CONSTANT__ float k_chroma_protect_strength = 0.9f;
 __CONSTANT__ float k_chroma_protect_boundary_fraction = 0.35f;
 __CONSTANT__ float k_pivot_overlay_alpha = 0.35f;
-__CONSTANT__ float k_neg_hs_safety_start = 0.3f;
-__CONSTANT__ float k_neg_hs_mix_max = 0.7f;
+// Negative-amount chroma recovery split by luminance relative to mid gray.
+// Below mid gray: stronger recovery.
+__CONSTANT__ float k_neg_hs_min_below_mid = 0.5f;
+__CONSTANT__ float k_neg_hs_max_below_mid = 0.70f;
+// Above mid gray: gentler recovery.
+__CONSTANT__ float k_neg_hs_min_above_mid = 0.08f;
+__CONSTANT__ float k_neg_hs_max_above_mid = 0.16f;
+// Split center in stops relative to mid gray (positive shifts split into highlights).
+__CONSTANT__ float k_neg_hs_split_center_stops = 0.7f;
+// Smooth transition width (in stops) around mid gray for mix split.
+__CONSTANT__ float k_neg_hs_split_soft_stops = 1.2f;
+// Relative-chroma mix regularization (no hard clamps).
+__CONSTANT__ float k_neg_hs_rel_k = 0.02f;
+// Soft-bound scale for relative chroma; larger = looser bound.
+__CONSTANT__ float k_neg_hs_rel_soft_limit = 4.0f;
+// Near-black fade for HS recovery (in linear-light Y).
+__CONSTANT__ float k_neg_hs_black_y0 = 0.005f;
+__CONSTANT__ float k_neg_hs_black_y1 = 0.03f;
 
 // Amount sensitivity by tonal group (shadows/highlights are more constrained).
 __CONSTANT__ float k_amount_scale_mid = 1.0f;
@@ -571,13 +589,14 @@ __DEVICE__ float soft_limit_stops(float stops, float max_stops) {
     return _copysignf(abs_out, stops);
 }
 
-__DEVICE__ ProcessInput make_process_input(int input_space, int region, float center_shift, float width_user, float amount, float symmetry_bias, float safety, int preserve_mid_gray) {
+__DEVICE__ ProcessInput make_process_input(int input_space, int region, float center_shift, float width_user, float amount, float amount_ui, float symmetry_bias, float safety, int preserve_mid_gray) {
     ProcessInput p;
     p.input_space = input_space;
     p.region = region;
     p.center_shift = center_shift;
     p.width_user = width_user;
     p.amount = amount;
+    p.amount_ui = amount_ui;
     p.symmetry_bias = symmetry_bias;
     p.safety = safety;
     p.preserve_mid_gray = preserve_mid_gray;
@@ -713,7 +732,7 @@ __DEVICE__ float3 process_color(float3 inRGB, ProcessInput p) {
         code_to_linear_space(inRGB.z, p.input_space)
     );
 
-    // Rec.709 linear luminance coefficients (non-negative, stable for luma mixing).
+    // Luma-like Y computed from linearized RGB using Rec.709 coefficients.
     const float3 rec709Y = make_float3(0.2126f, 0.7152f, 0.0722f);
 
     float Ylin = _fmaxf(1e-6f, linRGB.x * rec709Y.x + linRGB.y * rec709Y.y + linRGB.z * rec709Y.z);
@@ -768,30 +787,64 @@ __DEVICE__ float3 process_color(float3 inRGB, ProcessInput p) {
     );
 
     float3 mixedLin = shapedLin;
+    float3 sourceLinForMix = linRGB;
 
-    // Optional hue/saturation recovery for negative contrast at higher Safety.
-    // Robust approach: blend chroma vectors while preserving processed luminance.
-    if (p.amount < 0.0f) {
-        float t = saturatef((p.safety - k_neg_hs_safety_start) / _fmaxf(1.0f - k_neg_hs_safety_start, 1e-6f));
-        t = smootherstep01(t);
-        float hs_mix = k_neg_hs_mix_max * t;
-        if (hs_mix > 0.0f) {
-            float Yproc = _fmaxf(1e-6f, mixedLin.x * rec709Y.x + mixedLin.y * rec709Y.y + mixedLin.z * rec709Y.z);
-            float Ysrc = _fmaxf(1e-6f, linRGB.x * rec709Y.x + linRGB.y * rec709Y.y + linRGB.z * rec709Y.z);
-            float3 Cproc = make_float3(mixedLin.x - Yproc, mixedLin.y - Yproc, mixedLin.z - Yproc);
-            float3 Csrc = make_float3(linRGB.x - Ysrc, linRGB.y - Ysrc, linRGB.z - Ysrc);
-            float3 Cmix = make_float3(
-                Cproc.x + (Csrc.x - Cproc.x) * hs_mix,
-                Cproc.y + (Csrc.y - Cproc.y) * hs_mix,
-                Cproc.z + (Csrc.z - Cproc.z) * hs_mix
-            );
-            mixedLin = make_float3(Yproc + Cmix.x, Yproc + Cmix.y, Yproc + Cmix.z);
-        }
+    // Preserve exposure first so any later source-vs-processed mixing happens at matched exposure.
+    float g_mid = 1.0f;
+    if (p.preserve_mid_gray) {
+        g_mid = midgray_preserve_gain(p, s);
+        mixedLin = make_float3(mixedLin.x * g_mid, mixedLin.y * g_mid, mixedLin.z * g_mid);
+        sourceLinForMix = make_float3(sourceLinForMix.x * g_mid, sourceLinForMix.y * g_mid, sourceLinForMix.z * g_mid);
     }
 
-    if (p.preserve_mid_gray) {
-        float g_mid = midgray_preserve_gain(p, s);
-        mixedLin = make_float3(mixedLin.x * g_mid, mixedLin.y * g_mid, mixedLin.z * g_mid);
+    // Negative-amount chroma recovery with smooth luminance split:
+    // - below mid gray uses stronger min/max mix bounds
+    // - above mid gray uses gentler min/max mix bounds
+    // Stage 1 (Safety at minimum): amount drives 0 -> local min.
+    // Stage 2 (Safety above minimum): add from local min toward local max.
+    if (p.amount_ui < 0.0f) {
+        float Yproc = _fmaxf(1e-6f, mixedLin.x * rec709Y.x + mixedLin.y * rec709Y.y + mixedLin.z * rec709Y.z);
+        float Ysrc = _fmaxf(1e-6f, sourceLinForMix.x * rec709Y.x + sourceLinForMix.y * rec709Y.y + sourceLinForMix.z * rec709Y.z);
+        float y_stops = _log2f(Ysrc / 0.18f);
+        float split_t = saturatef(((y_stops - k_neg_hs_split_center_stops) + k_neg_hs_split_soft_stops) / _fmaxf(2.0f * k_neg_hs_split_soft_stops, 1e-6f));
+        split_t = smootherstep01(split_t); // 0=below-mid side, 1=above-mid side
+        float min_mix_zone = k_neg_hs_min_below_mid + (k_neg_hs_min_above_mid - k_neg_hs_min_below_mid) * split_t;
+        float max_mix_zone = k_neg_hs_max_below_mid + (k_neg_hs_max_above_mid - k_neg_hs_max_below_mid) * split_t;
+
+        float amount_t = smootherstep01(saturatef(-p.amount_ui));
+        float mix_at_safety_min = min_mix_zone * amount_t;
+        float safety_t = smootherstep01(saturatef((p.safety - k_safety_min) / _fmaxf(k_safety_max - k_safety_min, 1e-6f)));
+        float hs_mix = mix_at_safety_min + (max_mix_zone - mix_at_safety_min) * safety_t;
+        // Fade recovery smoothly toward black to avoid unstable color behavior.
+        float black_t = smootherstep01(saturatef((Ysrc - k_neg_hs_black_y0) / _fmaxf(k_neg_hs_black_y1 - k_neg_hs_black_y0, 1e-6f)));
+        hs_mix *= black_t;
+
+        if (hs_mix > 0.0f) {
+            float3 Cproc = make_float3(mixedLin.x - Yproc, mixedLin.y - Yproc, mixedLin.z - Yproc);
+            float3 Csrc = make_float3(sourceLinForMix.x - Ysrc, sourceLinForMix.y - Ysrc, sourceLinForMix.z - Ysrc);
+
+            // Mix regularized relative chroma using Yn = sqrt(Y^2 + k^2) (no singularity at black).
+            float Yn_proc = _sqrtf(Yproc * Yproc + k_neg_hs_rel_k * k_neg_hs_rel_k);
+            float Yn_src = _sqrtf(Ysrc * Ysrc + k_neg_hs_rel_k * k_neg_hs_rel_k);
+            float invYproc = 1.0f / _fmaxf(Yn_proc, 1e-6f);
+            float invYsrc = 1.0f / _fmaxf(Yn_src, 1e-6f);
+            float3 Cproc_rel = make_float3(Cproc.x * invYproc, Cproc.y * invYproc, Cproc.z * invYproc);
+            float3 Csrc_rel = make_float3(Csrc.x * invYsrc, Csrc.y * invYsrc, Csrc.z * invYsrc);
+            float3 Cmix_rel = make_float3(
+                Cproc_rel.x + (Csrc_rel.x - Cproc_rel.x) * hs_mix,
+                Cproc_rel.y + (Csrc_rel.y - Cproc_rel.y) * hs_mix,
+                Cproc_rel.z + (Csrc_rel.z - Cproc_rel.z) * hs_mix
+            );
+            // Soft-bound relative chroma (smooth rational saturation, no hard clamp).
+            float s = _fmaxf(k_neg_hs_rel_soft_limit, 1e-6f);
+            float3 Cmix_rel_soft = make_float3(
+                (s * Cmix_rel.x) / _sqrtf(s * s + Cmix_rel.x * Cmix_rel.x),
+                (s * Cmix_rel.y) / _sqrtf(s * s + Cmix_rel.y * Cmix_rel.y),
+                (s * Cmix_rel.z) / _sqrtf(s * s + Cmix_rel.z * Cmix_rel.z)
+            );
+            float3 Cmix = make_float3(Cmix_rel_soft.x * Yn_proc, Cmix_rel_soft.y * Yn_proc, Cmix_rel_soft.z * Yn_proc);
+            mixedLin = make_float3(Yproc + Cmix.x, Yproc + Cmix.y, Yproc + Cmix.z);
+        }
     }
 
     return make_float3(
@@ -876,9 +929,9 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, __TEXTU
 
     float amount_use = p_amount * p_safety;
     float overlay_amount = p_bypass ? 0.0f : amount_use;
-    ProcessInput p_proc = make_process_input(p_input_space, p_region, p_center_shift, p_width, amount_use, p_symmetry_bias, p_safety, p_preserve_mid_gray);
-    ProcessInput p_overlay = make_process_input(p_input_space, p_region, p_center_shift, p_width, overlay_amount, p_symmetry_bias, p_safety, p_preserve_mid_gray);
-    ProcessInput p_overlay_di = make_process_input(SPACE_DI, p_region, p_center_shift, p_width, overlay_amount, p_symmetry_bias, p_safety, p_preserve_mid_gray);
+    ProcessInput p_proc = make_process_input(p_input_space, p_region, p_center_shift, p_width, amount_use, p_amount, p_symmetry_bias, p_safety, p_preserve_mid_gray);
+    ProcessInput p_overlay = make_process_input(p_input_space, p_region, p_center_shift, p_width, overlay_amount, p_amount, p_symmetry_bias, p_safety, p_preserve_mid_gray);
+    ProcessInput p_overlay_di = make_process_input(SPACE_DI, p_region, p_center_shift, p_width, overlay_amount, p_amount, p_symmetry_bias, p_safety, p_preserve_mid_gray);
     float3 out_color = p_bypass ? inRGB : process_color(inRGB, p_proc);
 
     if (p_guide || p_curve || p_highlight_pivot_point) {
