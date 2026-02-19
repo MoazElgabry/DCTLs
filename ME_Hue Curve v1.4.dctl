@@ -1,0 +1,1207 @@
+#line 2
+/* ME_Hue curve ver 1.4
+    by Moaz Elgabry
+    moazelgabry.com
+    buymeacoffee.com/moazelgabry
+
+
+    Based on the Hue curve function written by Thatcher Freeman
+    https://github.com/thatcherfreeman/utility-dctls/blob/main/Effects/Hue%20Curve.dctl
+
+    Original C++ code for OKLab by Bjorn Ottosson https://bottosson.github.io/posts/oklab/
+    ported to DCTL by Nico Wieseneder, www.demystify-color.com
+    ------------
+    Math for CIELab from http://www.brucelindbloom.com
+    Ported to DCTL by Jan Karow
+    ------------
+    Model for ProLab by:
+    I. A. Konovalenko, A. A. Smagina, D. P. Nikolaev and P. P. Nikolaev, 
+    "ProLab: A Perceptually Uniform Projective Color Coordinate System," 
+    in IEEE Access, vol. 9, pp. 133023-133042, 2021, doi: 10.1109/ACCESS.2021.3115425. 
+    https://ieeexplore.ieee.org/document/9547296/authors#authors
+    Ported to DCTL by Jan Karow
+    ------------
+    Values for reference white from https://de.wikipedia.org/wiki/Lab-Farbraum#Umrechnung_von_XYZ_zu_Lab
+
+    Change Log: 
+    V1.4.0: *Fixed compatibilty issues with opencl and metal.
+            *Made the hue curve C2 continious and now has better mathematical stability so small adjustments will feel more smooth.
+            *Improved protection for lab models against high saturation colors and the prune-to-break blue region for Davinici wide gamut.
+            *Added a guardrail to prevent the hue curve from folding particulalry when using the custom hue option.
+            *Improved visibility of the hue overlay curve.
+            *Removed experimental color models.
+    v1.3.0: *Initial release as earlier versions were not documented.
+ */
+
+
+DEFINE_UI_PARAMS(red_adjustment_amt, Red 🟥, DCTLUI_SLIDER_FLOAT, 0.0, -.6, .6, 0.001)
+DEFINE_UI_PARAMS(skin_adjustment_amt, Skin 👩🏻‍🦲, DCTLUI_SLIDER_FLOAT, 0.0, -0.25, .25, 0.001)
+DEFINE_UI_PARAMS(yellow_adjustment_amt, Yellow 🟨, DCTLUI_SLIDER_FLOAT, 0.0, -0.5, .5, 0.001)
+DEFINE_UI_PARAMS(green_adjustment_amt, Green 🟩, DCTLUI_SLIDER_FLOAT, 0.0, -0.7, .7, 0.001)
+DEFINE_UI_PARAMS(cyan_adjustment_amt, Cyan ⬜️, DCTLUI_SLIDER_FLOAT, 0.0, -0.65, .65, 0.001)
+DEFINE_UI_PARAMS(blue_adjustment_amt, Blue 🟦, DCTLUI_SLIDER_FLOAT, 0.0, -0.6, .6, 0.001)
+DEFINE_UI_PARAMS(magenta_adjustment_amt, Magenta 🟪, DCTLUI_SLIDER_FLOAT, 0.0, -0.57, .57, 0.001)
+DEFINE_UI_PARAMS(adjustment_amt, Custom Hue, DCTLUI_SLIDER_FLOAT, 0.0, -1, 1, 0.001)
+DEFINE_UI_PARAMS(selected_hue, Select Hue Angle, DCTLUI_SLIDER_FLOAT, 0.5, 0.0, 360.0, 0.001)
+DEFINE_UI_PARAMS(complementary_fade, Opposite Hue Change, DCTLUI_SLIDER_FLOAT, 1.0, 0.0, 1.0, 0.01)
+DEFINE_UI_PARAMS(smoothness, Smooth, DCTLUI_SLIDER_FLOAT, 0, 0.0, 1.0, 0.01)
+
+
+DEFINE_UI_PARAMS(bypass, 🚫 Bypass, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_PARAMS(draw_curve, 📈 Draw Curve, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_PARAMS(complementary_curve, Affect Opposite Hues, DCTLUI_CHECK_BOX, 0)
+
+DEFINE_UI_PARAMS(color_model, Color model, DCTLUI_COMBO_BOX, 6, {chen, HSV, reuleaux, HSP, cie, ok, pro}, {Chen, HSV, Reuleaux, HSP, CIELab, OKLab, ProLab})
+
+DEFINE_UI_PARAMS(colorspace, Colorspace, DCTLUI_COMBO_BOX, 1, {ccg, dwg, awg3}, {Cinema Gamut, DaVinci WG, AWG3})
+
+// Keep constants global (some Metal/OpenCL parsers dislike repeated in-function defines).
+#define ME_PI 3.1415926535897932384626f
+#define PI ME_PI
+#define k_black_threshold 0.01f
+#define k_assume_centered 1
+#define k_fold_limit 0.35f
+
+// Forward declaration (used by early color-model helpers).
+__DEVICE__ float3 v_x_mtx_3x3_s(float3 v,
+                                float m00, float m01, float m02,
+                                float m10, float m11, float m12,
+                                float m20, float m21, float m22);
+
+ __DEVICE__ float wrapf(float x, float y) {
+     if (x < 0) {
+         return y + _fmod(x, y);
+     } else {
+         return _fmod(x, y);
+     }
+ }
+
+__DEVICE__ float circular_delta(float to, float from) {
+    // Shortest signed distance on a unit circle, returned in [-0.5, 0.5].
+    return wrapf((to - from) + 0.5f, 1.0f) - 0.5f;
+}
+
+__DEVICE__ int4 get_black_bar_thickness_rgb(int p_Width, int p_Height, __TEXTURE__ p_TexR, __TEXTURE__ p_TexG, __TEXTURE__ p_TexB, float black_threshold) {
+    int4 thickness = make_int4(0, 0, 0, 0);
+
+    int left = 0;
+    int right = p_Height / 2;
+    int center_x = p_Width / 2;
+    while (left < right) {
+        int mid = (left + right) / 2;
+        float r = _tex2D(p_TexR, center_x, mid);
+        float g = _tex2D(p_TexG, center_x, mid);
+        float b = _tex2D(p_TexB, center_x, mid);
+        if (_fabs(r) > black_threshold || _fabs(g) > black_threshold || _fabs(b) > black_threshold) right = mid;
+        else left = mid + 1;
+    }
+    thickness.y = left;
+
+    left = 0;
+    right = p_Height / 2;
+    while (left < right) {
+        int mid = (left + right) / 2;
+        float r = _tex2D(p_TexR, center_x, p_Height - 1 - mid);
+        float g = _tex2D(p_TexG, center_x, p_Height - 1 - mid);
+        float b = _tex2D(p_TexB, center_x, p_Height - 1 - mid);
+        if (_fabs(r) > black_threshold || _fabs(g) > black_threshold || _fabs(b) > black_threshold) right = mid;
+        else left = mid + 1;
+    }
+    thickness.w = left;
+
+    left = 0;
+    right = p_Width / 2;
+    int center_y = p_Height / 2;
+    while (left < right) {
+        int mid = (left + right) / 2;
+        float r = _tex2D(p_TexR, mid, center_y);
+        float g = _tex2D(p_TexG, mid, center_y);
+        float b = _tex2D(p_TexB, mid, center_y);
+        if (_fabs(r) > black_threshold || _fabs(g) > black_threshold || _fabs(b) > black_threshold) right = mid;
+        else left = mid + 1;
+    }
+    thickness.x = left;
+
+    left = 0;
+    right = p_Width / 2;
+    while (left < right) {
+        int mid = (left + right) / 2;
+        float r = _tex2D(p_TexR, p_Width - 1 - mid, center_y);
+        float g = _tex2D(p_TexG, p_Width - 1 - mid, center_y);
+        float b = _tex2D(p_TexB, p_Width - 1 - mid, center_y);
+        if (_fabs(r) > black_threshold || _fabs(g) > black_threshold || _fabs(b) > black_threshold) right = mid;
+        else left = mid + 1;
+    }
+    thickness.z = left;
+
+    return thickness;
+}
+
+//color models
+//==============
+
+   __DEVICE__ float3 RGBtoCHEN(float3 in) {
+    float r = in.x;
+    float g = in.y;
+    float b = in.z;
+
+    float h;
+    float c;
+    float l;
+
+    const float rtr = r * 0.81649658f + g * -0.40824829f + b * -0.40824829f;
+    const float rtg = r * 0.0f + g * 0.70710678f + b * -0.70710678f;
+    const float rtb = r * 0.57735027f + g * 0.57735027f + b * 0.57735027f;
+
+    const float art = _atan2f(rtg, rtr);
+
+    const float sphr = _sqrtf(rtr*rtr + rtg*rtg + rtb*rtb);
+    const float spht = art < 0.0f ? art + 2.0f * 3.141592653589f : art;
+    const float sphp = _atan2f(_sqrtf(rtr*rtr + rtg*rtg), rtb);
+
+    l = sphr * 0.5773502691896258f;
+    h = spht * 0.15915494309189535f;
+    c = sphp * 1.0467733744265997f;
+
+    return make_float3(h, c, l);
+    } //by Kaur Hendrikson
+   
+   __DEVICE__ float3 CHENtoRGB(float3 in) {
+    float h = in.x * 6.283185307179586f;
+    float c = in.y * 0.9553166181245093f;
+    float l = in.z * 1.7320508075688772f;
+    
+   float r = 0;
+   float g = 0;
+   float b = 0;
+
+    const float ctr = l * _sinf(c) * _cosf(h);
+    const float ctg = l * _sinf(c) * _sinf(h);
+    const float ctb = l * _cosf(c);
+
+    r = ctr * 0.81649658f + ctg * 0.0f + ctb * 0.57735027f;
+    g = ctr * -0.40824829f + ctg * 0.70710678f + ctb * 0.57735027f;
+    b = ctr * -0.40824829f + ctg * -0.70710678f + ctb * 0.57735027f;
+
+    return make_float3(r, g, b);
+    } //by Kaur Hendrikson
+  
+  
+  
+__DEVICE__ float3 rgb_to_reuleaux(float3 rgb) {
+    float3 NORM_MULTS = make_float3(2.0f * PI, _sqrtf(2.0f), 1.0f);
+    float3 rot = make_float3(
+                    _sqrtf(2.0f) / 6.0f * (2.0f * rgb.x - rgb.y - rgb.z),
+                    (rgb.y - rgb.z) / _sqrtf(6.0f),
+                    (rgb.x + rgb.y + rgb.z) / 3.0f);
+    float safe_luma = _fmaxf(_fabs(rot.z), 1e-6f);
+    float3 rlx = make_float3(
+                    ME_PI - _atan2f(rot.y, -rot.x),
+                    _sqrtf(rot.x * rot.x + rot.y * rot.y) / safe_luma,
+                    _fmaxf(rgb.x, _fmaxf(rgb.y, rgb.z)));
+    return make_float3(rlx.x / NORM_MULTS.x, rlx.y / NORM_MULTS.y, rlx.z / NORM_MULTS.z);
+     }
+  
+  __DEVICE__ float3 reuleaux_to_rgb(float3 rlx) {
+    float3 NORM_MULTS = make_float3(2.0f * PI, _sqrtf(2.0f), 1.0f);
+    rlx = make_float3(rlx.x * NORM_MULTS.x, rlx.y * NORM_MULTS.y, rlx.z * NORM_MULTS.z);
+    float safe_sat = _fmaxf(rlx.y, 1e-6f);
+    float m = NORM_MULTS.y * _fmaxf(_cosf(rlx.x), _fmaxf(_cosf(rlx.x + NORM_MULTS.x / 3.0f), _cosf(rlx.x - NORM_MULTS.x / 3.0f))) + 1.0f / safe_sat;
+    m = (m >= 0.0f) ? _fmaxf(m, 1e-6f) : _fminf(m, -1e-6f);
+    float3 ocs = make_float3(
+                    rlx.z * _cosf(rlx.x) / m,
+                    rlx.z * _sinf(rlx.x) / m,
+                    rlx.z);
+    float3 rgb = make_float3(
+                    ocs.z - _sqrtf(3.0f / 2.0f) * _fmaxf(_fabs(ocs.y) - _sqrtf(3.0f) * ocs.x, 0.0f),
+                    ocs.z - _sqrtf(3.0f / 2.0f) * (_fmaxf(_fabs(ocs.y), _sqrtf(3.0f) * ocs.x) - ocs.y),
+                    ocs.z - _sqrtf(3.0f / 2.0f) * (_fmaxf(_fabs(ocs.y), _sqrtf(3.0f) * ocs.x) + ocs.y));
+    return rgb;
+     }
+ 
+ __DEVICE__ float3 RGB_to_HSV(float3 RGB) {
+    float R = RGB.x, G = RGB.y, B = RGB.z;
+    float maxVal = _fmaxf(R, _fmaxf(G, B));
+    float minVal = _fminf(R, _fminf(G, B));
+    float delta = maxVal - minVal;
+
+    float H = 0.0f, S = (maxVal == 0.0f) ? 0.0f : delta / maxVal;
+    float V = maxVal;
+
+    if (delta != 0.0f) {
+        if (maxVal == R) {
+            H = wrapf(((G - B) / delta), 6.0f);
+        } else if (maxVal == G) {
+            H = ((B - R) / delta) + 2.0f;
+        } else {
+            H = ((R - G) / delta) + 4.0f;
+        }
+        H /= 6.0f;
+        if (H < 0.0f) H += 1.0f;
+    }
+
+    return make_float3(H, S, V);
+    } //Convert to HSV
+ 
+ __DEVICE__ float3 HSV_to_RGB(float3 HSV) {
+    float H = HSV.x * 6.0f; // Scale hue to [0, 6]
+    float S = HSV.y;
+    float V = HSV.z;
+
+    float C = V * S; // Chroma
+    float X = C * (1.0f - _fabs(wrapf(H, 2.0f) - 1.0f)); // Second largest component
+    float m = V - C;
+
+    float3 RGB;
+    if      (H < 1.0f) RGB = make_float3(C, X, 0.0f);
+    else if (H < 2.0f) RGB = make_float3(X, C, 0.0f);
+    else if (H < 3.0f) RGB = make_float3(0.0f, C, X);
+    else if (H < 4.0f) RGB = make_float3(0.0f, X, C);
+    else if (H < 5.0f) RGB = make_float3(X, 0.0f, C);
+    else               RGB = make_float3(C, 0.0f, X);
+
+    return make_float3(RGB.x + m, RGB.y + m, RGB.z + m);
+    } //Convert from HSV to RGB
+
+ 
+ // Convert HSP (Hue, Saturation, Perceived brightness) to RGB
+ __DEVICE__ float3 HSPtoRGB(float3 hsp) {
+    // Constants for the HSP-RGB conversion
+    const float Pr = 0.299f;
+    const float Pg = 0.587f;
+    const float Pb = 0.114f;
+    float H = hsp.x;
+    float S = hsp.y;
+    float P = hsp.z;
+
+    float3 rgb;
+    float minOverMax = 1.0f - S;
+    float safeMinOverMax = _fmaxf(minOverMax, 1e-6f);
+    float part;
+
+    if (minOverMax > 0.0f) {
+        if (H < 1.0f / 6.0f) {  // R > G > B
+            H = 6.0f * H;
+            part = 1.0f + H * (1.0f / safeMinOverMax - 1.0f);
+            rgb.z = P / _sqrtf(Pr / (safeMinOverMax * safeMinOverMax) + Pg * part * part + Pb);
+            rgb.x = rgb.z / safeMinOverMax;
+            rgb.y = rgb.z + H * (rgb.x - rgb.z);
+        } else if (H < 2.0f / 6.0f) {  // G > R > B
+            H = 6.0f * (2.0f / 6.0f - H);
+            part = 1.0f + H * (1.0f / safeMinOverMax - 1.0f);
+            rgb.z = P / _sqrtf(Pg / (safeMinOverMax * safeMinOverMax) + Pr * part * part + Pb);
+            rgb.y = rgb.z / safeMinOverMax;
+            rgb.x = rgb.z + H * (rgb.y - rgb.z);
+        } else if (H < 3.0f / 6.0f) {  // G > B > R
+            H = 6.0f * (H - 2.0f / 6.0f);
+            part = 1.0f + H * (1.0f / safeMinOverMax - 1.0f);
+            rgb.x = P / _sqrtf(Pg / (safeMinOverMax * safeMinOverMax) + Pb * part * part + Pr);
+            rgb.y = rgb.x / safeMinOverMax;
+            rgb.z = rgb.x + H * (rgb.y - rgb.x);
+        } else if (H < 4.0f / 6.0f) {  // B > G > R
+            H = 6.0f * (4.0f / 6.0f - H);
+            part = 1.0f + H * (1.0f / safeMinOverMax - 1.0f);
+            rgb.x = P / _sqrtf(Pb / (safeMinOverMax * safeMinOverMax) + Pg * part * part + Pr);
+            rgb.z = rgb.x / safeMinOverMax;
+            rgb.y = rgb.x + H * (rgb.z - rgb.x);
+        } else if (H < 5.0f / 6.0f) {  // B > R > G
+            H = 6.0f * (H - 4.0f / 6.0f);
+            part = 1.0f + H * (1.0f / safeMinOverMax - 1.0f);
+            rgb.y = P / _sqrtf(Pb / (safeMinOverMax * safeMinOverMax) + Pr * part * part + Pg);
+            rgb.z = rgb.y / safeMinOverMax;
+            rgb.x = rgb.y + H * (rgb.z - rgb.y);
+        } else {  // R > B > G
+            H = 6.0f * (6.0f / 6.0f - H);
+            part = 1.0f + H * (1.0f / safeMinOverMax - 1.0f);
+            rgb.y = P / _sqrtf(Pr / (safeMinOverMax * safeMinOverMax) + Pb * part * part + Pg);
+            rgb.x = rgb.y / safeMinOverMax;
+            rgb.z = rgb.y + H * (rgb.x - rgb.y);
+        }
+    } else {
+        // Handle grayscale case when minOverMax == 0
+        if (H < 1.0f / 6.0f) {  // R > G > B
+            H = 6.0f * H;
+            rgb.x = _sqrtf(P * P / (Pr + Pg * H * H));
+            rgb.y = rgb.x * H;
+            rgb.z = 0.0f;
+        } else if (H < 2.0f / 6.0f) {  // G > R > B
+            H = 6.0f * (2.0f / 6.0f - H);
+            rgb.y = _sqrtf(P * P / (Pg + Pr * H * H));
+            rgb.x = rgb.y * H;
+            rgb.z = 0.0f;
+        } else if (H < 3.0f / 6.0f) {  // G > B > R
+            H = 6.0f * (H - 2.0f / 6.0f);
+            rgb.y = _sqrtf(P * P / (Pg + Pb * H * H));
+            rgb.z = rgb.y * H;
+            rgb.x = 0.0f;
+        } else if (H < 4.0f / 6.0f) {  // B > G > R
+            H = 6.0f * (4.0f / 6.0f - H);
+            rgb.z = _sqrtf(P * P / (Pb + Pg * H * H));
+            rgb.y = rgb.z * H;
+            rgb.x = 0.0f;
+        } else if (H < 5.0f / 6.0f) {  // B > R > G
+            H = 6.0f * (H - 4.0f / 6.0f);
+            rgb.z = _sqrtf(P * P / (Pb + Pr * H * H));
+            rgb.x = rgb.z * H;
+            rgb.y = 0.0f;
+        } else {  // R > B > G
+            H = 6.0f * (6.0f / 6.0f - H);
+            rgb.x = _sqrtf(P * P / (Pr + Pb * H * H));
+            rgb.z = rgb.x * H;
+            rgb.y = 0.0f;
+        }
+    }
+
+    return rgb;
+ }
+ 
+ // Convert RGB to HSP (Perceived Brightness, Hue, Saturation)
+ __DEVICE__ float3 RGBtoHSP(float3 rgb) {
+    // Constants for the HSP-RGB conversion
+    const float Pr = 0.299f;
+    const float Pg = 0.587f;
+    const float Pb = 0.114f;
+    float R = rgb.x;
+    float G = rgb.y;
+    float B = rgb.z;
+    float safeR = _fmaxf(_fabs(R), 1e-6f);
+    float safeG = _fmaxf(_fabs(G), 1e-6f);
+    float safeB = _fmaxf(_fabs(B), 1e-6f);
+
+    float3 hsp;
+    float P = _sqrtf(R * R * Pr + G * G * Pg + B * B * Pb);  // Perceived brightness
+    hsp.z = P;
+
+    // Calculate Hue and Saturation
+    if (R == G && R == B) {  // Grayscale, no hue or saturation
+        hsp.x = 0.0f; // Hue
+        hsp.y = 0.0f; // Saturation
+        return hsp;
+    }
+
+    if (R >= G && R >= B) {  // R is largest
+        if (B >= G) {
+            hsp.x = 1.0f - (B - G) / (6.0f * (R - G)); // Hue
+            hsp.y = 1.0f - G / safeR;                // Saturation
+        } else {
+            hsp.x = (G - B) / (6.0f * (R - B));       // Hue
+            hsp.y = 1.0f - B / safeR;                // Saturation
+        }
+    } else if (G >= R && G >= B) {  // G is largest
+        if (R >= B) {
+            hsp.x = (2.0f / 6.0f) - (R - B) / (6.0f * (G - B)); // Hue
+            hsp.y = 1.0f - B / safeG;                          // Saturation
+        } else {
+            hsp.x = (2.0f / 6.0f) + (B - R) / (6.0f * (G - R)); // Hue
+            hsp.y = 1.0f - R / safeG;                          // Saturation
+        }
+    } else {  // B is largest
+        if (G >= R) {
+            hsp.x = (4.0f / 6.0f) - (G - R) / (6.0f * (B - R)); // Hue
+            hsp.y = 1.0f - R / safeB;                          // Saturation
+        } else {
+            hsp.x = (4.0f / 6.0f) + (R - G) / (6.0f * (B - G)); // Hue
+            hsp.y = 1.0f - G / safeB;                          // Saturation
+        }
+    }
+
+    return hsp;
+ }
+ 
+
+
+
+/*=========================
+
+LAB color models
+
+Adapted from code writeen by Jan Karow
+
+=========================*/
+
+
+ /* Inset-outset solution adapted from Nico Fink's OkLAB implementation*/
+ 
+ __DEVICE__ float3 rgb_inset_by_space(float3 rgb, int colorspace) {
+    // DaVinci Wide Gamut has a blue primary with negative y chromaticity (y = -0.1155).
+    // In Lab-family transforms (CIELab/OKLab/ProLab), those imaginary/negative primaries
+    // can generate XYZ values with negative components that destabilize the cube-root
+    // nonlinearity. This inset contracts the gamut before Lab conversion to keep values
+    // in a safe domain, and the matching outset restores the gamut on the way back.
+    // Only very wide gamuts with negative blue y need inset for Lab-family safety.
+    if (colorspace == 0 || colorspace == 2) {
+        // Cinema Gamut / AWG3 (shared inset scale ~= 0.2367)
+        return make_float3(
+            rgb.x * 0.8357302628472827f + rgb.y * 0.07575160430529301f + rgb.z * 0.08851819789301629f,
+            rgb.x * 0.07272987026297614f + rgb.y * 0.8387515418967071f + rgb.z * 0.08851798996797691f,
+            rgb.x * 0.07272966839689886f + rgb.y * 0.07575121559727113f + rgb.z * 0.8515177877383528f
+        );
+    }
+    if (colorspace == 1) {
+        // DaVinci WG (stronger inset scale ~= 0.2598)
+        return make_float3(
+            rgb.x * 0.8196988689806680f + rgb.y * 0.0831443464238070f + rgb.z * 0.0971568559890394f,
+            rgb.x * 0.0798277156498572f + rgb.y * 0.8230150003581090f + rgb.z * 0.0971566277722028f,
+            rgb.x * 0.0798274940832882f + rgb.y * 0.0831439197810352f + rgb.z * 0.8370271282400680f
+        );
+    }
+    // XYZ / Rec2020: passthrough
+    return rgb;
+ }
+     
+ __DEVICE__ float3 rgb_outset_by_space(float3 rgb, int colorspace) {
+    if (colorspace == 0 || colorspace == 2) {
+        // Inverse of Cinema Gamut / AWG3 inset
+        return make_float3(
+            rgb.x * 1.215294430519138f + rgb.y * -0.09928130201704202f + rgb.z * -0.11601342100604005f,
+            rgb.x * -0.09532096746629887f + rgb.y * 1.2113347084396262f + rgb.z * -0.11601316464611539f,
+            rgb.x * -0.09532071196581424f + rgb.y * -0.09928081562487852f + rgb.z * 1.1946030611860257f
+        );
+    }
+    if (colorspace == 1) {
+        // Inverse of DaVinci WG inset
+        return make_float3(
+            rgb.x * 1.2436926069760300f + rgb.y * -0.1123769034158060f + rgb.z * -0.1313160575408690f,
+            rgb.x * -0.1078941848637390f + rgb.y * 1.2392105840938500f + rgb.z * -0.1313157697772900f,
+            rgb.x * -0.1078938970156720f + rgb.y * -0.1123763563087380f + rgb.z * 1.2202719663128800f
+        );
+    }
+    // XYZ / Rec2020: passthrough
+    return rgb;
+ }
+ 
+
+ // illuminant
+ #define D65_x 0.3127f
+ #define D65_y 0.3290f
+ #define D65_Y 1.0000f
+ 
+ __DEVICE__ float spowf(float base, float exp)
+ {
+    return _copysignf(_powf(_fabs(base), exp), base);
+ }
+ 
+__DEVICE__ float3 v_x_mtx_3x3_s(float3 v,
+                                float m00, float m01, float m02,
+                                float m10, float m11, float m12,
+                                float m20, float m21, float m22) {
+    return make_float3(
+        m00 * v.x + m01 * v.y + m02 * v.z,
+        m10 * v.x + m11 * v.y + m12 * v.z,
+        m20 * v.x + m21 * v.y + m22 * v.z
+    );
+}
+ 
+__DEVICE__ float3 v_x_mtx_4x4_s(float3 v,
+                                float m00, float m01, float m02, float m03,
+                                float m10, float m11, float m12, float m13,
+                                float m20, float m21, float m22, float m23,
+                                float m30, float m31, float m32, float m33) {
+    float x = m00 * v.x + m01 * v.y + m02 * v.z + m03;
+    float y = m10 * v.x + m11 * v.y + m12 * v.z + m13;
+    float z = m20 * v.x + m21 * v.y + m22 * v.z + m23;
+    float w = m30 * v.x + m31 * v.y + m32 * v.z + m33;
+    // ProLab projective transform is only meaningful for w > 0.
+    float safe_w = _fmaxf(w, 1e-6f);
+    return make_float3(x / safe_w, y / safe_w, z / safe_w);
+}
+
+// Matrix arrays on the stack have been a recurring OpenCL/Metal crash source.
+// Keep transforms as direct scalar math.
+__DEVICE__ float3 rgb_to_xyz_by_space(float3 RGB, int colorspace) {
+    float3 out = RGB;
+    switch (colorspace) {
+        case 0:
+            out = v_x_mtx_3x3_s(RGB, 0.71604965f, 0.12968348f, 0.10472280f, 0.26126136f, 0.86964215f, -0.13090350f, -0.00967635f, -0.23648164f, 1.33521573f);
+            break;
+        case 1:
+            out = v_x_mtx_3x3_s(RGB, 0.70062239f, 0.14877482f, 0.10105872f, 0.27411851f, 0.87363190f, -0.14775041f, -0.09896291f, -0.13789533f, 1.32591599f);
+            break;
+        case 2:
+            out = v_x_mtx_3x3_s(RGB, 0.63800800f, 0.21470400f, 0.09774400f, 0.29195400f, 0.82384100f, -0.11579500f, 0.00279800f, -0.06703400f, 1.15329400f);
+            break;
+        default:
+            out = v_x_mtx_3x3_s(RGB, 0.70062239f, 0.14877482f, 0.10105872f, 0.27411851f, 0.87363190f, -0.14775041f, -0.09896291f, -0.13789533f, 1.32591599f);
+            break;
+    }
+    return out;
+}
+
+__DEVICE__ float3 xyz_to_rgb_by_space(float3 XYZ, int colorspace) {
+    float3 out = XYZ;
+    switch (colorspace) {
+        case 0:
+            out = v_x_mtx_3x3_s(XYZ, 1.48981827f, -0.26089590f, -0.14242652f, -0.45816657f, 1.26162778f, 0.15962363f, -0.07034967f, 0.22155767f, 0.77618160f);
+            break;
+        case 1:
+            out = v_x_mtx_3x3_s(XYZ, 1.51667204f, -0.28147805f, -0.14696363f, -0.46491710f, 1.25142378f, 0.17488461f, 0.06484905f, 0.10913934f, 0.76141462f);
+            break;
+        case 2:
+            out = v_x_mtx_3x3_s(XYZ, 1.78906600f, -0.48253400f, -0.20007600f, -0.63984900f, 1.39640000f, 0.19443200f, -0.04153200f, 0.08233500f, 0.87886800f);
+            break;
+        default:
+            out = v_x_mtx_3x3_s(XYZ, 1.51667204f, -0.28147805f, -0.14696363f, -0.46491710f, 1.25142378f, 0.17488461f, 0.06484905f, 0.10913934f, 0.76141462f);
+            break;
+    }
+    return out;
+}
+ 
+ // XYZ to xyY
+ __DEVICE__ float3 XYZ_to_xyY(float3 XYZ)
+ {
+    float3 xyY;
+    float divisor = (_fabs(XYZ.x) + _fabs(XYZ.y) + _fabs(XYZ.z));
+    if (divisor == 0.0f) divisor = 1e-10f;
+    xyY.x =_fabs(XYZ.x) / divisor;
+    xyY.y = _fabs(XYZ.y)/ divisor;
+    xyY.z = _fabs(XYZ.y);
+    return xyY;
+ }
+ 
+ // xyY to XYZ
+ __DEVICE__ float3 xyY_to_XYZ(float3 xyY)
+ {
+    float3 XYZ;
+    XYZ.x = xyY.x * xyY.z / _fmaxf( xyY.y, 1e-10f);
+    XYZ.y = xyY.z;
+    XYZ.z = (1.0f - xyY.x - xyY.y) * xyY.z / _fmaxf( xyY.y, 1e-10f);
+    return XYZ;
+ }
+ 
+ /////////////////////////
+ // CIELab
+ /////////////////////////
+ 
+ 
+ __DEVICE__ float3 XYZ_to_CIELab(float3 XYZ, float offset, float scale)
+ {
+    float Xr = 95.047f;
+    float Yr = 100.0f;
+    float Zr = 108.883f;
+    float E = 216.0f / 24389.0f;
+    float K = 24389.0f / 27.0f;
+
+    // XYZ to Lab
+    float xr = 100.0f * XYZ.x / Xr;
+    float yr = 100.0f * XYZ.y / Yr;
+    float zr = 100.0f * XYZ.z / Zr;
+
+    float fx = xr > E ? spowf(xr, 1.0f / 3.0f) : (K * xr + 16.0f) / 116.0f;
+    float fy = yr > E ? spowf(yr, 1.0f / 3.0f) : (K * yr + 16.0f) / 116.0f;
+    float fz = zr > E ? spowf(zr, 1.0f / 3.0f) : (K * zr + 16.0f) / 116.0f;
+
+    float L = 116.0f * fy - 16.0f;
+    float a = 500.0f * (fx - fy);
+    float b = 200.0f * (fy - fz);
+
+    // scaling and offset
+    L = L * .01f;
+    a = a * .01f * .25f * scale + offset;
+    b = b * .01f * .25f * scale + offset;
+
+    return make_float3(L, a, b);
+ }
+ 
+ __DEVICE__ float3 CIELab_to_XYZ(float3 Lab, float offset, float scale)
+ {
+    float Xr = 95.047f;
+    float Yr = 100.0f;
+    float Zr = 108.883f;
+    float E = 216.0f / 24389.0f;
+    float K = 24389.0f / 27.0f;
+
+    float L = Lab.x, a = Lab.y, b = Lab.z;
+
+    // scaling and offset
+    L = L * 100.0f;
+    a = (a - offset) * 4.0f / scale * 100.0f;
+    b = (b - offset) * 4.0f / scale * 100.0f;
+
+    // Lab to XYZ
+    float fy = (L + 16.0f) / 116.0f;
+    float fx = a / 500.0f + fy;
+    float fz = fy - b / 200.0f;
+
+    float xr = spowf(fx, 3.0f) > E ? spowf(fx, 3.0f) : (116.0f * fx - 16.0f) / K;
+    float yr = L > (K * E) ? spowf((L + 16.0f) / 116.0f, 3.0f) : L / K;
+    float zr = spowf(fz, 3.0f) > E ? spowf(fz, 3.0f) : (116.0f * fz - 16.0f) / K;
+
+    float X = xr * Xr / 100.0f;
+    float Y = yr * Yr / 100.0f;
+    float Z = zr * Zr / 100.0f;
+
+    return make_float3(X, Y, Z);
+ }
+  
+ /////////////////////////
+ // OKLab
+ /////////////////////////
+ 
+  __DEVICE__ float3 XYZ_to_OKLab(float3 XYZ, float offset, float scale)
+  {
+    const float X = XYZ.x;
+    const float Y = XYZ.y;
+    const float Z = XYZ.z;
+
+    // CIE 1931 XYZ To LMS
+    const float l = (X * 0.8189330101f) + (Y * 0.3618667424f) + (Z * -0.1288597137f);
+    const float m = (X * 0.0329845436f) + (Y * 0.9293118715f) + (Z * 0.0361456387f);
+    const float s = (X * 0.0482003018f) + (Y * 0.2643662691f) + (Z * 0.6338517070f);
+
+    // LMS Non-Linearity
+    const float l_prime = spowf(l, 1.0f / 3.0f);
+    const float m_prime = spowf(m, 1.0f / 3.0f);
+    const float s_prime = spowf(s, 1.0f / 3.0f);
+
+    // LMS Non-Linearity To OKLAB
+    const float L = (l_prime * 0.2104542553f) + (m_prime * 0.7936177850f) + (s_prime * -0.0040720468f);
+    const float a = (l_prime * 1.9779984951f) + (m_prime * -2.4285922050f) + (s_prime * 0.4505937099f);
+    const float b = (l_prime * 0.0259040371f) + (m_prime * 0.7827717662f) + (s_prime * -0.8086757660f);
+
+    // scaling and offset
+    return make_float3(L, a * scale + offset, b * scale + offset);
+  }
+  
+  __DEVICE__ float3 OKLab_to_XYZ(float3 Lab, float offset, float scale)
+  {
+    // scaling and offset
+    const float L = Lab.x;
+    const float a = (Lab.y - offset) / scale;
+    const float b = (Lab.z - offset) / scale;
+
+    // OKLAB To LMS Non-Linearity
+    const float l_prime = (L * 1.00000000f) + (a * 0.39633784f) + (b * 0.21580376f);
+    const float m_prime = (L * 1.00000000f) + (a * -0.10556135f) + (b * -0.06385418f);
+    const float s_prime = (L * 1.00000000f) + (a * -0.08948418f) + (b * -1.29148555f);
+
+    // LMS Non-Linearity To LMS
+    const float l = spowf(l_prime, 3.0f);
+    const float m = spowf(m_prime, 3.0f);
+    const float s = spowf(s_prime, 3.0f);
+
+    // LMS To CIE 1931 XYZ
+    const float X = (l * 1.2270138511f) + (m * -0.55779998065f) + (s * 0.2812561489f);
+    const float Y = (l * -0.0405801784f) + (m * 1.1122568696f) + (s * -0.0716766786f);
+    const float Z = (l * -0.0763812845f) + (m * -0.4214819784f) + (s * 1.5861632204f);
+
+    return make_float3(X, Y, Z);
+  }
+ 
+ ///////////////////////
+ // Prolab
+ ///////////////////////
+  
+  __DEVICE__ float3 XYZ_to_ProLab(float3 XYZ, float offset, float scale)
+  {
+    float3 XYZ_n = xyY_to_XYZ(make_float3(D65_x, D65_y, D65_Y));
+
+    XYZ = make_float3(
+        XYZ.x * (1.0f / _fmaxf(XYZ_n.x, 1e-10f)),
+        XYZ.y * (1.0f / _fmaxf(XYZ_n.y, 1e-10f)),
+        XYZ.z * (1.0f / _fmaxf(XYZ_n.z, 1e-10f))
+    );
+    float3 Lab = v_x_mtx_4x4_s(
+        XYZ,
+        75.54f, 486.66f, 167.39f, 0.0f,
+        617.72f, -595.45f, -22.27f, 0.0f,
+        48.34f, 194.94f, -243.28f, 0.0f,
+        0.7554f, 3.8666f, 1.6739f, 1.0f
+    );
+
+    Lab = make_float3(Lab.x * 0.01f, Lab.y * 0.01f, Lab.z * 0.01f);
+
+    Lab.y = Lab.y * 0.5f * scale + offset;
+    Lab.z = Lab.z * 0.5f * scale + offset;
+
+    return Lab;
+  }
+  
+  __DEVICE__ float3 ProLab_to_XYZ(float3 Lab, float offset, float scale)
+  {
+    float3 XYZ_n = xyY_to_XYZ(make_float3(D65_x, D65_y, D65_Y));
+
+    Lab.y = (Lab.y - offset) * 2.0f / scale;
+    Lab.z = (Lab.z - offset) * 2.0f / scale;
+
+    Lab = make_float3(Lab.x * 100.0f, Lab.y * 100.0f, Lab.z * 100.0f);
+
+    float3 XYZ = v_x_mtx_4x4_s(
+        Lab,
+        0.0013706f, 0.0013874f, 0.0008161f, 0.0f,
+        0.0013706f, -0.0002432f, 0.0009653f, 0.0f,
+        0.0013706f, 0.0000808f, -0.0031748f, 0.0f,
+        -0.0086294f, -0.0002432f, 0.0009653f, 1.0f
+    );
+
+    XYZ = make_float3(XYZ.x * XYZ_n.x, XYZ.y * XYZ_n.y, XYZ.z * XYZ_n.z);
+
+    return XYZ;
+  }
+ 
+ /////////////////////////
+ // LCH
+ /////////////////////////
+  
+  __DEVICE__ float3 Lab_to_LCH(float3 Lab)
+  {
+    float3 LCH;
+    LCH.x = Lab.x;
+    LCH.y = _sqrtf(Lab.y * Lab.y + Lab.z * Lab.z);
+    LCH.z = _atan2f(Lab.z, Lab.y) * 180.0f / PI;
+    LCH.z = LCH.z < 0.0f ? LCH.z + 360.0f : LCH.z;
+
+    LCH.z /= 360.0f;
+
+    return LCH;
+  }
+  
+  __DEVICE__ float3 LCH_to_Lab(float3 LCH)
+  {
+    LCH.z *= 360.0f;
+
+    float3 Lab;
+    Lab.x = LCH.x;
+    Lab.y = LCH.y * _cosf(LCH.z * PI / 180.0f);
+    Lab.z = LCH.y * _sinf(LCH.z * PI / 180.0f);
+
+    return Lab;
+  }
+  
+     
+ 
+  
+
+//Main tool functions
+//======================
+
+ __DEVICE__ inline float pow2f(float base) {
+     return base * base;
+ }
+ 
+__DEVICE__ float me_smoothstep01(float x) {
+     // Quintic smootherstep (C2): zero 1st/2nd derivative at both ends.
+     float t = _fminf(_fmaxf(x, 0.0f), 1.0f);
+     return t * t * t * (t * (t * 6.0f - 15.0f) + 10.0f);
+ }
+ 
+ 
+ 
+ typedef struct {
+         float selected_hue;
+         float adjustment_amt;
+         float left_feather;
+         float right_feather;
+ } control_params_t;
+
+
+ //Hue curve is written by Thatcher Freeman
+ //https://github.com/thatcherfreeman/utility-dctls/blob/main/Effects/Hue%20Curve.dctl
+
+ 
+ __DEVICE__ float single_hue_curve(float x, control_params_t params) {
+    // Assume x is a hue between 0 and 1.
+    // Offset x by the amount that brings selected_hue to 0.5.
+    float adj = params.adjustment_amt * 0.2f;
+    float offset = 0.5f - params.selected_hue;
+    float curr_hue = wrapf(x + offset, 1.0f);
+
+    float half_left = _fmaxf(_fabs(adj) * (params.left_feather + 1.5f), 1e-6f);
+    float half_right = _fmaxf(_fabs(adj) * (params.right_feather + 1.5f), 1e-6f);
+    float influence = 0.0f;
+
+    if (curr_hue <= 0.5f) {
+        float u = (0.5f - curr_hue) / half_left;       // 0 at center, 1 at edge
+        influence = 1.0f - me_smoothstep01(u);         // bell side, C2 at edge/center
+    } else {
+        float u = (curr_hue - 0.5f) / half_right;      // 0 at center, 1 at edge
+        influence = 1.0f - me_smoothstep01(u);         // bell side, C2 at edge/center
+    }
+
+    curr_hue += adj * influence;
+    float output = wrapf(curr_hue - offset, 1.0f);
+    return output;
+ }
+ 
+ __DEVICE__ float complementary_hue_curve(float complementary_fade, float x, control_params_t params) {
+    control_params_t complementary_params;
+    complementary_params.selected_hue = wrapf(params.selected_hue + 0.5f, 1.0f);
+    complementary_params.adjustment_amt = complementary_fade * params.adjustment_amt;
+    complementary_params.left_feather = params.left_feather;
+    complementary_params.right_feather = params.right_feather;
+    float out = x;
+    out = single_hue_curve(out, params);
+    out = single_hue_curve(out, complementary_params);
+    return out;
+ }
+ 
+ 
+ 
+ 
+ 
+  __DEVICE__ float3 mixFloat3(float mix, float3 inA, float3 inB) {
+    // Note that when a float3 is multiplied by a float, it multiplies each component
+    return inA * (1-mix) + inB * mix;
+  }
+ 
+ 
+ 
+ __DEVICE__ float3 ColorModel(float3 in, int colorModel, int direction, int colorspace) {
+  
+   float3 out = in;
+   float3 RGB = make_float3(0.0f, 0.0f, 0.0f);
+   float3 XYZ = make_float3(0.0f, 0.0f, 0.0f);
+   float3 Lab = make_float3(0.0f, 0.0f, 0.0f);
+
+    float offset= 0.0f;
+    float scale= 2.0f;
+
+ //==============================
+ //color model convert functions
+ //===============================
+    
+    if (colorModel == 0 && direction != 0) {out = RGBtoCHEN(out);}
+    if (colorModel == 0 && direction == 0) {out = CHENtoRGB(out);}
+
+    if (colorModel == 1 && direction != 0) {out = RGB_to_HSV(out);}
+    if (colorModel == 1 && direction == 0) {out = HSV_to_RGB(out);}
+
+    if (colorModel == 2 && direction != 0) {out = rgb_to_reuleaux(out);}
+    if (colorModel == 2 && direction == 0) {out = reuleaux_to_rgb(out);}
+
+    if (colorModel == 3 && direction != 0) {out = RGBtoHSP(out);}
+    if (colorModel == 3 && direction == 0) {out = HSPtoRGB(out);}
+
+    // RGB to CIE Lab
+    if (colorModel == 4 && direction != 0) {
+        RGB = rgb_inset_by_space(in, colorspace);
+        XYZ = rgb_to_xyz_by_space(RGB, colorspace);
+        Lab = XYZ_to_CIELab(XYZ, offset, scale);
+        out = Lab_to_LCH(Lab);
+     }
+    // CIE Lab to RGB
+    if (colorModel == 4 && direction == 0) {
+        Lab = LCH_to_Lab(in);
+        XYZ = CIELab_to_XYZ(Lab, offset, scale);
+        RGB = xyz_to_rgb_by_space(XYZ, colorspace);
+        out = rgb_outset_by_space(RGB, colorspace);
+     }
+    // RGB to OKLab
+    if (colorModel == 5 && direction != 0) {
+        RGB = rgb_inset_by_space(in, colorspace);
+        XYZ = rgb_to_xyz_by_space(RGB, colorspace);
+        Lab = XYZ_to_OKLab(XYZ, offset, scale);
+        out = Lab_to_LCH(Lab);
+     }
+     // OKLab to RGB
+    if (colorModel == 5 && direction == 0) {
+        Lab = LCH_to_Lab(in);
+        XYZ = OKLab_to_XYZ(Lab, offset, scale);
+        RGB = xyz_to_rgb_by_space(XYZ, colorspace);
+        out = rgb_outset_by_space(RGB, colorspace);
+    }
+    // RGB to ProLab
+    if (colorModel == 6 && direction != 0) {
+        RGB = rgb_inset_by_space(in, colorspace);
+        XYZ = rgb_to_xyz_by_space(RGB, colorspace);
+        Lab = XYZ_to_ProLab(XYZ, offset, scale);
+        out = Lab_to_LCH(Lab);
+     }
+    // ProLab to RGB
+    if (colorModel == 6 && direction == 0) {
+        Lab = LCH_to_Lab(in);
+        XYZ = ProLab_to_XYZ(Lab, offset, scale);
+        RGB = xyz_to_rgb_by_space(XYZ, colorspace);
+        out = rgb_outset_by_space(RGB, colorspace);
+    }
+
+   //else { out = make_float3(1,0,0);} //red on error
+
+   return out;
+ 
+  }
+ 
+   __DEVICE__ int setChannel (int color_model) {
+   int channel = 1;
+  if (color_model == 0) {channel = 1;}
+  if (color_model == 1) {channel = 1;}
+  if (color_model == 2) {channel = 1;}
+  if (color_model == 3) {channel = 1;}
+  if (color_model == 4) {channel = 3;}
+  if (color_model == 5) {channel = 3;}
+  if (color_model == 6) {channel = 3;}
+  return channel;     
+   }                      
+  
+  
+
+
+
+
+
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, __TEXTURE__ p_TexR, __TEXTURE__ p_TexG, __TEXTURE__ p_TexB) {
+    float3 inRGB = make_float3(_tex2D(p_TexR, p_X, p_Y), _tex2D(p_TexG, p_X, p_Y), _tex2D(p_TexB, p_X, p_Y));
+    float selected_hue_norm = selected_hue / 360.0f;
+    float safe_w = _fmaxf((float)(p_Width - 1), 1.0f);
+    float safe_h = _fmaxf((float)(p_Height - 1), 1.0f);
+    float curr_pos_x = (float)p_X / safe_w;
+    float curr_pos_y = 1.0f - (float)p_Y / safe_h;
+
+    float soft_scale = -1.0f * _fmaxf(0.8f, _fminf(1.0f, (1.0f - smoothness * 0.8f + 0.2f)));
+    float smooth_k = smoothness * smoothness;
+
+    control_params_t red_params;
+    red_params.selected_hue = 0.0f;
+    red_params.adjustment_amt = red_adjustment_amt * soft_scale;
+    red_params.left_feather = 0.01f + smooth_k * 0.44f;
+    red_params.right_feather = 0.01f + smooth_k * 1.00f;
+
+    control_params_t green_params;
+    green_params.selected_hue = 0.338f;
+    green_params.adjustment_amt = green_adjustment_amt * soft_scale;
+    green_params.left_feather = 0.01f + smooth_k * 0.80f;
+    green_params.right_feather = 0.01f + smooth_k * 1.00f;
+
+    control_params_t blue_params;
+    blue_params.selected_hue = 0.70f;
+    blue_params.adjustment_amt = blue_adjustment_amt * soft_scale;
+    blue_params.left_feather = 0.10f + smooth_k * 1.00f;
+    blue_params.right_feather = 0.10f + smooth_k * 1.00f;
+
+    control_params_t cyan_params;
+    cyan_params.selected_hue = 0.4833f;
+    cyan_params.adjustment_amt = cyan_adjustment_amt * soft_scale;
+    cyan_params.left_feather = 0.30f + smooth_k * 0.50f;
+    cyan_params.right_feather = 0.30f + smooth_k * 1.00f;
+
+    control_params_t magenta_params;
+    magenta_params.selected_hue = 0.85f;
+    magenta_params.adjustment_amt = magenta_adjustment_amt * soft_scale;
+    magenta_params.left_feather = 0.20f + smooth_k * 0.60f;
+    magenta_params.right_feather = 0.20f + smooth_k * 1.00f;
+
+    control_params_t yellow_params;
+    yellow_params.selected_hue = 0.172222f;
+    yellow_params.adjustment_amt = yellow_adjustment_amt * soft_scale;
+    yellow_params.left_feather = 0.20f + smooth_k * 0.60f;
+    yellow_params.right_feather = 0.20f + smooth_k * 1.00f;
+
+    control_params_t skin_params;
+    skin_params.selected_hue = 0.04444f;
+    skin_params.adjustment_amt = skin_adjustment_amt * soft_scale;
+    skin_params.left_feather = 0.10f + smooth_k * 1.00f;
+    skin_params.right_feather = 0.10f + smooth_k * 1.00f;
+
+    control_params_t custom_params;
+    custom_params.selected_hue = selected_hue_norm;
+    custom_params.adjustment_amt = adjustment_amt * soft_scale;
+    custom_params.left_feather = 0.30f + smooth_k * 0.50f;
+    custom_params.right_feather = 0.30f + smooth_k * 1.00f;
+
+    if (color_model == cie || color_model == ok || color_model == pro) {
+        skin_params.selected_hue = 0.15444f;
+        skin_params.adjustment_amt = skin_adjustment_amt * -1.2f;
+        red_params.selected_hue = 0.087f;
+        yellow_params.selected_hue = 0.24f;
+        magenta_params.selected_hue = 0.88f;
+        cyan_params.selected_hue = 0.6f;
+        cyan_params.adjustment_amt = cyan_adjustment_amt * -0.9f;
+    }
+
+    float3 clean_color = inRGB;
+    float3 curr_color = clean_color;
+    float3 output_color = curr_color;
+
+    curr_color = ColorModel(curr_color, color_model, 1, colorspace);
+    int channel = setChannel(color_model);
+
+    float3 output_mask = make_float3(1.0f, 0.0f, 0.0f);
+    if (channel == 3) {
+        output_mask = make_float3(0.0f, 0.0f, 1.0f);
+    }
+
+    float accum_hue_delta = 0.0f;
+    float accum_curve_delta = 0.0f;
+    float3 shifted = curr_color;
+    float curve_y = curr_pos_x;
+
+    shifted = curr_color;
+    if (channel == 3) {
+        shifted.z = single_hue_curve(curr_color.z, skin_params);
+    } else {
+        shifted.x = single_hue_curve(curr_color.x, skin_params);
+    }
+    curve_y = single_hue_curve(curr_pos_x, skin_params);
+    if (complementary_curve) {
+        shifted = make_float3(complementary_hue_curve(complementary_fade, curr_color.x, skin_params), complementary_hue_curve(complementary_fade, curr_color.y, skin_params), complementary_hue_curve(complementary_fade, curr_color.z, skin_params));
+        curve_y = complementary_hue_curve(complementary_fade, curr_pos_x, skin_params);
+    }
+    float shifted_hue = (channel == 3) ? shifted.z : shifted.x;
+    float curr_hue = (channel == 3) ? curr_color.z : curr_color.x;
+    accum_hue_delta += circular_delta(shifted_hue, curr_hue);
+    accum_curve_delta += circular_delta(curve_y, curr_pos_x);
+
+    shifted = curr_color;
+    if (channel == 3) {
+        shifted.z = single_hue_curve(curr_color.z, red_params);
+    } else {
+        shifted.x = single_hue_curve(curr_color.x, red_params);
+    }
+    curve_y = single_hue_curve(curr_pos_x, red_params);
+    if (complementary_curve) {
+        shifted = make_float3(complementary_hue_curve(complementary_fade, curr_color.x, red_params), complementary_hue_curve(complementary_fade, curr_color.y, red_params), complementary_hue_curve(complementary_fade, curr_color.z, red_params));
+        curve_y = complementary_hue_curve(complementary_fade, curr_pos_x, red_params);
+    }
+    shifted_hue = (channel == 3) ? shifted.z : shifted.x;
+    curr_hue = (channel == 3) ? curr_color.z : curr_color.x;
+    accum_hue_delta += circular_delta(shifted_hue, curr_hue);
+    accum_curve_delta += circular_delta(curve_y, curr_pos_x);
+
+    shifted = curr_color;
+    if (channel == 3) {
+        shifted.z = single_hue_curve(curr_color.z, green_params);
+    } else {
+        shifted.x = single_hue_curve(curr_color.x, green_params);
+    }
+    curve_y = single_hue_curve(curr_pos_x, green_params);
+    if (complementary_curve) {
+        shifted = make_float3(complementary_hue_curve(complementary_fade, curr_color.x, green_params), complementary_hue_curve(complementary_fade, curr_color.y, green_params), complementary_hue_curve(complementary_fade, curr_color.z, green_params));
+        curve_y = complementary_hue_curve(complementary_fade, curr_pos_x, green_params);
+    }
+    shifted_hue = (channel == 3) ? shifted.z : shifted.x;
+    curr_hue = (channel == 3) ? curr_color.z : curr_color.x;
+    accum_hue_delta += circular_delta(shifted_hue, curr_hue);
+    accum_curve_delta += circular_delta(curve_y, curr_pos_x);
+
+    shifted = curr_color;
+    if (channel == 3) {
+        shifted.z = single_hue_curve(curr_color.z, blue_params);
+    } else {
+        shifted.x = single_hue_curve(curr_color.x, blue_params);
+    }
+    curve_y = single_hue_curve(curr_pos_x, blue_params);
+    if (complementary_curve) {
+        shifted = make_float3(complementary_hue_curve(complementary_fade, curr_color.x, blue_params), complementary_hue_curve(complementary_fade, curr_color.y, blue_params), complementary_hue_curve(complementary_fade, curr_color.z, blue_params));
+        curve_y = complementary_hue_curve(complementary_fade, curr_pos_x, blue_params);
+    }
+    shifted_hue = (channel == 3) ? shifted.z : shifted.x;
+    curr_hue = (channel == 3) ? curr_color.z : curr_color.x;
+    accum_hue_delta += circular_delta(shifted_hue, curr_hue);
+    accum_curve_delta += circular_delta(curve_y, curr_pos_x);
+
+    shifted = curr_color;
+    if (channel == 3) {
+        shifted.z = single_hue_curve(curr_color.z, cyan_params);
+    } else {
+        shifted.x = single_hue_curve(curr_color.x, cyan_params);
+    }
+    curve_y = single_hue_curve(curr_pos_x, cyan_params);
+    if (complementary_curve) {
+        shifted = make_float3(complementary_hue_curve(complementary_fade, curr_color.x, cyan_params), complementary_hue_curve(complementary_fade, curr_color.y, cyan_params), complementary_hue_curve(complementary_fade, curr_color.z, cyan_params));
+        curve_y = complementary_hue_curve(complementary_fade, curr_pos_x, cyan_params);
+    }
+    shifted_hue = (channel == 3) ? shifted.z : shifted.x;
+    curr_hue = (channel == 3) ? curr_color.z : curr_color.x;
+    accum_hue_delta += circular_delta(shifted_hue, curr_hue);
+    accum_curve_delta += circular_delta(curve_y, curr_pos_x);
+
+    shifted = curr_color;
+    if (channel == 3) {
+        shifted.z = single_hue_curve(curr_color.z, magenta_params);
+    } else {
+        shifted.x = single_hue_curve(curr_color.x, magenta_params);
+    }
+    curve_y = single_hue_curve(curr_pos_x, magenta_params);
+    if (complementary_curve) {
+        shifted = make_float3(complementary_hue_curve(complementary_fade, curr_color.x, magenta_params), complementary_hue_curve(complementary_fade, curr_color.y, magenta_params), complementary_hue_curve(complementary_fade, curr_color.z, magenta_params));
+        curve_y = complementary_hue_curve(complementary_fade, curr_pos_x, magenta_params);
+    }
+    shifted_hue = (channel == 3) ? shifted.z : shifted.x;
+    curr_hue = (channel == 3) ? curr_color.z : curr_color.x;
+    accum_hue_delta += circular_delta(shifted_hue, curr_hue);
+    accum_curve_delta += circular_delta(curve_y, curr_pos_x);
+
+    shifted = curr_color;
+    if (channel == 3) {
+        shifted.z = single_hue_curve(curr_color.z, yellow_params);
+    } else {
+        shifted.x = single_hue_curve(curr_color.x, yellow_params);
+    }
+    curve_y = single_hue_curve(curr_pos_x, yellow_params);
+    if (complementary_curve) {
+        shifted = make_float3(complementary_hue_curve(complementary_fade, curr_color.x, yellow_params), complementary_hue_curve(complementary_fade, curr_color.y, yellow_params), complementary_hue_curve(complementary_fade, curr_color.z, yellow_params));
+        curve_y = complementary_hue_curve(complementary_fade, curr_pos_x, yellow_params);
+    }
+    shifted_hue = (channel == 3) ? shifted.z : shifted.x;
+    curr_hue = (channel == 3) ? curr_color.z : curr_color.x;
+    accum_hue_delta += circular_delta(shifted_hue, curr_hue);
+    accum_curve_delta += circular_delta(curve_y, curr_pos_x);
+
+    shifted = curr_color;
+    if (channel == 3) {
+        shifted.z = single_hue_curve(curr_color.z, custom_params);
+    } else {
+        shifted.x = single_hue_curve(curr_color.x, custom_params);
+    }
+    curve_y = single_hue_curve(curr_pos_x, custom_params);
+    if (complementary_curve) {
+        shifted = make_float3(complementary_hue_curve(complementary_fade, curr_color.x, custom_params), complementary_hue_curve(complementary_fade, curr_color.y, custom_params), complementary_hue_curve(complementary_fade, curr_color.z, custom_params));
+        curve_y = complementary_hue_curve(complementary_fade, curr_pos_x, custom_params);
+    }
+    shifted_hue = (channel == 3) ? shifted.z : shifted.x;
+    curr_hue = (channel == 3) ? curr_color.z : curr_color.x;
+    accum_hue_delta += circular_delta(shifted_hue, curr_hue);
+    accum_curve_delta += circular_delta(curve_y, curr_pos_x);
+
+    float safe_hue_delta = k_fold_limit * accum_hue_delta /
+        _sqrtf(k_fold_limit * k_fold_limit + accum_hue_delta * accum_hue_delta);
+    accum_curve_delta = k_fold_limit * accum_curve_delta /
+        _sqrtf(k_fold_limit * k_fold_limit + accum_curve_delta * accum_curve_delta);
+    output_color = curr_color;
+    if (channel == 3) {
+        output_color.z = wrapf(curr_color.z + safe_hue_delta, 1.0f);
+    } else {
+        output_color.x = wrapf(curr_color.x + safe_hue_delta, 1.0f);
+    }
+    float curve_pos_y_raw = curr_pos_x + accum_curve_delta;
+    float curve_pos_y = _fminf(_fmaxf(curve_pos_y_raw, 0.0f), 1.0f);
+    int curve_in_bounds = (curve_pos_y_raw >= 0.0f && curve_pos_y_raw <= 1.0f);
+    float selected_hue_dist = _fabs(wrapf(curr_pos_x - selected_hue_norm + 0.5f, 1.0f) - 0.5f);
+    float curve_line_eps = 0.003f;
+    float marker_line_eps = 0.0012f;
+    if (draw_curve) {
+        // Draw overlays only in active image area (ignore letterbox/pillarbox bars).
+        int4 bar = get_black_bar_thickness_rgb(p_Width, p_Height, p_TexR, p_TexG, p_TexB, k_black_threshold);
+        if (k_assume_centered) {
+            int min_lr = (int)_fminf((float)bar.x, (float)bar.z);
+            int min_tb = (int)_fminf((float)bar.y, (float)bar.w);
+            bar = make_int4(min_lr, min_tb, min_lr, min_tb);
+        }
+        int eff_w = p_Width - bar.x - bar.z;
+        int eff_h = p_Height - bar.y - bar.w;
+        int x_in = p_X - bar.x;
+        int y_in = p_Y - bar.y;
+        int in_active_area = (x_in >= 0 && x_in < eff_w && y_in >= 0 && y_in < eff_h);
+        if (in_active_area) {
+        if ((curve_in_bounds && _fabs(curve_pos_y - curr_pos_y) < curve_line_eps) || selected_hue_dist < marker_line_eps) {
+            float overlay_r = 0.5f * (1.0f - output_mask.x) + output_mask.x * curve_pos_y;
+            float overlay_g = 0.5f * (1.0f - output_mask.y) + output_mask.y * curve_pos_y;
+            float overlay_b = 0.5f * (1.0f - output_mask.z) + output_mask.z * curve_pos_y;
+            output_color = make_float3(overlay_r, overlay_g, overlay_b);
+        }
+        if (complementary_curve == 1 &&
+            _fabs(wrapf(selected_hue_norm + 0.5f - curr_pos_x, 1.0f)) < marker_line_eps &&
+            wrapf(curr_pos_y, 0.05f) < 0.02f) {
+            // Draw position of complementary hue.
+            float overlay_r = 0.5f * (1.0f - output_mask.x) + output_mask.x * curve_pos_y;
+            float overlay_g = 0.5f * (1.0f - output_mask.y) + output_mask.y * curve_pos_y;
+            float overlay_b = 0.5f * (1.0f - output_mask.z) + output_mask.z * curve_pos_y;
+            output_color = make_float3(overlay_r, overlay_g, overlay_b);
+        }
+        }
+    }
+
+    output_color = ColorModel(output_color, color_model, 0, colorspace);
+
+    if (bypass) { output_color = clean_color; }
+    return output_color;
+}
