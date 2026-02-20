@@ -1,0 +1,744 @@
+#line 2
+/*
+ME Localized Contrast 4R - Debug Stage
+Incremental OpenCL/Metal-safe rebuild target.
+*/
+
+DEFINE_UI_PARAMS(p_amount_mid, Midtone Contrast, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
+DEFINE_UI_PARAMS(p_center_mid, Midtone Center Shift, DCTLUI_SLIDER_FLOAT, 0.0, -0.5, 0.5, 0.001)
+DEFINE_UI_PARAMS(p_sym_mid, ========= Symmetry M, DCTLUI_SLIDER_FLOAT, 0.0, -0.5, 0.5, 0.001)
+
+DEFINE_UI_PARAMS(p_amount_hi, Highlight Contrast, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
+DEFINE_UI_PARAMS(p_center_hi, Highlight Center Shift, DCTLUI_SLIDER_FLOAT, 0.0, -0.5, 0.5, 0.001)
+DEFINE_UI_PARAMS(p_sym_hi, ========= Symmetry H, DCTLUI_SLIDER_FLOAT, 0.0, -0.5, 0.5, 0.001)
+
+DEFINE_UI_PARAMS(p_amount_sh, Shadow Contrast, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
+DEFINE_UI_PARAMS(p_center_sh, Shadow Center Shift, DCTLUI_SLIDER_FLOAT, 0.0, -0.5, 0.5, 0.001)
+DEFINE_UI_PARAMS(p_sym_sh, ========= Symmetry S, DCTLUI_SLIDER_FLOAT, 0.0, -0.5, 0.5, 0.001)
+
+DEFINE_UI_PARAMS(p_amount_cu, Custom Contrast, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
+DEFINE_UI_PARAMS(p_width_cu, Custom Width, DCTLUI_SLIDER_FLOAT, 0.35, 0.1, 1.0, 0.001)
+DEFINE_UI_PARAMS(p_center_cu, Custom Center Shift, DCTLUI_SLIDER_FLOAT, 0.0, -0.5, 0.5, 0.001)
+DEFINE_UI_PARAMS(p_sym_cu, ========= Symmetry C, DCTLUI_SLIDER_FLOAT, 0.0, -0.5, 0.5, 0.001)
+
+DEFINE_UI_PARAMS(p_safety, Safety Fader, DCTLUI_SLIDER_FLOAT, 0.25, 0.25, 1.0, 0.001)
+DEFINE_UI_PARAMS(p_preserve_mid_gray, Preserve Exposure, DCTLUI_CHECK_BOX, 1)
+DEFINE_UI_PARAMS(p_highlight_pivot_point, Highlight Pivot Point, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_PARAMS(p_pivot_region, Highlight Region, DCTLUI_COMBO_BOX, 0, {mids, highlights, shadows, custom}, {Midtones, Highlights, Shadows, Custom})
+DEFINE_UI_PARAMS(p_guide, Guide Ramp, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_PARAMS(p_curve, Curve Overlay, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_PARAMS(p_bypass, Bypass, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_PARAMS(p_input_space, Input Space, DCTLUI_COMBO_BOX, 1, {Linear, DI, ACEScct, LogC3}, {Linear, DaVinci Intermediate, ACEScct, ARRI LogC3})
+DEFINE_UI_PARAMS(p_shoulder_smooth, Shoulder Smoothness, DCTLUI_SLIDER_FLOAT, 0.7, 0.0, 1.0, 0.001)
+
+/*----------- Tooltips -----------------*/
+#if ((__RESOLVE_VER_MAJOR__ > 19)) || ((__RESOLVE_VER_MAJOR__ == 19) && (__RESOLVE_VER_MINOR__ >= 1))
+DEFINE_UI_TOOLTIP(Midtone Contrast, "Midtone lane contrast amount. Positive expands local separation, negative compresses.")
+DEFINE_UI_TOOLTIP(Midtone Center Shift, "Midtone lane center shift in stops around mid gray.")
+DEFINE_UI_TOOLTIP(========= Symmetry M, "Biases contrast influence around the lane center. + favors highlights side, - favors shadows side.")
+DEFINE_UI_TOOLTIP(Highlight Contrast, "Highlight lane contrast amount.")
+DEFINE_UI_TOOLTIP(Highlight Center Shift, "Highlight lane center shift in stops.")
+DEFINE_UI_TOOLTIP(========= Symmetry H, "Highlight lane symmetry bias around center.")
+DEFINE_UI_TOOLTIP(Shadow Contrast, "Shadow lane contrast amount.")
+DEFINE_UI_TOOLTIP(Shadow Center Shift, "Shadow lane center shift in stops.")
+DEFINE_UI_TOOLTIP(========= Symmetry  S, "Shadow lane symmetry bias around center.")
+DEFINE_UI_TOOLTIP(Custom Contrast, "Custom lane contrast amount.")
+DEFINE_UI_TOOLTIP(Custom Width, "Custom lane width. Also drives custom amount attenuation/stability.")
+DEFINE_UI_TOOLTIP(Custom Center Shift, "Custom lane center shift in stops.")
+DEFINE_UI_TOOLTIP(========= Symmetry C, "Custom lane symmetry bias around center.")
+DEFINE_UI_TOOLTIP(Safety Fader, "Global safety control. Opens range gradually while keeping stability limiters active.")
+DEFINE_UI_TOOLTIP(Preserve Exposure, "Applies one global linear gain so DI mid gray is restored after full combined processing.")
+DEFINE_UI_TOOLTIP(Highlight Pivot Point, "Shows pivot visualization for the selected lane (green core, blue outer falloff).")
+DEFINE_UI_TOOLTIP(Highlight Region, "Selects which lane pivot is visualized by Highlight Pivot Point.")
+DEFINE_UI_TOOLTIP(Guide Ramp, "Displays stepped/ramp response guide. Red = neighboring steps too close, Yellow = low slope warning.")
+DEFINE_UI_TOOLTIP(Curve Overlay, "Overlays identity and processed response curves. In bypass, processed curve collapses to identity.")
+DEFINE_UI_TOOLTIP(Bypass, "Bypasses image processing but keeps overlays available for evaluation.")
+DEFINE_UI_TOOLTIP(Input Space, "Set this to match the incoming signal encoding for accurate tonal targeting.")
+DEFINE_UI_TOOLTIP(Shoulder Smoothness, "Global shoulder feel. 0 = stronger shoulder, 1 = smoother shoulder roll-off.")
+#endif
+
+// Space IDs used by code<->linear conversion helpers.
+#define SPACE_LINEAR 0
+#define SPACE_DI 1
+#define SPACE_ACEScct 2
+#define SPACE_LOGC3 3
+#define k_neg_hs_min_below_mid 0.5f          // Neg mode: min chroma recovery below mid.
+#define k_neg_hs_max_below_mid 0.70f         // Neg mode: max chroma recovery below mid.
+#define k_neg_hs_min_above_mid 0.08f         // Neg mode: min chroma recovery above mid.
+#define k_neg_hs_max_above_mid 0.16f         // Neg mode: max chroma recovery above mid.
+#define k_neg_hs_split_center_stops 0.7f     // Stop position where neg chroma behavior pivots.
+#define k_neg_hs_split_soft_stops 1.2f       // Soft transition width around split center.
+#define k_neg_hs_rel_k 0.02f                 // Relative-chroma regularizer (near-black stability).
+#define k_neg_hs_rel_soft_limit 4.0f         // Soft cap for relative chroma magnitude.
+#define k_neg_hs_black_y0 0.005f             // Neg chroma fade start by luminance.
+#define k_neg_hs_black_y1 0.03f              // Neg chroma fade end by luminance.
+#define k_curve_thickness 0.003f             // Overlay curve stroke thickness.
+#define k_curve_ref_alpha 0.50f              // Dashed identity curve blend amount.
+#define k_pivot_overlay_alpha 0.35f          // Pivot overlay tint blend amount.
+#define k_guide_strip_height 0.08f           // Guide strip (step bars) normalized height.
+#define k_guide_ramp_height 0.06f            // Guide ramp normalized height.
+#define k_guide_steps 21                     // Number of guide stop samples.
+#define k_guide_midgray_lin 0.18f            // Mid gray anchor for guide stops.
+#define k_guide_close_thresh (1.0f / 256.0f) // Red warning threshold (neighbor too close).
+#define k_guide_flat_thresh (1.0f / 28.0f)   // Yellow warning threshold (slope too flat).
+#define k_guide_shadow_sensitivity 0.5f      // Deep-shadow warning relaxation.
+#define k_amount_scale_mid 1.0f              // Base amount scale near mid-gray pivots.
+#define k_amount_scale_sh 0.6f               // Amount scale in sh/hi regions.
+#define k_amount_scale_extreme 0.4f          // Amount scale in far extremes.
+#define k_safety_taper_relax 0.25f           // Safety-driven relaxation of center taper.
+#define k_safety_min 0.25f                   // UI safety lower bound.
+#define k_safety_max 1.0f                    // UI safety upper bound.
+#define k_safety_drive_max 1.00f             // Max effective drive from safety.
+#define k_amount_width_limit_safe 0.80f      // Stability cap at low safety.
+#define k_amount_width_limit_max 1.00f       // Stability cap at high safety.
+#define k_custom_amount_min_scale 0.2f       // Custom amount floor at minimum width.
+#define k_range_expand 0.6f                  // Auto width expansion strength vs amount.
+#define k_range_expand_power 2.0f            // Auto width expansion curve shape.
+#define k_width_expand_softness 0.65f        // 0 = legacy exponential, 1 = softer logarithmic response.
+#define k_width_expand_log_beta 6.0f         // Log response curvature (higher = more early response).
+#define k_width_expand_input_smooth 0.70f    // 0 = linear amount drive, 1 = quintic smoothstep-driven.
+#define k_curve_domain_margin 0.01f          // Keep support away from hard DI edges.
+#define k_amount_smooth_knee 0.03f           // Soft knee for amount magnitude (removes zero-crossing stiffness).
+#define k_custom_width_drive_floor 0.65f     // Keeps custom width responsive even when custom amount is attenuated.
+
+/*
+Quick Tuning Notes:
+- Safer overall range:
+  - Lower `k_safety_drive_max`
+  - Lower `k_amount_width_limit_safe` / `k_amount_width_limit_max`
+  - Lower `k_safety_taper_relax`
+- Stronger soft roll-off in extremes:
+  - Lower `k_amount_scale_sh`
+  - Lower `k_amount_scale_extreme`
+- More/less automatic width growth:
+  - Raise/lower `k_range_expand`
+  - Raise/lower `k_range_expand_power` (higher = expansion happens later but ramps harder)
+- Custom lane aggressiveness:
+  - Lower `k_custom_amount_min_scale` to calm narrow widths
+- Guide warning sensitivity:
+  - `k_guide_close_thresh` up = more red warnings, down = fewer
+  - `k_guide_flat_thresh` up = more yellow warnings, down = fewer
+  - `k_guide_shadow_sensitivity` down = fewer deep-shadow warnings
+*/
+
+// Small utility helpers used everywhere in shaping/overlay paths.
+__DEVICE__ float saturatef(float x) { return _fminf(_fmaxf(x, 0.0f), 1.0f); }
+__DEVICE__ float smootherstep01(float x) { x = saturatef(x); return x * x * x * (x * (x * 6.0f - 15.0f) + 10.0f); }
+__DEVICE__ float smooth_absf(float x, float knee) {
+    float k = _fmaxf(knee, 1e-6f);
+    return _sqrtf(x * x + k * k) - k;
+}
+
+// DI transfer pair 
+__DEVICE__ float di_to_linear(float t) {
+    const float a = 0.0075f, b = 7.0f, c = 0.07329248f, m = 10.44426855f, log_cut = 0.02740668f;
+    return (t > log_cut) ? _exp2f((t / c) - b) - a : t / m;
+}
+__DEVICE__ float linear_to_di(float x) {
+    const float a = 0.0075f, b = 7.0f, c = 0.07329248f, m = 10.44426855f, lin_cut = 0.00262409f;
+    x = _fmaxf(x, 0.0f);
+    return (x > lin_cut) ? (_log2f(x + a) + b) * c : x * m;
+}
+// ACEScct transfer pair.
+__DEVICE__ float acescct_to_linear(float x) {
+    const float cut2 = 0.155251141552511f;
+    const float A = 10.5402377416545f, B = 0.0729055341958355f, C = 9.72f, D = 17.52f;
+    return (x <= cut2) ? (x - B) / A : _exp2f(x * D - C);
+}
+__DEVICE__ float linear_to_acescct(float x) {
+    const float cut1 = 0.0078125f;
+    const float A = 10.5402377416545f, B = 0.0729055341958355f, C = 9.72f, D = 17.52f;
+    x = _fmaxf(x, 0.0f);
+    return (x <= cut1) ? A * x + B : (_log2f(x) + C) / D;
+}
+// ARRI LogC3 EI800 transfer pair.
+__DEVICE__ float logc3_to_linear(float x) {
+    const float cut = 0.010591f, a = 5.555556f, b = 0.052272f, c = 0.247190f, d = 0.385537f, e = 5.367655f, f = 0.092809f;
+    const float cut_code = e * cut + f;
+    return _fmaxf((x < cut_code) ? ((x - f) / e) : ((_exp10f((x - d) / c) - b) / a), 0.0f);
+}
+__DEVICE__ float linear_to_logc3(float x) {
+    const float cut = 0.010591f, a = 5.555556f, b = 0.052272f, c = 0.247190f, d = 0.385537f, e = 5.367655f, f = 0.092809f;
+    x = _fmaxf(x, 0.0f);
+    return (x < cut) ? (e * x + f) : (c * _log10f(a * x + b) + d);
+}
+// Conversion gateways based on selected input space.
+__DEVICE__ float code_to_linear_space(float code, int s) {
+    if (s == SPACE_LINEAR) return code;
+    if (s == SPACE_DI) return di_to_linear(code);
+    if (s == SPACE_ACEScct) return acescct_to_linear(code);
+    if (s == SPACE_LOGC3) return logc3_to_linear(code);
+    return code;
+}
+__DEVICE__ float linear_to_code_space(float lin, int s) {
+    if (s == SPACE_LINEAR) return lin;
+    if (s == SPACE_DI) return linear_to_di(lin);
+    if (s == SPACE_ACEScct) return linear_to_acescct(lin);
+    if (s == SPACE_LOGC3) return linear_to_logc3(lin);
+    return lin;
+}
+// Map stop offsets (relative to 18% gray) into DI code.
+__DEVICE__ float stops_to_di_code(float stops, int input_space) {
+    float target_lin = 0.18f * _powf(2.0f, stops);
+    float target_code = linear_to_code_space(target_lin, input_space);
+    return linear_to_di(code_to_linear_space(target_code, input_space));
+}
+// Region-aware center shift remap with stop-domain guardrails.
+__DEVICE__ float remap_center_stops(int region, float center_shift) {
+    float base = (region == 0) ? -2.5f : ((region == 2) ? 2.0f : ((region == 1) ? 0.0f : 0.5f));
+    float width_stops = (region == 0) ? 4.0f : ((region == 2) ? 6.0f : 8.0f);
+    float half_range = 0.5f * width_stops;
+    float min_s = base - half_range;
+    float max_s = base + half_range;
+    if (region == 2) min_s = 0.0f;
+    if (region == 0) max_s = 0.0f;
+    min_s = _fmaxf(min_s, -9.0f);
+    max_s = _fminf(max_s, 9.12f);
+    float u = _fminf(_fmaxf(center_shift / 0.5f, -1.0f), 1.0f);
+    return (u >= 0.0f) ? (base + u * (max_s - base)) : (base + u * (base - min_s));
+}
+// Amount taper by center distance from mid gray, safety-relaxed at higher fader values.
+__DEVICE__ float amount_scale_for_center(float center_stops, float safety) {
+    float abs_c = _fabs(center_stops);
+    if (abs_c <= 0.5f) return k_amount_scale_mid;
+    float t = smootherstep01(_fminf((abs_c - 0.75f) / 1.25f, 1.0f));
+    float base = k_amount_scale_mid + (k_amount_scale_sh - k_amount_scale_mid) * t;
+    float t2 = smootherstep01(_fminf(_fmaxf((abs_c - 2.0f) / 4.0f, 0.0f), 1.0f));
+    float scale = base + (k_amount_scale_extreme - base) * t2;
+    float s = _fminf(_fmaxf((safety - k_safety_min) / _fmaxf(k_safety_max - k_safety_min, 1e-6f), 0.0f), 1.0f);
+    scale = scale + (1.0f - scale) * (k_safety_taper_relax * s);
+    return _fmaxf(scale, 0.4f * (1.0f - s));
+}
+// Custom lane: narrow widths should not receive full contrast amplitude.
+__DEVICE__ float custom_amount_scale_from_width(float width_user) {
+    float t = (width_user - 0.05f) / _fmaxf(1.0f - 0.05f, 1e-6f);
+    t = _fminf(_fmaxf(t, 0.0f), 1.0f);
+    return k_custom_amount_min_scale + (1.0f - k_custom_amount_min_scale) * t;
+}
+// Safety limiter that keeps effective amount proportional to width/symmetry.
+__DEVICE__ float limit_amount_for_stability(float amount, float width, float symmetry_bias, float safety) {
+    float s = (safety - k_safety_min) / _fmaxf(k_safety_max - k_safety_min, 1e-6f);
+    s = _fminf(_fmaxf(s, 0.0f), 1.0f);
+    float lim = k_amount_width_limit_safe + (k_amount_width_limit_max - k_amount_width_limit_safe) * s;
+    float side_factor = 1.0f + _fabs(symmetry_bias);
+    float cap = _fmaxf(0.02f, (lim * width) / _fmaxf(side_factor, 1e-6f));
+    float a = _fabs(amount);
+    float a_limited = cap * (1.0f - _expf(-a / _fmaxf(cap, 1e-6f)));
+    return _copysignf(a_limited, amount);
+}
+// Automatic width expansion with amount push.
+// Uses a soft blend between exponential (legacy) and logarithmic (smoother feel).
+__DEVICE__ float expand_width_by_amount(float width, float amount) {
+    // Smooth |amount| near zero to remove response "stepping" feel around tiny moves.
+    float a = smooth_absf(amount, k_amount_smooth_knee);
+    a = saturatef(a);
+    // Additional unit remap (IQ-style smoothstep family): softens the perceived response acceleration.
+    float a_quintic = smootherstep01(a);
+    a = a + (a_quintic - a) * saturatef(k_width_expand_input_smooth);
+    float e = _expf(k_range_expand_power * a);
+    float denom = _expf(k_range_expand_power) - 1.0f;
+    float w_exp = 1.0f + k_range_expand * (e - 1.0f) / _fmaxf(denom, 1e-6f);
+    float beta = _fmaxf(k_width_expand_log_beta, 1e-6f);
+    float w_log = 1.0f + k_range_expand * (_logf(1.0f + beta * a) / _fmaxf(_logf(1.0f + beta), 1e-6f));
+    float soft_t = saturatef(k_width_expand_softness);
+    float w = w_exp + (w_log - w_exp) * soft_t;
+    return width * w;
+}
+// Localized odd S-curve kernel in DI domain.
+__DEVICE__ float localized_s_curve(float x, float amount, float center, float width, float symmetry_bias, float shoulder_t) {
+    float halfW = _fmaxf(0.0005f, 0.5f * width);
+    float t = (x - center) / halfW;
+    // Boundary-smooth support envelope: zero value + zero slope at |t|=1 to avoid tangent kinks.
+    float u = saturatef(1.0f - t * t);
+    float env = smootherstep01(u);
+    float env_soft = u * u;
+    env = env + (env_soft - env) * shoulder_t;
+    float b = _fminf(_fmaxf(symmetry_bias, -1.0f), 1.0f);
+    float t_soft = t / _sqrtf(t * t + 0.28f * 0.28f);
+    float side_gain = 1.0f + b * t_soft;
+    float delta_raw = amount * t * env * side_gain * 0.5f;
+    // Soft output limiter: smooths edge tangents near DI bounds and avoids hard clipping kinks.
+    const float k_out_margin = 1e-4f;
+    float room_down = _fmaxf(x - k_out_margin, 1e-6f);
+    float room_up = _fmaxf((1.0f - k_out_margin) - x, 1e-6f);
+    float delta = delta_raw;
+    if (delta_raw < 0.0f) {
+        float z = (-delta_raw) / room_down;
+        delta = -room_down * (z / (1.0f + z));
+    } else {
+        float z = delta_raw / room_up;
+        delta = room_up * (z / (1.0f + z));
+    }
+    return x + delta;
+}
+// Luma-domain scalar gain path used for stable lane combination.
+__DEVICE__ float process_gain_scalar(float lr, float lg, float lb, float center, float width, float amount, float sym, float shoulder_t) {
+    float Y = _fmaxf(1e-6f, 0.2126f * lr + 0.7152f * lg + 0.0722f * lb);
+    float Ydi = linear_to_di(Y);
+    float YdiS = localized_s_curve(Ydi, amount, center, width, sym, shoulder_t);
+    float Y2 = di_to_linear(_fmaxf(0.0f, YdiS));
+    return Y2 / _fmaxf(Y, 1e-6f);
+}
+// Luma sampling helper for pivot overlay classification.
+__DEVICE__ float luminance_di_from_code(float r, float g, float b, int input_space) {
+    float lr = code_to_linear_space(r, input_space);
+    float lg = code_to_linear_space(g, input_space);
+    float lb = code_to_linear_space(b, input_space);
+    float y = _fmaxf(1e-6f, 0.2126f * lr + 0.7152f * lg + 0.0722f * lb);
+    return linear_to_di(y);
+}
+// Guide strip helper: returns DI value for each stepped stop sample.
+__DEVICE__ float guide_step_value_di(int step) {
+    int middle = k_guide_steps / 2;
+    float stops = (float)(step - middle);
+    float lin = k_guide_midgray_lin * _exp2f(stops);
+    return linear_to_di(lin);
+}
+
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, __TEXTURE__ p_TexR, __TEXTURE__ p_TexG, __TEXTURE__ p_TexB) {
+    // Main processing flow:
+    // 1) Build 4 parallel lanes from original input.
+    // 2) Combine lane deltas.
+    // 3) Optional preserve exposure at DI mid gray.
+    // 4) Optional negative-mode chroma recovery.
+    // 5) Draw overlays (guide/pivot/curve) on top.
+    float3 inRGB = make_float3(_tex2D(p_TexR, p_X, p_Y), _tex2D(p_TexG, p_X, p_Y), _tex2D(p_TexB, p_X, p_Y));
+    int is_bypass = (p_bypass != 0);
+
+    float lr = code_to_linear_space(inRGB.x, p_input_space);
+    float lg = code_to_linear_space(inRGB.y, p_input_space);
+    float lb = code_to_linear_space(inRGB.z, p_input_space);
+
+    float width_sh_base = 0.40f;
+    float width_md_base = 0.55f;
+    float width_hi_base = 0.40f;
+    float width_cu_base = _fmaxf(0.05f, _fminf(1.0f, p_width_cu));
+
+    float shoulder_t = saturatef(p_shoulder_smooth);
+    float safety_t = smootherstep01(saturatef((p_safety - k_safety_min) / _fmaxf(k_safety_max - k_safety_min, 1e-6f)));
+    float safety_drive = k_safety_min + (k_safety_drive_max - k_safety_min) * safety_t;
+
+    float cst_sh = remap_center_stops(0, p_center_sh);
+    float center_sh = stops_to_di_code(cst_sh, p_input_space);
+    float amount_sh = p_amount_sh * safety_drive;
+    amount_sh = amount_sh * amount_scale_for_center(cst_sh, p_safety);
+    float width_sh = expand_width_by_amount(width_sh_base, amount_sh);
+    amount_sh = limit_amount_for_stability(amount_sh, width_sh, p_sym_sh, p_safety);
+    float g_sh = process_gain_scalar(lr, lg, lb, center_sh, width_sh, amount_sh, p_sym_sh, shoulder_t);
+
+    float cst_md = remap_center_stops(1, p_center_mid);
+    float center_md = stops_to_di_code(cst_md, p_input_space);
+    float amount_md = p_amount_mid * safety_drive;
+    amount_md = amount_md * amount_scale_for_center(cst_md, p_safety);
+    float width_md = expand_width_by_amount(width_md_base, amount_md);
+    amount_md = limit_amount_for_stability(amount_md, width_md, p_sym_mid, p_safety);
+    float g_md = process_gain_scalar(lr, lg, lb, center_md, width_md, amount_md, p_sym_mid, shoulder_t);
+
+    float cst_hi = remap_center_stops(2, p_center_hi);
+    float center_hi = stops_to_di_code(cst_hi, p_input_space);
+    float amount_hi = p_amount_hi * safety_drive;
+    amount_hi = amount_hi * amount_scale_for_center(cst_hi, p_safety);
+    float width_hi = expand_width_by_amount(width_hi_base, amount_hi);
+    amount_hi = limit_amount_for_stability(amount_hi, width_hi, p_sym_hi, p_safety);
+    float g_hi = process_gain_scalar(lr, lg, lb, center_hi, width_hi, amount_hi, p_sym_hi, shoulder_t);
+
+    float cst_cu = p_center_cu * 22.0f;
+    float center_cu = stops_to_di_code(cst_cu, p_input_space);
+    float amount_cu_base = p_amount_cu * safety_drive;
+    amount_cu_base = amount_cu_base * amount_scale_for_center(cst_cu, p_safety);
+    float custom_scale_cu = custom_amount_scale_from_width(width_cu_base);
+    float amount_cu = amount_cu_base * custom_scale_cu;
+    float width_drive_scale = k_custom_width_drive_floor + (1.0f - k_custom_width_drive_floor) * custom_scale_cu;
+    float width_cu = expand_width_by_amount(width_cu_base, amount_cu_base * width_drive_scale);
+    amount_cu = limit_amount_for_stability(amount_cu, width_cu, p_sym_cu, p_safety);
+    float g_cu = process_gain_scalar(lr, lg, lb, center_cu, width_cu, amount_cu, p_sym_cu, shoulder_t);
+
+    // Auto-width safety: keep each region support inside valid DI domain bounds.
+    float dmin = 0.0f + k_curve_domain_margin;
+    float dmax = 1.0f - k_curve_domain_margin;
+    float midgray_di = stops_to_di_code(0.0f, p_input_space);
+
+    float sh_bmin = dmin;
+    float sh_bmax = midgray_di;
+    float sh_maxw = _fmaxf(0.001f, sh_bmax - sh_bmin);
+    if (width_sh > sh_maxw) width_sh = sh_maxw;
+    float sh_half = 0.5f * width_sh;
+    float sh_cmin = sh_bmin + sh_half;
+    float sh_cmax = sh_bmax - sh_half;
+    if (sh_cmin <= sh_cmax) center_sh = _fminf(_fmaxf(center_sh, sh_cmin), sh_cmax);
+    else center_sh = 0.5f * (sh_bmin + sh_bmax);
+
+    float md_bmin = dmin;
+    float md_bmax = dmax;
+    float md_maxw = _fmaxf(0.001f, md_bmax - md_bmin);
+    if (width_md > md_maxw) width_md = md_maxw;
+    center_md = _fminf(_fmaxf(center_md, md_bmin), md_bmax);
+
+    float hi_bmin = midgray_di;
+    float hi_bmax = dmax;
+    float hi_maxw = _fmaxf(0.001f, hi_bmax - hi_bmin);
+    if (width_hi > hi_maxw) width_hi = hi_maxw;
+    float hi_half = 0.5f * width_hi;
+    float hi_cmin = hi_bmin + hi_half;
+    float hi_cmax = hi_bmax - hi_half;
+    if (hi_cmin <= hi_cmax) center_hi = _fminf(_fmaxf(center_hi, hi_cmin), hi_cmax);
+    else center_hi = 0.5f * (hi_bmin + hi_bmax);
+
+    float cu_bmin = dmin;
+    float cu_bmax = dmax;
+    float cu_maxw = _fmaxf(0.001f, cu_bmax - cu_bmin);
+    if (width_cu > cu_maxw) width_cu = cu_maxw;
+    float cu_half = 0.5f * width_cu;
+    float cu_cmin = cu_bmin + cu_half;
+    float cu_cmax = cu_bmax - cu_half;
+    if (cu_cmin <= cu_cmax) center_cu = _fminf(_fmaxf(center_cu, cu_cmin), cu_cmax);
+    else center_cu = 0.5f * (cu_bmin + cu_bmax);
+
+    // Re-limit after width clamps to preserve slope stability when auto-width gets clipped by bounds.
+    amount_sh = limit_amount_for_stability(amount_sh, width_sh, p_sym_sh, p_safety);
+    amount_md = limit_amount_for_stability(amount_md, width_md, p_sym_mid, p_safety);
+    amount_hi = limit_amount_for_stability(amount_hi, width_hi, p_sym_hi, p_safety);
+    amount_cu = limit_amount_for_stability(amount_cu, width_cu, p_sym_cu, p_safety);
+
+    g_sh = process_gain_scalar(lr, lg, lb, center_sh, width_sh, amount_sh, p_sym_sh, shoulder_t);
+    g_md = process_gain_scalar(lr, lg, lb, center_md, width_md, amount_md, p_sym_mid, shoulder_t);
+    g_hi = process_gain_scalar(lr, lg, lb, center_hi, width_hi, amount_hi, p_sym_hi, shoulder_t);
+    g_cu = process_gain_scalar(lr, lg, lb, center_cu, width_cu, amount_cu, p_sym_cu, shoulder_t);
+
+    float sh_lr = lr * g_sh;
+    float sh_lg = lg * g_sh;
+    float sh_lb = lb * g_sh;
+
+    float md_lr = lr * g_md;
+    float md_lg = lg * g_md;
+    float md_lb = lb * g_md;
+
+    float hi_lr = lr * g_hi;
+    float hi_lg = lg * g_hi;
+    float hi_lb = lb * g_hi;
+    float cu_lr = lr * g_cu;
+    float cu_lg = lg * g_cu;
+    float cu_lb = lb * g_cu;
+
+    float out_lr = lr + (sh_lr - lr) + (md_lr - lr) + (hi_lr - lr) + (cu_lr - lr);
+    float out_lg = lg + (sh_lg - lg) + (md_lg - lg) + (hi_lg - lg) + (cu_lg - lg);
+    float out_lb = lb + (sh_lb - lb) + (md_lb - lb) + (hi_lb - lb) + (cu_lb - lb);
+
+    if (p_preserve_mid_gray != 0) {
+        // Preserve exposure by solving one global linear gain at DI mid gray:
+        // g_mid = mid_in / mid_out_after_full_tool
+        float mid_di_in = linear_to_di(0.18f);
+        float mid_in = di_to_linear(mid_di_in);
+
+        float g_sh_mid = process_gain_scalar(mid_in, mid_in, mid_in, center_sh, width_sh, amount_sh, p_sym_sh, shoulder_t);
+        float g_md_mid = process_gain_scalar(mid_in, mid_in, mid_in, center_md, width_md, amount_md, p_sym_mid, shoulder_t);
+        float g_hi_mid = process_gain_scalar(mid_in, mid_in, mid_in, center_hi, width_hi, amount_hi, p_sym_hi, shoulder_t);
+        float g_cu_mid = process_gain_scalar(mid_in, mid_in, mid_in, center_cu, width_cu, amount_cu, p_sym_cu, shoulder_t);
+
+        float sh_mid = mid_in * g_sh_mid;
+        float md_mid = mid_in * g_md_mid;
+        float hi_mid = mid_in * g_hi_mid;
+        float cu_mid = mid_in * g_cu_mid;
+        float mid_out = mid_in + (sh_mid - mid_in) + (md_mid - mid_in) + (hi_mid - mid_in) + (cu_mid - mid_in);
+        float g_mid = mid_in / _fmaxf(mid_out, 1e-6f);
+
+        out_lr = out_lr * g_mid;
+        out_lg = out_lg * g_mid;
+        out_lb = out_lb * g_mid;
+    }
+
+    float neg_ui = _fmaxf(0.0f, -p_amount_mid);
+    neg_ui = _fmaxf(neg_ui, _fmaxf(0.0f, -p_amount_hi));
+    neg_ui = _fmaxf(neg_ui, _fmaxf(0.0f, -p_amount_sh));
+    neg_ui = _fmaxf(neg_ui, _fmaxf(0.0f, -p_amount_cu));
+    if (neg_ui > 0.0f) {
+        float Yproc = _fmaxf(1e-6f, 0.2126f * out_lr + 0.7152f * out_lg + 0.0722f * out_lb);
+        float Ysrc = _fmaxf(1e-6f, 0.2126f * lr + 0.7152f * lg + 0.0722f * lb);
+
+        float y_stops = _log2f(Ysrc / 0.18f);
+        float split_t = saturatef(((y_stops - k_neg_hs_split_center_stops) + k_neg_hs_split_soft_stops) / _fmaxf(2.0f * k_neg_hs_split_soft_stops, 1e-6f));
+        split_t = smootherstep01(split_t);
+        float min_mix_zone = k_neg_hs_min_below_mid + (k_neg_hs_min_above_mid - k_neg_hs_min_below_mid) * split_t;
+        float max_mix_zone = k_neg_hs_max_below_mid + (k_neg_hs_max_above_mid - k_neg_hs_max_below_mid) * split_t;
+
+        float amount_t = smootherstep01(saturatef(neg_ui));
+        float mix_at_safety_min = min_mix_zone * amount_t;
+        float safety_t = smootherstep01(saturatef((p_safety - 0.25f) / _fmaxf(1.0f - 0.25f, 1e-6f)));
+        float hs_mix = mix_at_safety_min + (max_mix_zone - mix_at_safety_min) * safety_t;
+        float black_t = smootherstep01(saturatef((Ysrc - k_neg_hs_black_y0) / _fmaxf(k_neg_hs_black_y1 - k_neg_hs_black_y0, 1e-6f)));
+        hs_mix = hs_mix * black_t;
+
+        if (hs_mix > 0.0f) {
+            float Cproc_r = out_lr - Yproc;
+            float Cproc_g = out_lg - Yproc;
+            float Cproc_b = out_lb - Yproc;
+            float Csrc_r = lr - Ysrc;
+            float Csrc_g = lg - Ysrc;
+            float Csrc_b = lb - Ysrc;
+
+            float Yn_proc = _sqrtf(Yproc * Yproc + k_neg_hs_rel_k * k_neg_hs_rel_k);
+            float Yn_src = _sqrtf(Ysrc * Ysrc + k_neg_hs_rel_k * k_neg_hs_rel_k);
+            float invYproc = 1.0f / _fmaxf(Yn_proc, 1e-6f);
+            float invYsrc = 1.0f / _fmaxf(Yn_src, 1e-6f);
+
+            float Cproc_rel_r = Cproc_r * invYproc;
+            float Cproc_rel_g = Cproc_g * invYproc;
+            float Cproc_rel_b = Cproc_b * invYproc;
+            float Csrc_rel_r = Csrc_r * invYsrc;
+            float Csrc_rel_g = Csrc_g * invYsrc;
+            float Csrc_rel_b = Csrc_b * invYsrc;
+
+            float Cmix_rel_r = Cproc_rel_r + (Csrc_rel_r - Cproc_rel_r) * hs_mix;
+            float Cmix_rel_g = Cproc_rel_g + (Csrc_rel_g - Cproc_rel_g) * hs_mix;
+            float Cmix_rel_b = Cproc_rel_b + (Csrc_rel_b - Cproc_rel_b) * hs_mix;
+
+            float s_rel = _fmaxf(k_neg_hs_rel_soft_limit, 1e-6f);
+            float Cmix_rel_soft_r = (s_rel * Cmix_rel_r) / _sqrtf(s_rel * s_rel + Cmix_rel_r * Cmix_rel_r);
+            float Cmix_rel_soft_g = (s_rel * Cmix_rel_g) / _sqrtf(s_rel * s_rel + Cmix_rel_g * Cmix_rel_g);
+            float Cmix_rel_soft_b = (s_rel * Cmix_rel_b) / _sqrtf(s_rel * s_rel + Cmix_rel_b * Cmix_rel_b);
+
+            out_lr = Yproc + Cmix_rel_soft_r * Yn_proc;
+            out_lg = Yproc + Cmix_rel_soft_g * Yn_proc;
+            out_lb = Yproc + Cmix_rel_soft_b * Yn_proc;
+        }
+    }
+
+    float3 outColor = make_float3(
+        linear_to_code_space(out_lr, p_input_space),
+        linear_to_code_space(out_lg, p_input_space),
+        linear_to_code_space(out_lb, p_input_space)
+    );
+
+    if (is_bypass) {
+        outColor = inRGB;
+    }
+
+    float x = (float)p_X / _fmaxf((float)(p_Width - 1), 1.0f);
+    float y = (float)p_Y / _fmaxf((float)(p_Height - 1), 1.0f);
+
+    if (p_guide != 0) {
+        float guide_top = 1.0f - (k_guide_strip_height + k_guide_ramp_height);
+
+        if (y >= guide_top && y <= (guide_top + k_guide_strip_height)) {
+            int middle = k_guide_steps / 2;
+            int step = (int)_fminf((float)k_guide_steps - 1.0f, _fmaxf(0.0f, x * k_guide_steps));
+            float v0 = guide_step_value_di(step);
+            float v1 = guide_step_value_di(_fminf(step + 1, k_guide_steps - 1));
+            float v_1 = guide_step_value_di(_fmaxf(step - 1, 0));
+            float g_in = di_to_linear(_fmaxf(0.0f, v0));
+            float g_in1 = di_to_linear(_fmaxf(0.0f, v1));
+            float g_in_1 = di_to_linear(_fmaxf(0.0f, v_1));
+
+            float g_out = g_in;
+            float g_out1 = g_in1;
+            float g_out_1 = g_in_1;
+            if (!is_bypass) {
+                float g_sh = process_gain_scalar(g_in, g_in, g_in, center_sh, width_sh, amount_sh, p_sym_sh, shoulder_t);
+                float g_md = process_gain_scalar(g_in, g_in, g_in, center_md, width_md, amount_md, p_sym_mid, shoulder_t);
+                float g_hi = process_gain_scalar(g_in, g_in, g_in, center_hi, width_hi, amount_hi, p_sym_hi, shoulder_t);
+                float g_cu = process_gain_scalar(g_in, g_in, g_in, center_cu, width_cu, amount_cu, p_sym_cu, shoulder_t);
+                g_out = g_in + (g_in * g_sh - g_in) + (g_in * g_md - g_in) + (g_in * g_hi - g_in) + (g_in * g_cu - g_in);
+
+                float g_sh1 = process_gain_scalar(g_in1, g_in1, g_in1, center_sh, width_sh, amount_sh, p_sym_sh, shoulder_t);
+                float g_md1 = process_gain_scalar(g_in1, g_in1, g_in1, center_md, width_md, amount_md, p_sym_mid, shoulder_t);
+                float g_hi1 = process_gain_scalar(g_in1, g_in1, g_in1, center_hi, width_hi, amount_hi, p_sym_hi, shoulder_t);
+                float g_cu1 = process_gain_scalar(g_in1, g_in1, g_in1, center_cu, width_cu, amount_cu, p_sym_cu, shoulder_t);
+                g_out1 = g_in1 + (g_in1 * g_sh1 - g_in1) + (g_in1 * g_md1 - g_in1) + (g_in1 * g_hi1 - g_in1) + (g_in1 * g_cu1 - g_in1);
+
+                float g_sh_1 = process_gain_scalar(g_in_1, g_in_1, g_in_1, center_sh, width_sh, amount_sh, p_sym_sh, shoulder_t);
+                float g_md_1 = process_gain_scalar(g_in_1, g_in_1, g_in_1, center_md, width_md, amount_md, p_sym_mid, shoulder_t);
+                float g_hi_1 = process_gain_scalar(g_in_1, g_in_1, g_in_1, center_hi, width_hi, amount_hi, p_sym_hi, shoulder_t);
+                float g_cu_1 = process_gain_scalar(g_in_1, g_in_1, g_in_1, center_cu, width_cu, amount_cu, p_sym_cu, shoulder_t);
+                g_out_1 = g_in_1 + (g_in_1 * g_sh_1 - g_in_1) + (g_in_1 * g_md_1 - g_in_1) + (g_in_1 * g_hi_1 - g_in_1) + (g_in_1 * g_cu_1 - g_in_1);
+            }
+
+            float disp = linear_to_code_space(_fmaxf(0.0f, g_out), p_input_space);
+            float o0 = linear_to_di(_fmaxf(0.0f, g_out));
+            float o1 = linear_to_di(_fmaxf(0.0f, g_out1));
+            float o_1 = linear_to_di(_fmaxf(0.0f, g_out_1));
+            int interior = (step > 0) && (step < (k_guide_steps - 1));
+            float step_stops = (float)(step - middle);
+            float shadow_t = smootherstep01(saturatef((-step_stops) / 7.0f));
+            float deep_shadow_scale = k_guide_shadow_sensitivity * k_guide_shadow_sensitivity;
+            float shadow_scale = 1.0f + (deep_shadow_scale - 1.0f) * shadow_t;
+            float close_thresh = k_guide_close_thresh * shadow_scale;
+            float flat_thresh = k_guide_flat_thresh * shadow_scale;
+            int too_close = interior && ((_fabs(o1 - o0) < close_thresh) || (_fabs(o0 - o_1) < close_thresh));
+            float slope_avg = 0.5f * (_fabs(o0 - o_1) + _fabs(o1 - o0));
+            int deep_shadow = step_stops <= -8.0f;
+            int flat_warn = interior && !deep_shadow && (slope_avg < flat_thresh);
+
+            if (too_close) {
+                outColor = make_float3(
+                    linear_to_code_space(1.0f, p_input_space),
+                    linear_to_code_space(0.15f, p_input_space),
+                    linear_to_code_space(0.15f, p_input_space)
+                );
+            } else if (flat_warn) {
+                outColor = make_float3(
+                    linear_to_code_space(1.0f, p_input_space),
+                    linear_to_code_space(0.95f, p_input_space),
+                    linear_to_code_space(0.2f, p_input_space)
+                );
+            } else {
+                outColor = make_float3(disp, disp, disp);
+            }
+        }
+
+        if (y >= (guide_top + k_guide_strip_height) && y <= (guide_top + k_guide_strip_height + k_guide_ramp_height)) {
+            int middle = k_guide_steps / 2;
+            float steps_range = (float)(k_guide_steps - 1);
+            float stops = (x * steps_range) - (float)middle;
+            float lin = k_guide_midgray_lin * _exp2f(stops);
+            float v = linear_to_di(lin);
+            float g_in = di_to_linear(_fmaxf(0.0f, v));
+
+            float g_out = g_in;
+            if (!is_bypass) {
+                float g_sh = process_gain_scalar(g_in, g_in, g_in, center_sh, width_sh, amount_sh, p_sym_sh, shoulder_t);
+                float g_md = process_gain_scalar(g_in, g_in, g_in, center_md, width_md, amount_md, p_sym_mid, shoulder_t);
+                float g_hi = process_gain_scalar(g_in, g_in, g_in, center_hi, width_hi, amount_hi, p_sym_hi, shoulder_t);
+                float g_cu = process_gain_scalar(g_in, g_in, g_in, center_cu, width_cu, amount_cu, p_sym_cu, shoulder_t);
+                g_out = g_in + (g_in * g_sh - g_in) + (g_in * g_md - g_in) + (g_in * g_hi - g_in) + (g_in * g_cu - g_in);
+            }
+
+            float disp = linear_to_code_space(_fmaxf(0.0f, g_out), p_input_space);
+            outColor = make_float3(disp, disp, disp);
+        }
+    }
+
+    if (p_highlight_pivot_point != 0) {
+        int pivot_region = p_pivot_region;
+
+        float piv_center_stops = 0.0f;
+        float piv_center_di = linear_to_di(0.18f);
+        float piv_width = 0.55f;
+
+        if (pivot_region == 0) {
+            // Midtones
+            piv_center_stops = remap_center_stops(1, p_center_mid);
+            piv_center_di = stops_to_di_code(piv_center_stops, p_input_space);
+            piv_width = 0.55f;
+        } else if (pivot_region == 1) {
+            // Highlights
+            piv_center_stops = remap_center_stops(2, p_center_hi);
+            piv_center_di = stops_to_di_code(piv_center_stops, p_input_space);
+            piv_width = 0.40f;
+        } else if (pivot_region == 2) {
+            // Shadows
+            piv_center_stops = remap_center_stops(0, p_center_sh);
+            piv_center_di = stops_to_di_code(piv_center_stops, p_input_space);
+            piv_width = 0.40f;
+        } else {
+            piv_center_stops = p_center_cu * 22.0f;
+            piv_center_di = stops_to_di_code(piv_center_stops, p_input_space);
+            piv_width = _fmaxf(0.05f, _fminf(1.0f, p_width_cu));
+        }
+
+        float ydi_px = luminance_di_from_code(inRGB.x, inRGB.y, inRGB.z, p_input_space);
+        float y_stops = _log2f(_fmaxf(1e-6f, di_to_linear(ydi_px)) / 0.18f);
+        float dist_stops = _fabs(y_stops - piv_center_stops);
+
+        float lo1 = stops_to_di_code(piv_center_stops - 1.0f, p_input_space);
+        float hi1 = stops_to_di_code(piv_center_stops + 1.0f, p_input_space);
+        float one_stop_half = 0.5f * _fabs(hi1 - lo1);
+        float pivot_half = _fmaxf(0.001f, _fminf(0.5f * piv_width, one_stop_half));
+        float hi_stops = _log2f(_fmaxf(1e-6f, di_to_linear(piv_center_di + pivot_half)) / 0.18f);
+        float lo_stops = _log2f(_fmaxf(1e-6f, di_to_linear(piv_center_di - pivot_half)) / 0.18f);
+        float edge_stops = _fminf(1.0f, 0.5f * _fabs(hi_stops - lo_stops));
+        float core_stops = 0.625f;
+
+        float alpha = 0.0f;
+        if (dist_stops <= core_stops) {
+            alpha = k_pivot_overlay_alpha;
+        } else {
+            float outer_fade_end = edge_stops + 0.35f * _fmaxf(edge_stops - core_stops, 1e-6f);
+            float t = saturatef((dist_stops - core_stops) / _fmaxf(outer_fade_end - core_stops, 1e-6f));
+            alpha = k_pivot_overlay_alpha * (1.0f - smootherstep01(t));
+        }
+
+        if (alpha > 0.0f) {
+            float3 pivot_green = make_float3(linear_to_di(0.00f), linear_to_di(0.55f), linear_to_di(0.03f));
+            float3 pivot_blue = make_float3(linear_to_di(0.00f), linear_to_di(0.35f), linear_to_di(0.50f));
+            float core_blend_start = core_stops * 0.20f;
+            float core_blend_end = _fmaxf(core_stops * 1.35f, core_stops + 1e-6f);
+            float core_blend_t = saturatef((dist_stops - core_blend_start) / _fmaxf(core_blend_end - core_blend_start, 1e-6f));
+            core_blend_t = smootherstep01(smootherstep01(core_blend_t));
+
+            float3 pivot_color = make_float3(
+                pivot_green.x + (pivot_blue.x - pivot_green.x) * core_blend_t,
+                pivot_green.y + (pivot_blue.y - pivot_green.y) * core_blend_t,
+                pivot_green.z + (pivot_blue.z - pivot_green.z) * core_blend_t
+            );
+            float pivot_n = (pivot_color.x + pivot_color.y + pivot_color.z) / 3.0f;
+            float tint_r = pivot_color.x - pivot_n;
+            float tint_g = pivot_color.y - pivot_n;
+            float tint_b = pivot_color.z - pivot_n;
+
+            outColor = make_float3(
+                saturatef(outColor.x + tint_r * alpha * 1.5f),
+                saturatef(outColor.y + tint_g * alpha * 1.5f),
+                saturatef(outColor.z + tint_b * alpha * 1.5f)
+            );
+        }
+    }
+
+    // Draw curve last so it stays visible above guide ramp overlays.
+    if (p_curve != 0) {
+        float y_ref = 1.0f - x;
+        if (_fabs(y - y_ref) < k_curve_thickness) {
+            int dash = ((int)(x * 60.0f)) & 1;
+            if (dash == 0) {
+                float w_ref = linear_to_code_space(0.65f, p_input_space);
+                outColor = make_float3(
+                    outColor.x + (w_ref - outColor.x) * k_curve_ref_alpha,
+                    outColor.y + (w_ref - outColor.y) * k_curve_ref_alpha,
+                    outColor.z + (w_ref - outColor.z) * k_curve_ref_alpha
+                );
+            }
+        }
+
+        float c_in = di_to_linear(_fmaxf(0.0f, x));
+        float c_amount_sh = is_bypass ? 0.0f : amount_sh;
+        float c_amount_md = is_bypass ? 0.0f : amount_md;
+        float c_amount_hi = is_bypass ? 0.0f : amount_hi;
+        float c_amount_cu = is_bypass ? 0.0f : amount_cu;
+
+        float c_g_sh = process_gain_scalar(c_in, c_in, c_in, center_sh, width_sh, c_amount_sh, p_sym_sh, shoulder_t);
+        float c_g_md = process_gain_scalar(c_in, c_in, c_in, center_md, width_md, c_amount_md, p_sym_mid, shoulder_t);
+        float c_g_hi = process_gain_scalar(c_in, c_in, c_in, center_hi, width_hi, c_amount_hi, p_sym_hi, shoulder_t);
+        float c_g_cu = process_gain_scalar(c_in, c_in, c_in, center_cu, width_cu, c_amount_cu, p_sym_cu, shoulder_t);
+
+        float c_sh = c_in * c_g_sh;
+        float c_md = c_in * c_g_md;
+        float c_hi = c_in * c_g_hi;
+        float c_cu = c_in * c_g_cu;
+        float c_out = c_in + (c_sh - c_in) + (c_md - c_in) + (c_hi - c_in) + (c_cu - c_in);
+
+        if (p_preserve_mid_gray != 0) {
+            float c_mid_di_in = linear_to_di(0.18f);
+            float c_mid_in = di_to_linear(c_mid_di_in);
+            float c_g_sh_mid = process_gain_scalar(c_mid_in, c_mid_in, c_mid_in, center_sh, width_sh, c_amount_sh, p_sym_sh, shoulder_t);
+            float c_g_md_mid = process_gain_scalar(c_mid_in, c_mid_in, c_mid_in, center_md, width_md, c_amount_md, p_sym_mid, shoulder_t);
+            float c_g_hi_mid = process_gain_scalar(c_mid_in, c_mid_in, c_mid_in, center_hi, width_hi, c_amount_hi, p_sym_hi, shoulder_t);
+            float c_g_cu_mid = process_gain_scalar(c_mid_in, c_mid_in, c_mid_in, center_cu, width_cu, c_amount_cu, p_sym_cu, shoulder_t);
+            float c_sh_mid = c_mid_in * c_g_sh_mid;
+            float c_md_mid = c_mid_in * c_g_md_mid;
+            float c_hi_mid = c_mid_in * c_g_hi_mid;
+            float c_cu_mid = c_mid_in * c_g_cu_mid;
+            float c_mid_out = c_mid_in + (c_sh_mid - c_mid_in) + (c_md_mid - c_mid_in) + (c_hi_mid - c_mid_in) + (c_cu_mid - c_mid_in);
+            float c_g_mid = c_mid_in / _fmaxf(c_mid_out, 1e-6f);
+            c_out = c_out * c_g_mid;
+        }
+
+        float o_di = linear_to_di(_fmaxf(0.0f, c_out));
+        float y_curve = 1.0f - o_di;
+        if (_fabs(y - y_curve) < k_curve_thickness) {
+            float w = linear_to_code_space(0.95f, p_input_space);
+            outColor = make_float3(w, w, w);
+        }
+    }
+
+    return outColor;
+}
+

@@ -33,6 +33,7 @@ DEFINE_UI_PARAMS(p_guide, Guide Ramp, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(p_curve, Curve Overlay, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(p_bypass, Bypass, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(p_input_space, Input Space, DCTLUI_COMBO_BOX, 1, {Linear, DI, ACEScct, LogC3}, {Linear, DaVinci Intermediate, ACEScct, ARRI LogC3})
+DEFINE_UI_PARAMS(p_shoulder_smooth, Shoulder Smoothness, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 1.0, 0.001)
 
 /*----------- Tooltips -----------------*/
 #if ((__RESOLVE_VER_MAJOR__ > 19)) || ((__RESOLVE_VER_MAJOR__ == 19) && (__RESOLVE_VER_MINOR__ >= 1))
@@ -48,6 +49,7 @@ DEFINE_UI_TOOLTIP(Highlight Pivot Point, "Draws a green guide over the pivot-cen
 DEFINE_UI_TOOLTIP(Guide Ramp, "Shows stepped/ramp guide. Red = steps too close (risk of clipping/flat areas). Yellow = low slope (flat curve warning).")
 DEFINE_UI_TOOLTIP(Curve Overlay, "Draws the curve response on the image to visualize the current settings. the curve is encoded in the output space of the tool, so it reflects the actual applied contrast shaping.")
 DEFINE_UI_TOOLTIP(Safety Fader, "Controls how tightly Amount is constrained. Lower values are safer; higher values allow more range.")
+DEFINE_UI_TOOLTIP(Shoulder Smoothness, "Global shoulder feel. 0 = stronger shoulder, 1 = smoother shoulder roll-off.")
 #endif
 
 #define SPACE_LINEAR 0
@@ -74,6 +76,10 @@ DEFINE_UI_TOOLTIP(Safety Fader, "Controls how tightly Amount is constrained. Low
 // Width auto-expansion response vs amount push.
 #define k_range_expand 0.6f
 #define k_range_expand_power 2.0f
+#define k_width_expand_softness 0.65f
+#define k_width_expand_log_beta 6.0f
+#define k_width_expand_input_smooth 0.70f
+#define k_amount_smooth_knee 0.03f
 // Stability limiter envelope for amount vs width.
 #define k_amount_width_limit_safe 0.8f
 #define k_amount_width_limit_max 1.0f
@@ -129,6 +135,10 @@ DEFINE_UI_TOOLTIP(Safety Fader, "Controls how tightly Amount is constrained. Low
 
 __DEVICE__ float saturatef(float x) { return _fminf(_fmaxf(x, 0.0f), 1.0f); }
 __DEVICE__ float smootherstep01(float x) { x = saturatef(x); return x * x * x * (x * (x * 6.0f - 15.0f) + 10.0f); }
+__DEVICE__ float smooth_absf(float x, float knee) {
+    float k = _fmaxf(knee, 1e-6f);
+    return _sqrtf(x * x + k * k) - k;
+}
 __DEVICE__ float stops_to_di_code(float stops, int input_space);
 
 __DEVICE__ float di_to_linear(float t) {
@@ -248,10 +258,17 @@ __DEVICE__ float custom_amount_scale_from_width(float width_user) {
     return k_custom_amount_min_scale + (1.0f - k_custom_amount_min_scale) * t;
 }
 __DEVICE__ float expand_width_by_amount(float width, float amount) {
-    float a = _fabs(amount);
+    float a = smooth_absf(amount, k_amount_smooth_knee);
+    a = saturatef(a);
+    float a_quintic = smootherstep01(a);
+    a = a + (a_quintic - a) * saturatef(k_width_expand_input_smooth);
     float e = _expf(k_range_expand_power * a);
     float denom = _expf(k_range_expand_power) - 1.0f;
-    float w = 1.0f + k_range_expand * (e - 1.0f) / _fmaxf(denom, 1e-6f);
+    float w_exp = 1.0f + k_range_expand * (e - 1.0f) / _fmaxf(denom, 1e-6f);
+    float beta = _fmaxf(k_width_expand_log_beta, 1e-6f);
+    float w_log = 1.0f + k_range_expand * (_logf(1.0f + beta * a) / _fmaxf(_logf(1.0f + beta), 1e-6f));
+    float soft_t = saturatef(k_width_expand_softness);
+    float w = w_exp + (w_log - w_exp) * soft_t;
     return width * w;
 }
 __DEVICE__ float amount_from_target_width(float base_width, float target_width) {
@@ -275,15 +292,17 @@ __DEVICE__ float limit_amount_for_stability(float amount, float width, float sym
     float a_limited = cap * (1.0f - _expf(-a / _fmaxf(cap, 1e-6f)));
     return _copysignf(a_limited, amount);
 }
-__DEVICE__ float localized_s_curve(float x, float amount, float center, float width, float symmetry_bias) {
+__DEVICE__ float localized_s_curve(float x, float amount, float center, float width, float symmetry_bias, float shoulder_t) {
     // Localized odd curve with compact support.
     // Symmetry bias tips influence to one side around the pivot.
     float halfW = _fmaxf(0.0005f, 0.5f * width);
     float t = (x - center) / halfW;
-    float env = saturatef(1.0f - t * t);
-    env = env * env;
+    float u = saturatef(1.0f - t * t);
+    float env = smootherstep01(u);
+    float env_soft = u * u;
+    env = env + (env_soft - env) * saturatef(shoulder_t);
     float b = _fminf(_fmaxf(symmetry_bias, -1.0f), 1.0f);
-    const float k_symmetry_softness = 0.20f;
+    const float k_symmetry_softness = 0.28f;
     float t_softsign = t / _sqrtf(t * t + k_symmetry_softness * k_symmetry_softness);
     float side_gain = 1.0f + b * t_softsign;
     float delta_raw = amount * t * env * side_gain * 0.5f;
@@ -314,10 +333,10 @@ __DEVICE__ float stops_to_di_code(float stops, int input_space) {
     float target_code = linear_to_code_space(target_lin, input_space);
     return linear_to_di(code_to_linear_space(target_code, input_space));
 }
-__DEVICE__ float preserve_midgray_gain(float amount, float center, float width, float symmetry_bias) {
+__DEVICE__ float preserve_midgray_gain(float amount, float center, float width, float symmetry_bias, float shoulder_t) {
     float mid_in = 0.18f;
     float mid_di = linear_to_di(mid_in);
-    float mid_di_shaped = localized_s_curve(mid_di, amount, center, width, symmetry_bias);
+    float mid_di_shaped = localized_s_curve(mid_di, amount, center, width, symmetry_bias, shoulder_t);
     float mid_out = di_to_linear(_fmaxf(0.0f, mid_di_shaped));
     float ratio = mid_out / _fmaxf(mid_in, 1e-6f);
     float stops = _log2f(_fmaxf(ratio, 1e-6f));
@@ -417,11 +436,11 @@ __DEVICE__ int4 get_black_bar_thickness(int p_Width, int p_Height, __TEXTURE__ p
     return thickness;
 }
 
-__DEVICE__ float process_gain_scalar(float lr, float lg, float lb, float center, float width, float amount, float symmetry_bias) {
+__DEVICE__ float process_gain_scalar(float lr, float lg, float lb, float center, float width, float amount, float symmetry_bias, float shoulder_t) {
     // Luma-domain shaping gain (cohesion-limited), returned as scalar for stability.
     float Y = _fmaxf(1e-6f, 0.2126f * lr + 0.7152f * lg + 0.0722f * lb);
     float Ydi = linear_to_di(Y);
-    float YdiS = localized_s_curve(Ydi, amount, center, width, symmetry_bias);
+    float YdiS = localized_s_curve(Ydi, amount, center, width, symmetry_bias, shoulder_t);
     float Y2 = di_to_linear(_fmaxf(0.0f, YdiS));
     float ratio = Y2 / _fmaxf(Y, 1e-6f);
     float stops = _log2f(_fmaxf(ratio, 1e-6f));
@@ -437,6 +456,7 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, __TEXTU
     float lr = code_to_linear_space(inRGB.x, p_input_space);
     float lg = code_to_linear_space(inRGB.y, p_input_space);
     float lb = code_to_linear_space(inRGB.z, p_input_space);
+    float shoulder_t = saturatef(p_shoulder_smooth);
     // Processing amount is safety-weighted by design.
     float amount_use = p_amount * p_safety;
     float cst = remap_center_stops(p_region, p_center_shift);
@@ -486,7 +506,7 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, __TEXTU
 
     amount_scaled = limit_amount_for_stability(amount_scaled, width, p_symmetry_bias, p_safety);
 
-    float g_proc = process_gain_scalar(lr, lg, lb, center, width, amount_scaled, p_symmetry_bias);
+    float g_proc = process_gain_scalar(lr, lg, lb, center, width, amount_scaled, p_symmetry_bias, shoulder_t);
     float luma_lr = lr * g_proc;
     float luma_lg = lg * g_proc;
     float luma_lb = lb * g_proc;
@@ -494,9 +514,9 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, __TEXTU
     float r_di = linear_to_di(lr);
     float g_di = linear_to_di(lg);
     float b_di = linear_to_di(lb);
-    float rgb_lr = di_to_linear(_fmaxf(0.0f, localized_s_curve(r_di, amount_scaled, center, width, p_symmetry_bias)));
-    float rgb_lg = di_to_linear(_fmaxf(0.0f, localized_s_curve(g_di, amount_scaled, center, width, p_symmetry_bias)));
-    float rgb_lb = di_to_linear(_fmaxf(0.0f, localized_s_curve(b_di, amount_scaled, center, width, p_symmetry_bias)));
+    float rgb_lr = di_to_linear(_fmaxf(0.0f, localized_s_curve(r_di, amount_scaled, center, width, p_symmetry_bias, shoulder_t)));
+    float rgb_lg = di_to_linear(_fmaxf(0.0f, localized_s_curve(g_di, amount_scaled, center, width, p_symmetry_bias, shoulder_t)));
+    float rgb_lb = di_to_linear(_fmaxf(0.0f, localized_s_curve(b_di, amount_scaled, center, width, p_symmetry_bias, shoulder_t)));
 
     // Positive amount favors RGB-path shaping; negative amount leans toward luma coherence.
     float blend = (amount_use >= 0.0f) ? 1.0f : 0.0f;
@@ -518,7 +538,7 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, __TEXTU
     float src_lg = lg;
     float src_lb = lb;
     if (p_preserve_mid_gray != 0) {
-        float g_mid = preserve_midgray_gain(amount_scaled, center, width, p_symmetry_bias);
+        float g_mid = preserve_midgray_gain(amount_scaled, center, width, p_symmetry_bias, shoulder_t);
         out_lr = out_lr * g_mid;
         out_lg = out_lg * g_mid;
         out_lb = out_lb * g_mid;
@@ -595,7 +615,7 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, __TEXTU
     float center_overlay = center;
     float g_mid_overlay = 1.0f;
     if (p_preserve_mid_gray != 0) {
-        g_mid_overlay = preserve_midgray_gain(amount_scaled_overlay, center_overlay, width_overlay, p_symmetry_bias);
+        g_mid_overlay = preserve_midgray_gain(amount_scaled_overlay, center_overlay, width_overlay, p_symmetry_bias, shoulder_t);
     }
 
     if (p_highlight_pivot_point != 0) {
@@ -703,7 +723,7 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, __TEXTU
                         );
                     }
                 }
-                float o_di = localized_s_curve(x, amount_scaled_overlay, center_overlay, width_overlay, p_symmetry_bias);
+                float o_di = localized_s_curve(x, amount_scaled_overlay, center_overlay, width_overlay, p_symmetry_bias, shoulder_t);
                 if (p_preserve_mid_gray != 0) {
                     o_di = apply_preserve_to_di(o_di, g_mid_overlay);
                 }
@@ -721,9 +741,9 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, __TEXTU
                 float v0 = guide_step_value_di(step);
                 float v1 = guide_step_value_di(_fminf(step + 1, k_guide_steps - 1));
                 float v_1 = guide_step_value_di(_fmaxf(step - 1, 0));
-                float o0 = localized_s_curve(v0, amount_scaled_overlay, center_overlay, width_overlay, p_symmetry_bias);
-                float o1 = localized_s_curve(v1, amount_scaled_overlay, center_overlay, width_overlay, p_symmetry_bias);
-                float o_1 = localized_s_curve(v_1, amount_scaled_overlay, center_overlay, width_overlay, p_symmetry_bias);
+                float o0 = localized_s_curve(v0, amount_scaled_overlay, center_overlay, width_overlay, p_symmetry_bias, shoulder_t);
+                float o1 = localized_s_curve(v1, amount_scaled_overlay, center_overlay, width_overlay, p_symmetry_bias, shoulder_t);
+                float o_1 = localized_s_curve(v_1, amount_scaled_overlay, center_overlay, width_overlay, p_symmetry_bias, shoulder_t);
                 if (p_preserve_mid_gray != 0) {
                     o0 = apply_preserve_to_di(o0, g_mid_overlay);
                     o1 = apply_preserve_to_di(o1, g_mid_overlay);
@@ -765,7 +785,7 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, __TEXTU
                 float stops = (x * steps_range) - (float)middle;
                 float lin = k_guide_midgray_lin * _exp2f(stops);
                 float v = linear_to_di(lin);
-                float o = localized_s_curve(v, amount_scaled_overlay, center_overlay, width_overlay, p_symmetry_bias);
+                float o = localized_s_curve(v, amount_scaled_overlay, center_overlay, width_overlay, p_symmetry_bias, shoulder_t);
                 if (p_preserve_mid_gray != 0) {
                     o = apply_preserve_to_di(o, g_mid_overlay);
                 }
