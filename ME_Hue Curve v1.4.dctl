@@ -2,6 +2,7 @@
 /* ME_Hue curve ver 1.4
     by Moaz Elgabry
     moazelgabry.com
+    
     buymeacoffee.com/moazelgabry
 
 
@@ -24,13 +25,13 @@
     Values for reference white from https://de.wikipedia.org/wiki/Lab-Farbraum#Umrechnung_von_XYZ_zu_Lab
 
     Change Log: 
-    V1.4.0: *Fixed compatibilty issues with opencl and metal.
+    V1.4  : *Fixed compatibilty issues with opencl and metal.
             *Made the hue curve C2 continious and now has better mathematical stability so small adjustments will feel more smooth.
             *Improved protection for lab models against high saturation colors and the prune-to-break blue region for Davinici wide gamut.
             *Added a guardrail to prevent the hue curve from folding particulalry when using the custom hue option.
             *Improved visibility of the hue overlay curve.
             *Removed experimental color models.
-    v1.3.0: *Initial release as earlier versions were not documented.
+    v1.3  : *Initial release as earlier versions were not documented.
  */
 
 
@@ -55,14 +56,37 @@ DEFINE_UI_PARAMS(color_model, Color model, DCTLUI_COMBO_BOX, 6, {chen, HSV, reul
 
 DEFINE_UI_PARAMS(colorspace, Colorspace, DCTLUI_COMBO_BOX, 1, {ccg, dwg, awg3}, {Cinema Gamut, DaVinci WG, AWG3})
 
+/*----------- Tooltips -----------------*/
+#if ((__RESOLVE_VER_MAJOR__ > 19)) || ((__RESOLVE_VER_MAJOR__ == 19) && (__RESOLVE_VER_MINOR__ >= 1))
+DEFINE_UI_TOOLTIP(red_adjustment_amt, "Adjusts red-region hue shift.")
+DEFINE_UI_TOOLTIP(skin_adjustment_amt, "Adjusts skin-region hue shift. In Lab-family models, center/amount are remapped for perceptual behavior.")
+DEFINE_UI_TOOLTIP(yellow_adjustment_amt, "Adjusts yellow-region hue shift.")
+DEFINE_UI_TOOLTIP(green_adjustment_amt, "Adjusts green-region hue shift.")
+DEFINE_UI_TOOLTIP(cyan_adjustment_amt, "Adjusts cyan-region hue shift. In Lab-family models, amount is remapped for stability.")
+DEFINE_UI_TOOLTIP(blue_adjustment_amt, "Adjusts blue-region hue shift.")
+DEFINE_UI_TOOLTIP(magenta_adjustment_amt, "Adjusts magenta-region hue shift.")
+DEFINE_UI_TOOLTIP(adjustment_amt, "Custom hue shift amount for the selected angle.")
+DEFINE_UI_TOOLTIP(selected_hue, "Custom hue center in degrees (0-360).")
+DEFINE_UI_TOOLTIP(complementary_fade, "Strength of the opposite-hue bell (0 disables, 1 matches main bell strength).")
+DEFINE_UI_TOOLTIP(smoothness, "Widens bell feathering for gentler transitions and better overlap stability.")
+DEFINE_UI_TOOLTIP(bypass, "Disables processing and passes the input through unchanged.")
+DEFINE_UI_TOOLTIP(draw_curve, "Draws curve/marker guides over the active image area for setup and debugging.")
+DEFINE_UI_TOOLTIP(complementary_curve, "Enables an additional bell at the complementary hue (180 degrees away).")
+DEFINE_UI_TOOLTIP(color_model, "Selects hue-processing model. Chen/HSV/Reuleaux/HSP use channel 1 hue; CIELab/OKLab/ProLab use LCH hue channel.")
+DEFINE_UI_TOOLTIP(colorspace, "Working gamut used by Lab-family transforms and inset/outset safety math. Match this to your pipeline gamut.")
+#endif
+
 // Keep constants global (some Metal/OpenCL parsers dislike repeated in-function defines).
 #define ME_PI 3.1415926535897932384626f
 #define PI ME_PI
 #define k_black_threshold 0.01f
 #define k_assume_centered 1
+
+// k_fold_limit caps accumulated hue delta before wrap folding.
+// Lower = safer/softer combined shifts, higher = stronger stacking.
 #define k_fold_limit 0.35f
 
-// Forward declaration (used by early color-model helpers).
+
 __DEVICE__ float3 v_x_mtx_3x3_s(float3 v,
                                 float m00, float m01, float m02,
                                 float m10, float m11, float m12,
@@ -420,7 +444,7 @@ Adapted from code writeen by Jan Karow
 =========================*/
 
 
- /* Inset-outset solution adapted from Nico Fink's OkLAB implementation*/
+ /* Inset-outset solution adapted from Agx suggested by Jan Karow*/
  
  __DEVICE__ float3 rgb_inset_by_space(float3 rgb, int colorspace) {
     // DaVinci Wide Gamut has a blue primary with negative y chromaticity (y = -0.1155).
@@ -445,7 +469,7 @@ Adapted from code writeen by Jan Karow
             rgb.x * 0.0798274940832882f + rgb.y * 0.0831439197810352f + rgb.z * 0.8370271282400680f
         );
     }
-    // XYZ / Rec2020: passthrough
+    //  passthrough
     return rgb;
  }
      
@@ -466,7 +490,7 @@ Adapted from code writeen by Jan Karow
             rgb.x * -0.1078938970156720f + rgb.y * -0.1123763563087380f + rgb.z * 1.2202719663128800f
         );
     }
-    // XYZ / Rec2020: passthrough
+    //  passthrough
     return rgb;
  }
  
@@ -794,13 +818,16 @@ __DEVICE__ float me_smoothstep01(float x) {
  } control_params_t;
 
 
- //Hue curve is written by Thatcher Freeman
+ //Original Hue curve is written by Thatcher Freeman
  //https://github.com/thatcherfreeman/utility-dctls/blob/main/Effects/Hue%20Curve.dctl
 
  
  __DEVICE__ float single_hue_curve(float x, control_params_t params) {
     // Assume x is a hue between 0 and 1.
     // Offset x by the amount that brings selected_hue to 0.5.
+
+    // - adj scales slider effect globally (currently 0.2x).
+    // - left/right_feather control bell width asymmetry per hue family.
     float adj = params.adjustment_amt * 0.2f;
     float offset = 0.5f - params.selected_hue;
     float curr_hue = wrapf(x + offset, 1.0f);
@@ -839,7 +866,7 @@ __DEVICE__ float me_smoothstep01(float x) {
  
  
   __DEVICE__ float3 mixFloat3(float mix, float3 inA, float3 inB) {
-    // Note that when a float3 is multiplied by a float, it multiplies each component
+    // when a float3 is multiplied by a float, it multiplies each component
     return inA * (1-mix) + inB * mix;
   }
  
@@ -946,9 +973,16 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, __TEXTU
     float curr_pos_x = (float)p_X / safe_w;
     float curr_pos_y = 1.0f - (float)p_Y / safe_h;
 
+
+    // soft_scale defines overall slider polarity/magnitude.
+    // smooth_k controls feather growth from the Smooth UI slider.
     float soft_scale = -1.0f * _fmaxf(0.8f, _fminf(1.0f, (1.0f - smoothness * 0.8f + 0.2f)));
     float smooth_k = smoothness * smoothness;
 
+
+    // selected_hue = bell center (normalized 0..1 hue wheel).
+    // left/right_feather = local bell width; larger values overlap more.
+    // If tuning behavior, keep centers stable first, then widen feathers.
     control_params_t red_params;
     red_params.selected_hue = 0.0f;
     red_params.adjustment_amt = red_adjustment_amt * soft_scale;
@@ -997,6 +1031,8 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, __TEXTU
     custom_params.left_feather = 0.30f + smooth_k * 0.50f;
     custom_params.right_feather = 0.30f + smooth_k * 1.00f;
 
+    // Tuning reference for Lab-family models:
+    // these remaps align perceived hue positions/strength in CIELab/OKLab/ProLab.
     if (color_model == cie || color_model == ok || color_model == pro) {
         skin_params.selected_hue = 0.15444f;
         skin_params.adjustment_amt = skin_adjustment_amt * -1.2f;
@@ -1152,6 +1188,9 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, __TEXTU
     accum_hue_delta += circular_delta(shifted_hue, curr_hue);
     accum_curve_delta += circular_delta(curve_y, curr_pos_x);
 
+    // Tuning reference:
+    // soft compression prevents foldovers when multiple bells stack.
+    // If you need stronger effect, raise k_fold_limit carefully.
     float safe_hue_delta = k_fold_limit * accum_hue_delta /
         _sqrtf(k_fold_limit * k_fold_limit + accum_hue_delta * accum_hue_delta);
     accum_curve_delta = k_fold_limit * accum_curve_delta /
@@ -1166,6 +1205,8 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, __TEXTU
     float curve_pos_y = _fminf(_fmaxf(curve_pos_y_raw, 0.0f), 1.0f);
     int curve_in_bounds = (curve_pos_y_raw >= 0.0f && curve_pos_y_raw <= 1.0f);
     float selected_hue_dist = _fabs(wrapf(curr_pos_x - selected_hue_norm + 0.5f, 1.0f) - 0.5f);
+    // Tuning reference for overlay visibility:
+    // curve_line_eps controls drawn curve thickness; marker_line_eps controls marker width.
     float curve_line_eps = 0.003f;
     float marker_line_eps = 0.0012f;
     if (draw_curve) {
