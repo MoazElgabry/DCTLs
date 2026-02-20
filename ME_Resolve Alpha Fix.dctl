@@ -1,0 +1,138 @@
+#line 2
+/* ME_Resolve Alpha fix.dctl
+
+    by Moaz Elgabry
+    moazelgabry.com
+    
+    buymeacoffee.com/moazelgabry
+
+   ─────────────────────────────────────────────────────────────────────────
+   Corrects the transform Resolve applies to the alpha
+   channel between nodes. The confirmed transform is:
+  
+     f(x) = 4x(1+x)/7   for x <= 0.5   [quadratic]
+     f(x) = (8x - 1)/7  for x >  0.5   [linear]
+  
+   Both pieces are C1-continuous at x = 0.5 (value = 3/7, slope = 8/7).
+  
+   The exact inverse is:
+     f⁻¹(y) = (-1 + sqrt(1 + 7y)) / 2   for y <= 3/7
+     f⁻¹(y) = (7y + 1) / 8              for y >  3/7
+  
+  MODES
+    0 - Correct alpha : Pass RGB through; write corrected alpha to output.
+    1 - Chain-correct : Pre-compensate alpha for one extra downstream key hop.
+    2 - Chain-correct2: Pre-compensate alpha for two extra downstream key hops.
+
+  CURVE DEMO
+    Demonstrate Curve toggle draws a baseline dashed linear curve plus
+    selected response curves (distorted/corrected/both) over RGB.
+    Alpha processing mode remains active while the overlay is shown.
+  ─────────────────────────────────────────────────────────────────────────
+*/ 
+
+DEFINE_DCTL_ALPHA_MODE_STRAIGHT
+
+DEFINE_UI_PARAMS(mode, Mode, DCTLUI_COMBO_BOX, 1, {CORRECT_ALPHA, CHAIN_CORRECT, CHAIN_CORRECT_2}, {Correct Alpha, Chain Daisy (1 Hop), Chain Daisy (2 Hops)})
+DEFINE_UI_PARAMS(passthrough, Passthrough, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_PARAMS(demonstrate_curve, Demonstrate Curve, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_PARAMS(curve_view, Curve View, DCTLUI_COMBO_BOX, 2, {DISTORTED_ONLY, CORRECTED_ONLY, BOTH_CURVES}, {Distorted, Corrected, Both})
+
+/*----------- Tooltips -----------------*/
+#if ((__RESOLVE_VER_MAJOR__ > 19)) || ((__RESOLVE_VER_MAJOR__ == 19) && (__RESOLVE_VER_MINOR__ >= 1))
+DEFINE_UI_TOOLTIP(Mode, "Correct Alpha decodes for immediate use in this node. Chain Daisy modes pre-compensate for 1 or 2 downstream key-link transforms; in 2-Hop mode, intermediate-node alpha will not be final.")
+DEFINE_UI_TOOLTIP(Passthrough, "Bypasses all processing and returns input RGB/alpha unchanged.")
+DEFINE_UI_TOOLTIP(Demonstrate Curve, "Draws a dashed linear baseline and selected alpha response curve(s) over RGB while keeping alpha processing active.")
+DEFINE_UI_TOOLTIP(Curve View, "Select which response curves to draw: Distorted, Corrected, or Both.")
+#endif
+
+// ── The confirmed forward transform (for reference / verification) ────────
+__DEVICE__ float alpha_forward(float x)
+{
+    x = _fmaxf(0.0f, _fminf(1.0f, x));
+    if (x <= 0.5f)
+        return (4.0f * x * (1.0f + x)) / 7.0f;   // quadratic piece
+    else
+        return (8.0f * x - 1.0f) / 7.0f;          // linear piece
+}
+
+// ── The exact inverse ─────────────────────────────────────────────────────
+__DEVICE__ float alpha_inverse(float y)
+{
+    y = _fmaxf(0.0f, _fminf(1.0f, y));
+    if (y <= (3.0f / 7.0f))
+        return (-1.0f + _sqrtf(1.0f + 7.0f * y)) / 2.0f;  // inverse of quadratic
+    else
+        return (7.0f * y + 1.0f) / 8.0f;                    // inverse of linear
+}
+
+// ── Main ──────────────────────────────────────────────────────────────────
+__DEVICE__ float4 transform(int p_Width, int p_Height, int p_X, int p_Y, float p_R, float p_G, float p_B, float p_A)
+{
+    float out_r = p_R;
+    float out_g = p_G;
+    float out_b = p_B;
+    float out_a = p_A;
+
+    if (passthrough == 1)
+    {
+        return make_float4(out_r, out_g, out_b, out_a);
+    }
+
+    if (mode == 0) // CORRECT_ALPHA: fix alpha, leave RGB untouched
+    {
+        out_a = alpha_inverse(p_A);
+    }
+    else if (mode == 1) // CHAIN_CORRECT: compensate for one extra downstream alpha-link transform
+    {
+        // If the next node link applies forward transform again, this makes it land on corrected alpha.
+        out_a = alpha_inverse(alpha_inverse(p_A));
+    }
+    else if (mode == 2) // CHAIN_CORRECT_2: compensate for two extra downstream alpha-link transforms
+    {
+        // If two downstream key links apply forward transform, this makes the second land on corrected alpha.
+        out_a = alpha_inverse(alpha_inverse(alpha_inverse(p_A)));
+    }
+    
+    if (demonstrate_curve == 1)
+    {
+        float x = (float)p_X / _fmaxf((float)(p_Width - 1), 1.0f);
+        float y = 1.0f - (float)p_Y / _fmaxf((float)(p_Height - 1), 1.0f);
+        float eps = 1.25f / _fmaxf((float)p_Height, 1.0f);
+
+        float y_linear = x;
+        float y_distorted = alpha_forward(x);
+        float y_corrected = alpha_inverse(x);
+        int dash_on = (((int)(x * 90.0f)) % 2) == 0;
+
+        out_r = 0.06f;
+        out_g = 0.06f;
+        out_b = 0.06f;
+
+        // Dashed baseline linear response
+        if (dash_on && _fabs(y - y_linear) < eps)
+        {
+            out_r = 0.45f;
+            out_g = 0.45f;
+            out_b = 0.45f;
+        }
+
+        // Distorted curve in red
+        if ((curve_view == 0 || curve_view == 2) && _fabs(y - y_distorted) < eps)
+        {
+            out_r = 1.00f;
+            out_g = 0.20f;
+            out_b = 0.20f;
+        }
+
+        // Corrected curve in green
+        if ((curve_view == 1 || curve_view == 2) && _fabs(y - y_corrected) < eps)
+        {
+            out_r = 0.20f;
+            out_g = 1.00f;
+            out_b = 0.20f;
+        }
+    }
+
+    return make_float4(out_r, out_g, out_b, out_a);
+}
