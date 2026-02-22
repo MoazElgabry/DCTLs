@@ -25,6 +25,9 @@
     Values for reference white from https://de.wikipedia.org/wiki/Lab-Farbraum#Umrechnung_von_XYZ_zu_Lab
 
     Change Log: 
+    V1.6  : *Added a new color model path based on Kirk's tLab (a tweak of CIELab with LCH hue handling) and a Yrg path (a tweak of Lab with a dedicated Yrg inset/outset), both designed for improved stability and perceptual behavior in hue adjustments. Thanks to Kirk for sharing his insights and code!
+            *Added tLab (Kirk) as a Lab-family color model path with LCH hue handling.
+            *Added Yrg (Kirk 2019) Lab-family model path with dedicated Yrg inset/outset.
     V1.5  : *Added Variation Mode - a new control type that stretches or compresses
              hues within each bell region rather than rotating them, useful for
              clustering or spreading hue families.
@@ -54,11 +57,11 @@ DEFINE_UI_PARAMS(smoothness, Smooth, DCTLUI_SLIDER_FLOAT, 0, 0.0, 1.0, 0.01)
 DEFINE_UI_PARAMS(bypass, 🚫 Bypass, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(draw_curve, 📈 Draw Curve, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(complementary_curve, Affect Opposite Hues, DCTLUI_CHECK_BOX, 0)
-DEFINE_UI_PARAMS(variation_mode, 🔀 Variation/Compression, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_PARAMS(variation_mode, 🔀 Compression/Variation, DCTLUI_CHECK_BOX, 0)
 
-DEFINE_UI_PARAMS(color_model, Color model, DCTLUI_COMBO_BOX, 6, {chen, HSV, reuleaux, HSP, cie, ok, pro}, {Chen, HSV, Reuleaux, HSP, CIELab, OKLab, ProLab})
+DEFINE_UI_PARAMS(color_model, Color model, DCTLUI_COMBO_BOX, 6, {chen, HSV, reuleaux, HSP, cie, ok, pro, tlab, yrg}, {Chen, HSV, Reuleaux, HSP, CIELab, OKLab, ProLab, tLab (Kirk), Yrg (Kirk)})
 
-DEFINE_UI_PARAMS(colorspace, Colorspace, DCTLUI_COMBO_BOX, 1, {ccg, dwg, awg3}, {Cinema Gamut, DaVinci WG, AWG3})
+DEFINE_UI_PARAMS(colorspace, Input Gamut, DCTLUI_COMBO_BOX, 1, {ccg, dwg, awg3}, {Cinema Gamut, DaVinci WG, AWG3})
 
 /*----------- Tooltips -----------------*/
 #if ((__RESOLVE_VER_MAJOR__ > 19)) || ((__RESOLVE_VER_MAJOR__ == 19) && (__RESOLVE_VER_MINOR__ >= 1))
@@ -76,9 +79,9 @@ DEFINE_UI_TOOLTIP(Smooth, "Widens bell feathering for gentler transitions and be
 DEFINE_UI_TOOLTIP(🚫 Bypass, "Disables processing and passes the input through unchanged.")
 DEFINE_UI_TOOLTIP(📈 Draw Curve, "Draws curve/marker guides over the active image area for setup and debugging.")
 DEFINE_UI_TOOLTIP(Affect Opposite Hues, "Enables an additional bell at the complementary hue (180 degrees away).")
-DEFINE_UI_TOOLTIP(🔀 Variation/Compression, "Switches bell behavior from hue rotation to local hue variation (negative compresses, positive expands).")
-DEFINE_UI_TOOLTIP(Color model, "Selects hue-processing model. Chen/HSV/Reuleaux/HSP use channel 1 hue; CIELab/OKLab/ProLab use LCH hue channel.")
-DEFINE_UI_TOOLTIP(Colorspace, "Working gamut used by Lab-family transforms and inset/outset safety math. Match this to your pipeline gamut.")
+DEFINE_UI_TOOLTIP(🔀 Compression/Variation, "Switches bell behavior from hue rotation to local hue variation (negative compresses, positive expands).")
+DEFINE_UI_TOOLTIP(Color model, "Selects hue-processing model. Chen/HSV/Reuleaux/HSP use channel 1 hue; CIELab/OKLab/ProLab/tLab/Yrg use LCH hue channel.")
+DEFINE_UI_TOOLTIP(Input Gamut, "Working gamut used by Lab-family transforms and inset/outset safety math. Match this to your pipeline gamut.")
 #endif
 
 // Keep constants global (some Metal/OpenCL parsers dislike repeated in-function defines).
@@ -90,12 +93,38 @@ DEFINE_UI_TOOLTIP(Colorspace, "Working gamut used by Lab-family transforms and i
 // k_fold_limit caps accumulated hue delta before wrap folding.
 // Lower = safer/softer combined shifts, higher = stronger stacking.
 #define k_fold_limit 0.35f
+// Chroma threshold for neutral protection in Lab-family hue adjustments.
+#define k_chroma_gate_threshold 0.02f
+// Lab-family toe-lift floor to stabilize near-black/negative values through nonlinear mappings.
+#define k_lab_toe_floor 1e-4f
+// Kirk-family Y-gate highs:
+// This gate attenuates hue shifts when Yrg luminance (Y) is near/below zero.
+// In that region, Kirk chromaticity inversion can become ill-conditioned and
+// small hue moves may create visible hue discontinuities in deep shadows.
+// Chosen values:
+// - Yrg:  0.10 keeps stronger protection near problematic negative-Y zones.
+// - tLab: 0.14 gives a wider/smoother transition to reduce low-luma hue stepping.
+#define k_yrg_y_gate_hi 0.10f
+#define k_tlab_y_gate_hi 0.14f
+// ProLab inverse-projective w gate:
+// when |w| approaches zero, inverse projective mapping becomes ill-conditioned.
+// Fade hue delta in that zone to avoid HDR outliers while keeping [0..1] behavior unchanged.
+#define k_pro_w_gate_lo 0.015f
+#define k_pro_w_gate_hi 0.060f
+// Debug switch: set to 1 to enable tLab geometric d-cap protection.
+#define k_enable_tlab_dcap 1
 
 
 __DEVICE__ float3 v_x_mtx_3x3_s(float3 v,
                                 float m00, float m01, float m02,
                                 float m10, float m11, float m12,
-                                float m20, float m21, float m22);
+                                float m20, float m21, float m22) {
+    return make_float3(
+        m00 * v.x + m01 * v.y + m02 * v.z,
+        m10 * v.x + m11 * v.y + m12 * v.z,
+        m20 * v.x + m21 * v.y + m22 * v.z
+    );
+}
 
  __DEVICE__ float wrapf(float x, float y) {
      if (x < 0) {
@@ -453,7 +482,7 @@ Adapted from code writeen by Jan Karow
  
  __DEVICE__ float3 rgb_inset_by_space(float3 rgb, int colorspace) {
     // DaVinci Wide Gamut has a blue primary with negative y chromaticity (y = -0.1155).
-    // In Lab-family transforms (CIELab/OKLab/ProLab), those imaginary/negative primaries
+    // In Lab-family mappings (CIELab/OKLab/ProLab), those imaginary/negative primaries
     // can generate XYZ values with negative components that destabilize the cube-root
     // nonlinearity. This inset contracts the gamut before Lab conversion to keep values
     // in a safe domain, and the matching outset restores the gamut on the way back.
@@ -478,7 +507,7 @@ Adapted from code writeen by Jan Karow
     return rgb;
  }
      
- __DEVICE__ float3 rgb_outset_by_space(float3 rgb, int colorspace) {
+__DEVICE__ float3 rgb_outset_by_space(float3 rgb, int colorspace) {
     if (colorspace == 0 || colorspace == 2) {
         // Inverse of Cinema Gamut / AWG3 inset
         return make_float3(
@@ -498,6 +527,125 @@ Adapted from code writeen by Jan Karow
     //  passthrough
     return rgb;
  }
+
+// tLab-specific inset/outset tuned with a +0.05 blue-y margin.
+// This is intentionally stronger than generic Lab-family inset to stabilize yellow/green extremes.
+__DEVICE__ float3 rgb_inset_tlab_by_space(float3 rgb, int colorspace) {
+    if (colorspace == 0 || colorspace == 2) {
+        // Cinema Gamut / AWG3
+        return make_float3(
+            rgb.x * 1.37103171012998f + rgb.y * -0.17736220272627f + rgb.z * -0.19366950740371f,
+            rgb.x * -0.17377115725353f + rgb.y * 1.36744066465725f + rgb.z * -0.19366950740371f,
+            rgb.x * -0.17377115725353f + rgb.y * -0.17736220272627f + rgb.z * 1.35113335997980f
+        );
+    }
+    if (colorspace == 1) {
+        // DaVinci WG
+        return make_float3(
+            rgb.x * 1.42227357106495f + rgb.y * -0.17262079824860f + rgb.z * -0.24965277281635f,
+            rgb.x * -0.17091639309276f + rgb.y * 1.42056916590911f + rgb.z * -0.24965277281635f,
+            rgb.x * -0.17091639309276f + rgb.y * -0.17262079824860f + rgb.z * 1.34353719134136f
+        );
+    }
+    return rgb;
+}
+
+__DEVICE__ float3 rgb_outset_tlab_by_space(float3 rgb, int colorspace) {
+    if (colorspace == 0 || colorspace == 2) {
+        // Inverse of Cinema Gamut / AWG3 tLab inset
+        return make_float3(
+            rgb.x * 0.75981938021748f + rgb.y * 0.11481219155598f + rgb.z * 0.12536842822653f,
+            rgb.x * 0.11248759367456f + rgb.y * 0.76214397809891f + rgb.z * 0.12536842822653f,
+            rgb.x * 0.11248759367456f + rgb.y * 0.11481219155598f + rgb.z * 0.77270021476946f
+        );
+    }
+    if (colorspace == 1) {
+        // Inverse of DaVinci WG tLab inset
+        return make_float3(
+            rgb.x * 0.73495089690187f + rgb.y * 0.10834916245525f + rgb.z * 0.15669994064288f,
+            rgb.x * 0.10727935584450f + rgb.y * 0.73602070351262f + rgb.z * 0.15669994064288f,
+            rgb.x * 0.10727935584450f + rgb.y * 0.10834916245525f + rgb.z * 0.78437148170025f
+        );
+    }
+    return rgb;
+}
+
+/* ============================================================
+   Yrg (Kirk 2019) inset/outset matrices
+
+   Purpose: contract each gamut's primaries toward D65 whitepoint
+   before the XYZ->LMS (Kirk) mapping step so the LMS sum
+   (L+M+S used as denominator in LMS_to_Yrg_kirk) stays positive
+   for scene-linear values that can dip below/around black.
+
+   Derivation (Python/NumPy, reproducible):
+     s = (target_yB - yW) / (yB_primary - yW)
+     Shrink each primary:
+       xP' = xW + (xP - xW) * s
+       yP' = yW + (yP - yW) * s
+     Build RGB->XYZ for original and shrunk gamut.
+     M_inset  = inv(RGB_to_XYZ_shrunk) @ RGB_to_XYZ_original
+     M_outset = inv(M_inset)
+
+   Constraint: target_yB must not exceed ~0.107 for DWG. Above that,
+   Kirk LMS sum (L+M+S) can go negative for the blue primary, which
+   destabilizes Yrg chromaticity division. target_yB = 0.10 was chosen
+   as the practical upper-safe value across all supported gamuts.
+
+   Repro record:
+   - CCG : yB_original = -0.1020, target_yB = 0.10, inset_scale = 0.4687
+   - DWG : yB_original = -0.1155, target_yB = 0.10, inset_scale = 0.4848
+   - AWG3: yB_original = -0.1020, target_yB = 0.10, inset_scale = 0.4687
+   ============================================================ */
+__DEVICE__ float3 rgb_inset_yrg_by_space(float3 rgb, int colorspace) {
+    if (colorspace == 0) {
+        // CCG | yB_original=-0.1020 | target_yB=0.10 | inset_scale=0.4687 | blue_a=0.288
+        return make_float3(
+            rgb.x * 1.60074135599590f + rgb.y * -0.28716901348101f + rgb.z * -0.31357234251489f,
+            rgb.x * -0.28135471387310f + rgb.y * 1.59492705638799f + rgb.z * -0.31357234251489f,
+            rgb.x * -0.28135471387310f + rgb.y * -0.28716901348101f + rgb.z * 1.56852372735410f
+        );
+    }
+    if (colorspace == 1) {
+        // DWG | yB_original=-0.1155 | target_yB=0.10 | inset_scale=0.4848 | blue_a=0.034
+        return make_float3(
+            rgb.x * 1.66990296240041f + rgb.y * -0.27384897384656f + rgb.z * -0.39605398855385f,
+            rgb.x * -0.27114507253409f + rgb.y * 1.66719906108794f + rgb.z * -0.39605398855385f,
+            rgb.x * -0.27114507253409f + rgb.y * -0.27384897384656f + rgb.z * 1.54499404638065f
+        );
+    }
+    // AWG3 | yB_original=-0.1020 | target_yB=0.10 | inset_scale=0.4687 | blue_a=0.086
+    return make_float3(
+        rgb.x * 1.61140025050207f + rgb.y * -0.28194172744870f + rgb.z * -0.32945852305337f,
+        rgb.x * -0.27069581936693f + rgb.y * 1.60015434242030f + rgb.z * -0.32945852305337f,
+        rgb.x * -0.27069581936693f + rgb.y * -0.28194172744870f + rgb.z * 1.55263754681562f
+    );
+}
+
+__DEVICE__ float3 rgb_outset_yrg_by_space(float3 rgb, int colorspace) {
+    if (colorspace == 0) {
+        // CCG outset = inverse of CCG Yrg inset
+        return make_float3(
+            rgb.x * 0.68081259739429f + rgb.y * 0.15257935983098f + rgb.z * 0.16660804277473f,
+            rgb.x * 0.14949009159383f + rgb.y * 0.68390186563144f + rgb.z * 0.16660804277473f,
+            rgb.x * 0.14949009159383f + rgb.y * 0.15257935983098f + rgb.z * 0.69793054857520f
+        );
+    }
+    if (colorspace == 1) {
+        // DWG outset = inverse of DWG Yrg inset
+        return make_float3(
+            rgb.x * 0.65487563916829f + rgb.y * 0.14108304839339f + rgb.z * 0.20404131243831f,
+            rgb.x * 0.13969003736852f + rgb.y * 0.65626865019317f + rgb.z * 0.20404131243831f,
+            rgb.x * 0.13969003736852f + rgb.y * 0.14108304839339f + rgb.z * 0.71922691423809f
+        );
+    }
+    // AWG3 outset = inverse of AWG3 Yrg inset
+    return make_float3(
+        rgb.x * 0.67514928685621f + rgb.y * 0.14980198511775f + rgb.z * 0.17504872802604f,
+        rgb.x * 0.14382678105574f + rgb.y * 0.68112449091822f + rgb.z * 0.17504872802604f,
+        rgb.x * 0.14382678105574f + rgb.y * 0.14980198511775f + rgb.z * 0.70637123382650f
+    );
+}
  
 
  // illuminant
@@ -510,17 +658,6 @@ Adapted from code writeen by Jan Karow
     return _copysignf(_powf(_fabs(base), exp), base);
  }
  
-__DEVICE__ float3 v_x_mtx_3x3_s(float3 v,
-                                float m00, float m01, float m02,
-                                float m10, float m11, float m12,
-                                float m20, float m21, float m22) {
-    return make_float3(
-        m00 * v.x + m01 * v.y + m02 * v.z,
-        m10 * v.x + m11 * v.y + m12 * v.z,
-        m20 * v.x + m21 * v.y + m22 * v.z
-    );
-}
- 
 __DEVICE__ float3 v_x_mtx_4x4_s(float3 v,
                                 float m00, float m01, float m02, float m03,
                                 float m10, float m11, float m12, float m13,
@@ -530,13 +667,15 @@ __DEVICE__ float3 v_x_mtx_4x4_s(float3 v,
     float y = m10 * v.x + m11 * v.y + m12 * v.z + m13;
     float z = m20 * v.x + m21 * v.y + m22 * v.z + m23;
     float w = m30 * v.x + m31 * v.y + m32 * v.z + m33;
-    // ProLab projective transform is only meaningful for w > 0.
-    float safe_w = _fmaxf(w, 1e-6f);
+    // Sign-preserving w guard:
+    // keeps projective division finite without forcing negative w to positive,
+    // which reduces ProLab HDR outliers near the projective singular zone.
+    float safe_w = _copysignf(_fmaxf(_fabs(w), 1e-6f), w);
     return make_float3(x / safe_w, y / safe_w, z / safe_w);
 }
 
 // Matrix arrays on the stack have been a recurring OpenCL/Metal crash source.
-// Keep transforms as direct scalar math.
+// Keep mappings as direct scalar math.
 __DEVICE__ float3 rgb_to_xyz_by_space(float3 RGB, int colorspace) {
     float3 out = RGB;
     switch (colorspace) {
@@ -745,7 +884,7 @@ __DEVICE__ float3 xyz_to_rgb_by_space(float3 XYZ, int colorspace) {
     return Lab;
   }
   
-  __DEVICE__ float3 ProLab_to_XYZ(float3 Lab, float offset, float scale)
+ __DEVICE__ float3 ProLab_to_XYZ(float3 Lab, float offset, float scale)
   {
     float3 XYZ_n = xyY_to_XYZ(make_float3(D65_x, D65_y, D65_Y));
 
@@ -766,10 +905,193 @@ __DEVICE__ float3 xyz_to_rgb_by_space(float3 XYZ, int colorspace) {
 
     return XYZ;
   }
+
+/////////////////////////
+// tLab (Richard Kirk)
+/////////////////////////
+
+// XYZ -> LMS (Kirk 2019), adapted from JK_tLab_Kirk_2022.dctl.
+__DEVICE__ float3 XYZ_to_LMS_kirk(float3 XYZ)
+{
+    return v_x_mtx_3x3_s(
+        XYZ,
+        0.257085f, 0.859943f, -0.031061f,
+        -0.394427f, 1.175800f, 0.106423f,
+        0.064856f, -0.076250f, 0.559067f
+    );
+}
+
+// Inverse of XYZ->LMS Kirk matrix (precomputed constants, no runtime matrix inversion).
+__DEVICE__ float3 LMS_to_XYZ_kirk(float3 LMS)
+{
+    return v_x_mtx_3x3_s(
+        LMS,
+        1.80794659f, -1.29971660f, 0.34785879f,
+        0.61783960f, 0.39595453f, -0.04104687f,
+        -0.12546960f, 0.20478038f, 1.74274183f
+    );
+}
+
+__DEVICE__ float3 LMS_to_Yrg_kirk(float3 LMS)
+{
+    float L = LMS.x;
+    float M = LMS.y;
+    float S = LMS.z;
+
+    float a = _fmaxf(L + M + S, 1e-6f);
+    float l = L / a;
+    float m = M / a;
+    float Y = 0.68990272f * L + 0.34832189f * M;
+    float r = 1.0671f * l - 0.6873f * m + 0.02062f;
+    float g = -0.0362f * l + 1.7182f * m - 0.05155f;
+
+    return make_float3(Y, r, g);
+}
+
+__DEVICE__ float3 Yrg_to_LMS_kirk(float3 Yrg)
+{
+    float Y = Yrg.x;
+    float r = Yrg.y;
+    float g = Yrg.z;
+
+    float l = 0.95f * r + 0.38f * g;
+    float m = 0.02f * r + 0.59f * g + 0.03f;
+    float d = 0.68990272f * l + 0.34832189f * m;
+
+    // Sign-preserving guard: d can legitimately be negative (when Y is also
+    // negative, the ratio Y/d is still positive and finite). Using _fmaxf
+    // here would flip the sign when d < 0, causing a catastrophic explosion.
+    float safe_d = _copysignf(_fmaxf(_fabs(d), 1e-10f), d);
+    float a_raw = Y / safe_d;
+
+    // Hard backstop for degenerate post-rotation Yrg states.
+    // For unshifted DWG [0,1]^3, max |a| is far below this cap.
+    float a = _copysignf(_fminf(_fabs(a_raw), 30.0f), a_raw);
+    
+    float L = l * a;
+    float M = m * a;
+    float S = (1.0f - l - m) * a;
+
+    return make_float3(L, M, S);
+}
+
+__DEVICE__ float3 Yrg_to_tLab_kirk(float3 Yrg)
+{
+    // D65 white in CIE 2006 LMS converted to Yrg.
+    const float Yw = 1.05725876f;
+    const float rw = 0.21962163f;
+    const float gw = 0.5448514f;
+    const float bw = 1.0f - rw - gw;
+
+    float Y = Yrg.x;
+    float r = Yrg.y;
+    float g = Yrg.z;
+
+    float Y_norm = Y / _fmaxf(Yw, 1e-10f);
+    // Use |Y_norm| for branch selection so large negative values use cube-root branch too.
+    float fY = (_fabs(Y_norm) > 0.008856f) ? spowf(Y_norm, 1.0f / 3.0f) : (7.787f * Y_norm + 0.1379f);
+    float L = 116.0f * fY - 16.0f;
+    float delta_r = r - rw;
+    float delta_g = g - gw;
+    float a = L * (delta_r - delta_g) / 0.25f;
+    float b = L * (delta_r + delta_g) / bw;
+
+    return make_float3(L, a, b);
+}
+
+__DEVICE__ float3 tLab_to_Yrg_kirk(float3 tLab)
+{
+    const float Yw = 1.05725876f;
+    const float rw = 0.21962163f;
+    const float gw = 0.5448514f;
+    const float bw = 1.0f - rw - gw;
+
+    float L = tLab.x;
+    float a = tLab.y;
+    float b = tLab.z;
+    // Preserve sign to keep inverse a/b terms correct when L is negative.
+    float safe_L = _copysignf(_fmaxf(_fabs(L), 1e-6f), L);
+
+    float fY = (L + 16.0f) / 116.0f;
+    float fY3 = spowf(fY, 3.0f);
+    // Use |fY3| for branch selection to mirror forward behavior for negative luminance.
+    float Y = (_fabs(fY3) > 0.008856f) ? (fY3 * Yw) : ((fY - 0.1379f) / 7.787f * Yw);
+    // Inverse of Yrg_to_tLab_kirk:
+    // forward uses a = L*(delta_r - delta_g)/0.25 and b = L*(delta_r + delta_g)/bw.
+    float delta_g = (b * bw / safe_L - 0.25f * a / safe_L) * 0.5f;
+    float delta_r = 0.25f * a / safe_L + delta_g;
+    float r = delta_r + rw;
+    float g = delta_g + gw;
+
+    return make_float3(Y, r, g);
+}
+
+__DEVICE__ float3 XYZ_to_tLab(float3 XYZ, float offset, float scale)
+{
+    float3 LMS = XYZ_to_LMS_kirk(XYZ);
+    float3 Yrg = LMS_to_Yrg_kirk(LMS);
+    float3 tLab = Yrg_to_tLab_kirk(Yrg);
+
+    // Normalize similarly to other Lab-family models used in this tool.
+    float L = tLab.x * 0.01f;
+    float a = tLab.y * 0.01f * 0.25f * scale + offset;
+    float b = tLab.z * 0.01f * 0.25f * scale + offset;
+
+    return make_float3(L, a, b);
+}
+
+__DEVICE__ float3 tLab_to_XYZ(float3 Lab, float offset, float scale)
+{
+    float L = Lab.x * 100.0f;
+    float a = (Lab.y - offset) * 4.0f / scale * 100.0f;
+    float b = (Lab.z - offset) * 4.0f / scale * 100.0f;
+
+    float3 tLab = make_float3(L, a, b);
+    float3 Yrg = tLab_to_Yrg_kirk(tLab);
+    float3 LMS = Yrg_to_LMS_kirk(Yrg);
+    float3 XYZ = LMS_to_XYZ_kirk(LMS);
+
+    return XYZ;
+}
+
+// Yrg (Kirk 2019) represented in this tool as a Lab-like tuple:
+// L = normalized Y, a/b = chromaticity deltas from D65 Yrg whitepoint.
+__DEVICE__ float3 XYZ_to_YrgLab(float3 XYZ, float offset, float scale)
+{
+    const float Yw = 1.05725876f;
+    const float rw = 0.21962163f;
+    const float gw = 0.5448514f;
+
+    float3 LMS = XYZ_to_LMS_kirk(XYZ);
+    float3 Yrg = LMS_to_Yrg_kirk(LMS);
+
+    float L = Yrg.x / _fmaxf(Yw, 1e-10f);
+    float a = (Yrg.y - rw) * 4.0f * scale + offset;
+    float b = (Yrg.z - gw) * 4.0f * scale + offset;
+
+    return make_float3(L, a, b);
+}
+
+__DEVICE__ float3 YrgLab_to_XYZ(float3 Lab, float offset, float scale)
+{
+    const float Yw = 1.05725876f;
+    const float rw = 0.21962163f;
+    const float gw = 0.5448514f;
+
+    float Y = Lab.x * Yw;
+    float r = (Lab.y - offset) / (4.0f * scale) + rw;
+    float g = (Lab.z - offset) / (4.0f * scale) + gw;
+
+    float3 Yrg = make_float3(Y, r, g);
+    float3 LMS = Yrg_to_LMS_kirk(Yrg);
+    float3 XYZ = LMS_to_XYZ_kirk(LMS);
+
+    return XYZ;
+}
  
- /////////////////////////
- // LCH
- /////////////////////////
+/////////////////////////
+// LCH
+/////////////////////////
   
   __DEVICE__ float3 Lab_to_LCH(float3 Lab)
   {
@@ -812,6 +1134,28 @@ __DEVICE__ float me_smoothstep01(float x) {
      float t = _fminf(_fmaxf(x, 0.0f), 1.0f);
      return t * t * t * (t * (t * 6.0f - 15.0f) + 10.0f);
  }
+
+__DEVICE__ float update_linear_stop_delta(float candidate_h,
+                                          float h_start,
+                                          float h_target,
+                                          float shift_dir,
+                                          float best_delta) {
+    // Select stop candidates that lie on the current linear travel segment.
+    // For positive shifts, keep the farthest forward candidate before target.
+    // For negative shifts, keep the farthest backward candidate before target.
+    if (shift_dir > 0.0f) {
+        if (candidate_h > h_start && candidate_h < h_target) {
+            float d = candidate_h - h_start;
+            if (d > best_delta) best_delta = d;
+        }
+    } else if (shift_dir < 0.0f) {
+        if (candidate_h < h_start && candidate_h > h_target) {
+            float d = candidate_h - h_start;
+            if (d < best_delta) best_delta = d;
+        }
+    }
+    return best_delta;
+}
  
  
  
@@ -981,6 +1325,35 @@ __DEVICE__ float complementary_hue_variation_curve(float complementary_fade, flo
         RGB = xyz_to_rgb_by_space(XYZ, colorspace);
         out = rgb_outset_by_space(RGB, colorspace);
     }
+    // RGB to tLab (Kirk)
+    if (colorModel == 7 && direction != 0) {
+        // Use Yrg inset/outset for tLab stability in extreme DWG blue/magenta regions.
+        RGB = rgb_inset_yrg_by_space(in, colorspace);
+        XYZ = rgb_to_xyz_by_space(RGB, colorspace);
+        Lab = XYZ_to_tLab(XYZ, offset, scale);
+        out = Lab_to_LCH(Lab);
+    }
+    // tLab to RGB
+    if (colorModel == 7 && direction == 0) {
+        Lab = LCH_to_Lab(in);
+        XYZ = tLab_to_XYZ(Lab, offset, scale);
+        RGB = xyz_to_rgb_by_space(XYZ, colorspace);
+        out = rgb_outset_yrg_by_space(RGB, colorspace);
+    }
+    // RGB to Yrg (Kirk)
+    if (colorModel == 8 && direction != 0) {
+        RGB = rgb_inset_yrg_by_space(in, colorspace);
+        XYZ = rgb_to_xyz_by_space(RGB, colorspace);
+        Lab = XYZ_to_YrgLab(XYZ, offset, scale);
+        out = Lab_to_LCH(Lab);
+    }
+    // Yrg to RGB
+    if (colorModel == 8 && direction == 0) {
+        Lab = LCH_to_Lab(in);
+        XYZ = YrgLab_to_XYZ(Lab, offset, scale);
+        RGB = xyz_to_rgb_by_space(XYZ, colorspace);
+        out = rgb_outset_yrg_by_space(RGB, colorspace);
+    }
 
    //else { out = make_float3(1,0,0);} //red on error
 
@@ -997,6 +1370,8 @@ __DEVICE__ float complementary_hue_variation_curve(float complementary_fade, flo
   if (color_model == 4) {channel = 3;}
   if (color_model == 5) {channel = 3;}
   if (color_model == 6) {channel = 3;}
+  if (color_model == 7) {channel = 3;}
+  if (color_model == 8) {channel = 3;}
   return channel;     
    }                      
   
@@ -1072,9 +1447,9 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, __TEXTU
     custom_params.left_feather = 0.30f + smooth_k * 0.50f;
     custom_params.right_feather = 0.30f + smooth_k * 1.00f;
 
-    // Tuning reference for Lab-family models:
-    // these remaps align perceived hue positions/strength in CIELab/OKLab/ProLab.
-    if (color_model == cie || color_model == ok || color_model == pro) {
+    // Tuning reference for Lab-family models except Yrg:
+    // these remaps align perceived hue positions/strength in CIELab/OKLab/ProLab/tLab.
+    if (color_model == cie || color_model == ok || color_model == pro || color_model == tlab) {
         skin_params.selected_hue = 0.15444f;
         skin_params.adjustment_amt = skin_adjustment_amt * -1.2f;
         red_params.selected_hue = 0.087f;
@@ -1082,22 +1457,190 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, __TEXTU
         magenta_params.selected_hue = 0.88f;
         cyan_params.selected_hue = 0.6f;
         cyan_params.adjustment_amt = cyan_adjustment_amt * -0.9f;
+    } else if (color_model == yrg) {
+        // Yrg-specific base tuning bank (independent from other Lab-family models).
+        skin_params.selected_hue = 0.014f;
+        skin_params.adjustment_amt = skin_adjustment_amt * -1.2f;
+        red_params.selected_hue = 1.0f;
+        red_params.left_feather = 0.02f + smooth_k * 0.44f;
+        red_params.right_feather = 0.02f + smooth_k * 1.00f;
+        yellow_params.selected_hue = 0.1111111111111111f;
+        blue_params.selected_hue = 0.5555555555555556f;
+        magenta_params.selected_hue = 0.8333333333333333f;
+        cyan_params.selected_hue = 0.4166666666666667f;
+        cyan_params.adjustment_amt = cyan_adjustment_amt * -0.9f;
     }
 
     if (variation_mode) {
-        // Skin in variation mode is intended for broader grouping/splitting moves.
-        // Expand both influence strength and feather reach versus surgical rotation mode.
-        skin_params.adjustment_amt = skin_params.adjustment_amt * 1.8f;
+        // Variation-mode vector tuning groups:
+        // 0 = non-Lab models (Chen/HSV/Reuleaux/HSP)
+        // 1 = Lab-family except Yrg (CIELab/OKLab/ProLab/tLab)
+        // 2 = Yrg (Kirk)
+        // Keep defaults equal to the current behavior, then tune centers/widths here.
+        int variation_group = 0;
+        if (color_model == yrg) {
+            variation_group = 2;
+        } else if (color_model == cie || color_model == ok || color_model == pro || color_model == tlab) {
+            variation_group = 1;
+        }
+
+        if (variation_group == 0) {
+            // Non-Lab variation defaults (same as current non-Lab setup)
+            red_params.selected_hue = 0.0013888888888889f;
+            red_params.left_feather = 0.01f + smooth_k * 0.44f;
+            red_params.right_feather = 0.01f + smooth_k * 1.00f;
+
+            skin_params.selected_hue = 0.04444f;
+            skin_params.left_feather = 0.30f + smooth_k * 1.00f;
+            skin_params.right_feather = 0.30f + smooth_k * 1.00f;
+
+            yellow_params.selected_hue = 0.1388888888888889f;
+            yellow_params.left_feather = 0.20f + smooth_k * 0.60f;
+            yellow_params.right_feather = 0.20f + smooth_k * 1.00f;
+
+            green_params.selected_hue = 0.2916666666666667f;
+            green_params.left_feather = 0.01f + smooth_k * 0.80f;
+            green_params.right_feather = 0.01f + smooth_k * 1.00f;
+
+            cyan_params.selected_hue = 0.4861111111111111f;
+            cyan_params.left_feather = 0.32f + smooth_k * 0.50f;
+            cyan_params.right_feather = 0.32f + smooth_k * 1.00f;
+
+            blue_params.selected_hue = 0.6527777777777778f;
+            blue_params.left_feather = 0.10f + smooth_k * 1.00f;
+            blue_params.right_feather = 0.10f + smooth_k * 1.00f;
+
+            magenta_params.selected_hue = 0.8138888888888889f;
+            magenta_params.left_feather = 0.20f + smooth_k * 0.60f;
+            magenta_params.right_feather = 0.20f + smooth_k * 1.00f;
+        } else if (variation_group == 1) {
+            // Lab (except Yrg) variation defaults (same as current Lab remap behavior)
+            red_params.selected_hue = 0.0416666666666667f;
+            red_params.left_feather = 0.01f + smooth_k * 0.44f;
+            red_params.right_feather = 0.01f + smooth_k * 1.00f;
+
+            skin_params.selected_hue = 0.15444f;
+            skin_params.left_feather = 0.10f + smooth_k * 1.00f;
+            skin_params.right_feather = 0.10f + smooth_k * 1.00f;
+
+            yellow_params.selected_hue = 0.2777777777777778f;
+            yellow_params.left_feather = 0.20f + smooth_k * 0.60f;
+            yellow_params.right_feather = 0.20f + smooth_k * 1.00f;
+
+            green_params.selected_hue = 0.4166666666666667f;
+            green_params.left_feather = 0.01f + smooth_k * 0.80f;
+            green_params.right_feather = 0.01f + smooth_k * 1.00f;
+
+            cyan_params.selected_hue = 0.5972222222222222f;
+            cyan_params.left_feather = 0.30f + smooth_k * 0.50f;
+            cyan_params.right_feather = 0.30f + smooth_k * 1.00f;
+
+            blue_params.selected_hue = 0.7638888888888889f;
+            blue_params.left_feather = 0.10f + smooth_k * 1.00f;
+            blue_params.right_feather = 0.10f + smooth_k * 1.00f;
+
+            magenta_params.selected_hue = 0.9166666666666667f;
+            magenta_params.left_feather = 0.20f + smooth_k * 0.60f;
+            magenta_params.right_feather = 0.20f + smooth_k * 1.00f;
+        } else {
+            // Yrg variation defaults (separate bank; initialized to current Lab values)
+            red_params.selected_hue = 0.9027777777777778f;
+            red_params.left_feather = 0.01f + smooth_k * 0.44f;
+            red_params.right_feather = 0.01f + smooth_k * 1.00f;
+
+            skin_params.selected_hue = 0.0013888888888889f;
+            skin_params.left_feather = 0.10f + smooth_k * 1.00f;
+            skin_params.right_feather = 0.10f + smooth_k * 1.00f;
+
+            yellow_params.selected_hue = 0.1527777777777778f;
+            yellow_params.left_feather = 0.20f + smooth_k * 0.60f;
+            yellow_params.right_feather = 0.20f + smooth_k * 1.00f;
+
+            green_params.selected_hue = 0.25f;
+            green_params.left_feather = 0.2f + smooth_k * 0.80f;
+            green_params.right_feather = 0.2f + smooth_k * 1.00f;
+
+            cyan_params.selected_hue = 0.4222222222222222f;
+            cyan_params.left_feather = 0.30f + smooth_k * 0.50f;
+            cyan_params.right_feather = 0.30f + smooth_k * 1.00f;
+
+            blue_params.selected_hue = 0.6527777777777778f;
+            blue_params.left_feather = 0.20f + smooth_k * 1.00f;
+            blue_params.right_feather = 0.20f + smooth_k * 1.00f;
+
+            magenta_params.selected_hue = 0.7694444444444444f;
+            magenta_params.left_feather = 0.20f + smooth_k * 0.60f;
+            magenta_params.right_feather = 0.20f + smooth_k * 1.00f;
+        }
+
+        // Variation-mode amount scaling:
+        // apply to all fixed vectors, keep custom amount unchanged.
+        skin_params.adjustment_amt = skin_params.adjustment_amt * 2.0f;
         skin_params.left_feather = skin_params.left_feather + 0.30f;
         skin_params.right_feather = skin_params.right_feather + 0.30f;
+        red_params.adjustment_amt = red_params.adjustment_amt * 1.65f;
+        yellow_params.adjustment_amt = yellow_params.adjustment_amt * 1.2f;
+        green_params.adjustment_amt = green_params.adjustment_amt * 1.2f;
+        cyan_params.adjustment_amt = cyan_params.adjustment_amt * 1.55f;
+        blue_params.adjustment_amt = blue_params.adjustment_amt * 1.65f;
+        magenta_params.adjustment_amt = magenta_params.adjustment_amt * 1.65f;
     }
 
     float3 clean_color = inRGB;
     float3 curr_color = clean_color;
     float3 output_color = curr_color;
 
+    // Lab-family toe lift: stabilize near-black/negative values before RGB->XYZ->Lab-family models.
+    // Matching unlift is applied after inverse conversion back to RGB.
+    float3 toe_lift = make_float3(0.0f, 0.0f, 0.0f);
+    if (color_model == cie || color_model == ok || color_model == pro || color_model == tlab || color_model == yrg) {
+        toe_lift = make_float3(
+            _fmaxf(k_lab_toe_floor - clean_color.x, 0.0f),
+            _fmaxf(k_lab_toe_floor - clean_color.y, 0.0f),
+            _fmaxf(k_lab_toe_floor - clean_color.z, 0.0f)
+        );
+        curr_color = make_float3(
+            clean_color.x + toe_lift.x,
+            clean_color.y + toe_lift.y,
+            clean_color.z + toe_lift.z
+        );
+    }
+
+    float yrg_y_gate_weight = 1.0f;
+    if (color_model == yrg || color_model == tlab) {
+        // Kirk-family Y gate (Yrg + tLab):
+        // fade hue shifts to zero for negative/near-zero Yrg luminance.
+        // tLab and Yrg use different inset paths, so choose the matching one here.
+        float3 rgb_inset_gate = inRGB;
+        if (color_model == tlab) {
+            // Keep tLab gate geometry coherent with current tLab ColorModel path.
+            rgb_inset_gate = rgb_inset_yrg_by_space(inRGB, colorspace);
+        } else {
+            rgb_inset_gate = rgb_inset_yrg_by_space(inRGB, colorspace);
+        }
+        float3 xyz_gate = rgb_to_xyz_by_space(rgb_inset_gate, colorspace);
+        float3 lms_gate = XYZ_to_LMS_kirk(xyz_gate);
+        float3 yrg_gate = LMS_to_Yrg_kirk(lms_gate);
+        float Y_gate = yrg_gate.x;
+        // Model-specific Y-gate shaping:
+        // yrg_y_gate_weight = smootherstep(Y / y_gate_hi)
+        // -> 0 when Y <= 0 (no hue shift in unstable region)
+        // -> 1 once Y reaches model-specific safe range.
+        float y_gate_hi = k_yrg_y_gate_hi;
+        if (color_model == tlab) {
+            // tLab uses a broader transition to preserve smoother dark gradients.
+            y_gate_hi = k_tlab_y_gate_hi;
+        }
+        yrg_y_gate_weight = me_smoothstep01(Y_gate / y_gate_hi);
+    }
+
     curr_color = ColorModel(curr_color, color_model, 1, colorspace);
     int channel = setChannel(color_model);
+    float hue_chroma_gate = 1.0f;
+    if (channel == 3) {
+        // Fade hue adjustments to zero for near-neutrals to prevent edge fringing.
+        hue_chroma_gate = me_smoothstep01(curr_color.y / k_chroma_gate_threshold);
+    }
 
     float3 output_mask = make_float3(1.0f, 0.0f, 0.0f);
     if (channel == 3) {
@@ -1140,7 +1683,7 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, __TEXTU
     }
     float shifted_hue = (channel == 3) ? shifted.z : shifted.x;
     float curr_hue = (channel == 3) ? curr_color.z : curr_color.x;
-    accum_hue_delta += circular_delta(shifted_hue, curr_hue);
+    accum_hue_delta += circular_delta(shifted_hue, curr_hue) * hue_chroma_gate;
     accum_curve_delta += circular_delta(curve_y, curr_pos_x);
 
     shifted = curr_color;
@@ -1174,7 +1717,7 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, __TEXTU
     }
     shifted_hue = (channel == 3) ? shifted.z : shifted.x;
     curr_hue = (channel == 3) ? curr_color.z : curr_color.x;
-    accum_hue_delta += circular_delta(shifted_hue, curr_hue);
+    accum_hue_delta += circular_delta(shifted_hue, curr_hue) * hue_chroma_gate;
     accum_curve_delta += circular_delta(curve_y, curr_pos_x);
 
     shifted = curr_color;
@@ -1208,7 +1751,7 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, __TEXTU
     }
     shifted_hue = (channel == 3) ? shifted.z : shifted.x;
     curr_hue = (channel == 3) ? curr_color.z : curr_color.x;
-    accum_hue_delta += circular_delta(shifted_hue, curr_hue);
+    accum_hue_delta += circular_delta(shifted_hue, curr_hue) * hue_chroma_gate;
     accum_curve_delta += circular_delta(curve_y, curr_pos_x);
 
     shifted = curr_color;
@@ -1242,7 +1785,7 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, __TEXTU
     }
     shifted_hue = (channel == 3) ? shifted.z : shifted.x;
     curr_hue = (channel == 3) ? curr_color.z : curr_color.x;
-    accum_hue_delta += circular_delta(shifted_hue, curr_hue);
+    accum_hue_delta += circular_delta(shifted_hue, curr_hue) * hue_chroma_gate;
     accum_curve_delta += circular_delta(curve_y, curr_pos_x);
 
     shifted = curr_color;
@@ -1276,7 +1819,7 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, __TEXTU
     }
     shifted_hue = (channel == 3) ? shifted.z : shifted.x;
     curr_hue = (channel == 3) ? curr_color.z : curr_color.x;
-    accum_hue_delta += circular_delta(shifted_hue, curr_hue);
+    accum_hue_delta += circular_delta(shifted_hue, curr_hue) * hue_chroma_gate;
     accum_curve_delta += circular_delta(curve_y, curr_pos_x);
 
     shifted = curr_color;
@@ -1310,7 +1853,7 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, __TEXTU
     }
     shifted_hue = (channel == 3) ? shifted.z : shifted.x;
     curr_hue = (channel == 3) ? curr_color.z : curr_color.x;
-    accum_hue_delta += circular_delta(shifted_hue, curr_hue);
+    accum_hue_delta += circular_delta(shifted_hue, curr_hue) * hue_chroma_gate;
     accum_curve_delta += circular_delta(curve_y, curr_pos_x);
 
     shifted = curr_color;
@@ -1344,7 +1887,7 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, __TEXTU
     }
     shifted_hue = (channel == 3) ? shifted.z : shifted.x;
     curr_hue = (channel == 3) ? curr_color.z : curr_color.x;
-    accum_hue_delta += circular_delta(shifted_hue, curr_hue);
+    accum_hue_delta += circular_delta(shifted_hue, curr_hue) * hue_chroma_gate;
     accum_curve_delta += circular_delta(curve_y, curr_pos_x);
 
     shifted = curr_color;
@@ -1378,14 +1921,107 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, __TEXTU
     }
     shifted_hue = (channel == 3) ? shifted.z : shifted.x;
     curr_hue = (channel == 3) ? curr_color.z : curr_color.x;
-    accum_hue_delta += circular_delta(shifted_hue, curr_hue);
+    accum_hue_delta += circular_delta(shifted_hue, curr_hue) * hue_chroma_gate;
     accum_curve_delta += circular_delta(curve_y, curr_pos_x);
 
     // Tuning reference:
     // soft compression prevents foldovers when multiple bells stack.
     // If you need stronger effect, raise k_fold_limit carefully.
+    accum_hue_delta = accum_hue_delta * yrg_y_gate_weight;
     float safe_hue_delta = k_fold_limit * accum_hue_delta /
         _sqrtf(k_fold_limit * k_fold_limit + accum_hue_delta * accum_hue_delta);
+
+    // ProLab w-proximity gate:
+    // Predict inverse projective denominator (w) at target hue and fade hue delta
+    // when |w| is close to zero. This protects HDR/extreme scene-linear values from
+    // large ProLab excursions without materially affecting normal [0..1] behavior.
+    // ProLab inverse uses:
+    //   w = -0.0086294*L100 - 0.0002432*a100 + 0.0009653*b100 + 1
+    // with (L100,a100,b100) after LCH->Lab and *100 scaling.
+    if (color_model == pro && channel == 3 && _fabs(safe_hue_delta) > 1e-9f) {
+        float target_hue = wrapf(curr_color.z + safe_hue_delta, 1.0f);
+        float target_hue_deg = target_hue * 360.0f;
+        float a_lab = curr_color.y * _cosf(target_hue_deg * PI / 180.0f);
+        float b_lab = curr_color.y * _sinf(target_hue_deg * PI / 180.0f);
+
+        float L100 = curr_color.x * 100.0f;
+        float a100 = a_lab * 100.0f;
+        float b100 = b_lab * 100.0f;
+        float w_target = -0.0086294f * L100 - 0.0002432f * a100 + 0.0009653f * b100 + 1.0f;
+        float w_abs = _fabs(w_target);
+        float pro_w_gate = me_smoothstep01((w_abs - k_pro_w_gate_lo) / (k_pro_w_gate_hi - k_pro_w_gate_lo));
+
+        safe_hue_delta = safe_hue_delta * pro_w_gate;
+        accum_curve_delta = accum_curve_delta * pro_w_gate;
+    }
+
+    // tLab-specific geometric d-cap (pre-apply):
+    // Prevent hue travel from crossing into the inverse singular zone where
+    // d = 0.689*l + 0.348*m approaches zero in Yrg_to_LMS_kirk.
+    // This is hue-geometry based and independent of Y sign, which is required
+    // for tLab because problematic states can occur even when Y > 0.
+    if (k_enable_tlab_dcap && color_model == tlab && channel == 3 && _fabs(safe_hue_delta) > 1e-9f) {
+        // Derivation of d(H) constants:
+        // Yrg_to_LMS_kirk uses:
+        //   l = 0.95*r + 0.38*g
+        //   m = 0.02*r + 0.59*g + 0.03
+        //   d = 0.68990272*l + 0.34832189*m
+        // tLab hue stage uses Lab_to_LCH where:
+        //   a = C*cos(H), b = C*sin(H), with tLab->Yrg mapping:
+        //   r = rw + (a/L + b/L * bw) * 0.5
+        //   g = gw + (b/L * bw - a/L * 0.25) * 0.5
+        // Folding those linear terms into d gives:
+        //   d(H) = C * (A*cos(H) + B*sin(H)) + D_OFFS
+        //        = C * R_LINE * cos(H - PHI) + D_OFFS
+        // where:
+        //   R_LINE = sqrt(A*A + B*B) = 0.101355
+        //   PHI    = atan2(B, A) in degrees = 35.2242
+        //   D_OFFS = d at chroma=0 (whitepoint term + m offset) = 0.410734
+        // D_SAFE = empirically validated floor for |d| in this tool:
+        //   0.10 leaves failures, 0.15 near-clean, 0.20 clears tested explosions.
+        const float R_LINE = 0.101355f;
+        const float PHI = 35.2242f;      // degrees
+        const float D_OFFS = 0.410734f;
+        const float D_SAFE = 0.20f;
+
+        float C_tlab = curr_color.y;     // LCH chroma in current model space
+        if (C_tlab > 1e-6f) {
+            float h_start = curr_color.z * 360.0f;
+            float h_target = h_start + safe_hue_delta * 360.0f;
+            float d_target = C_tlab * R_LINE * _cosf((h_target - PHI) * ME_PI / 180.0f) + D_OFFS;
+
+            if (_fabs(d_target) < D_SAFE) {
+                float signed_safe = D_SAFE;
+                if (d_target < 0.0f) signed_safe = -D_SAFE;
+
+                float denom = _fmaxf(C_tlab * R_LINE, 1e-6f);
+                float val = (signed_safe - D_OFFS) / denom;
+                val = _fmaxf(-1.0f, _fminf(1.0f, val));
+
+                float base = _acosf(val) * 180.0f / ME_PI;
+                float h_stop1 = PHI + base;
+                float h_stop2 = PHI - base;
+
+                float shift_dir = 1.0f;
+                if (safe_hue_delta < 0.0f) shift_dir = -1.0f;
+
+                float best_delta = 0.0f;
+                best_delta = update_linear_stop_delta(h_stop1 - 360.0f, h_start, h_target, shift_dir, best_delta);
+                best_delta = update_linear_stop_delta(h_stop1,          h_start, h_target, shift_dir, best_delta);
+                best_delta = update_linear_stop_delta(h_stop1 + 360.0f, h_start, h_target, shift_dir, best_delta);
+                best_delta = update_linear_stop_delta(h_stop2 - 360.0f, h_start, h_target, shift_dir, best_delta);
+                best_delta = update_linear_stop_delta(h_stop2,          h_start, h_target, shift_dir, best_delta);
+                best_delta = update_linear_stop_delta(h_stop2 + 360.0f, h_start, h_target, shift_dir, best_delta);
+
+                if (shift_dir > 0.0f && best_delta > 0.0f) {
+                    safe_hue_delta = best_delta / 360.0f;
+                } else if (shift_dir < 0.0f && best_delta < 0.0f) {
+                    safe_hue_delta = best_delta / 360.0f;
+                }
+            }
+        }
+    }
+
     accum_curve_delta = k_fold_limit * accum_curve_delta /
         _sqrtf(k_fold_limit * k_fold_limit + accum_curve_delta * accum_curve_delta);
     output_color = curr_color;
@@ -1435,6 +2071,13 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, __TEXTU
     }
 
     output_color = ColorModel(output_color, color_model, 0, colorspace);
+    if (color_model == cie || color_model == ok || color_model == pro || color_model == tlab || color_model == yrg) {
+        output_color = make_float3(
+            output_color.x - toe_lift.x,
+            output_color.y - toe_lift.y,
+            output_color.z - toe_lift.z
+        );
+    }
 
     if (bypass) { output_color = clean_color; }
     return output_color;
