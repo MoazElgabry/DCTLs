@@ -93,6 +93,9 @@ DEFINE_UI_TOOLTIP(Input Gamut, "Working gamut used by Lab-family transforms and 
 // k_fold_limit caps accumulated hue delta before wrap folding.
 // Lower = safer/softer combined shifts, higher = stronger stacking.
 #define k_fold_limit 0.35f
+// Option 1 smoothing (rotation mode):
+// width floor prevents very narrow bells at tiny adjustments.
+#define k_hue_width_floor 0.015f
 // Chroma threshold for neutral protection in Lab-family hue adjustments.
 #define k_chroma_gate_threshold 0.02f
 // Lab-family toe-lift floor to stabilize near-black/negative values through nonlinear mappings.
@@ -109,8 +112,8 @@ DEFINE_UI_TOOLTIP(Input Gamut, "Working gamut used by Lab-family transforms and 
 // ProLab inverse-projective w gate:
 // when |w| approaches zero, inverse projective mapping becomes ill-conditioned.
 // Fade hue delta in that zone to avoid HDR outliers while keeping [0..1] behavior unchanged.
-#define k_pro_w_gate_lo 0.015f
-#define k_pro_w_gate_hi 0.060f
+#define k_pro_w_gate_lo 0.020f
+#define k_pro_w_gate_hi 0.080f
 // Debug switch: set to 1 to enable tLab geometric d-cap protection.
 #define k_enable_tlab_dcap 1
 
@@ -1135,6 +1138,13 @@ __DEVICE__ float me_smoothstep01(float x) {
      return t * t * t * (t * (t * 6.0f - 15.0f) + 10.0f);
  }
 
+__DEVICE__ float me_cosine_bell01(float u) {
+    // Cosine bell on [0,1]: 1 at center, 0 at edge, C1-smooth.
+    if (u <= 0.0f) return 1.0f;
+    if (u >= 1.0f) return 0.0f;
+    return 0.5f * (1.0f + _cosf(PI * u));
+}
+
 __DEVICE__ float update_linear_stop_delta(float candidate_h,
                                           float h_start,
                                           float h_target,
@@ -1171,7 +1181,7 @@ __DEVICE__ float update_linear_stop_delta(float candidate_h,
  //https://github.com/thatcherfreeman/utility-dctls/blob/main/Effects/Hue%20Curve.dctl
 
  
- __DEVICE__ float single_hue_curve(float x, control_params_t params) {
+__DEVICE__ float single_hue_curve(float x, control_params_t params) {
     // Assume x is a hue between 0 and 1.
     // Offset x by the amount that brings selected_hue to 0.5.
 
@@ -1181,16 +1191,17 @@ __DEVICE__ float update_linear_stop_delta(float candidate_h,
     float offset = 0.5f - params.selected_hue;
     float curr_hue = wrapf(x + offset, 1.0f);
 
-    float half_left = _fmaxf(_fabs(adj) * (params.left_feather + 1.5f), 1e-6f);
-    float half_right = _fmaxf(_fabs(adj) * (params.right_feather + 1.5f), 1e-6f);
+    // Width floor keeps bell support from collapsing at small |adj|.
+    float half_left = _fmaxf(k_hue_width_floor + _fabs(adj) * (params.left_feather + 1.5f), 1e-6f);
+    float half_right = _fmaxf(k_hue_width_floor + _fabs(adj) * (params.right_feather + 1.5f), 1e-6f);
     float influence = 0.0f;
 
     if (curr_hue <= 0.5f) {
         float u = (0.5f - curr_hue) / half_left;       // 0 at center, 1 at edge
-        influence = 1.0f - me_smoothstep01(u);         // bell side, C2 at edge/center
+        influence = me_cosine_bell01(u);               // softer bell side
     } else {
         float u = (curr_hue - 0.5f) / half_right;      // 0 at center, 1 at edge
-        influence = 1.0f - me_smoothstep01(u);         // bell side, C2 at edge/center
+        influence = me_cosine_bell01(u);               // softer bell side
     }
 
     curr_hue += adj * influence;
@@ -1215,17 +1226,18 @@ __DEVICE__ float single_hue_variation_curve(float x, control_params_t params) {
     float offset = 0.5f - params.selected_hue;
     float curr_hue = wrapf(x + offset, 1.0f);
 
-    float half_left = _fmaxf(_fabs(adj) * (params.left_feather + 1.5f), 1e-6f);
-    float half_right = _fmaxf(_fabs(adj) * (params.right_feather + 1.5f), 1e-6f);
+    // Match rotation-mode smoothing: width floor + softer cosine bell.
+    float half_left = _fmaxf(k_hue_width_floor + _fabs(adj) * (params.left_feather + 1.5f), 1e-6f);
+    float half_right = _fmaxf(k_hue_width_floor + _fabs(adj) * (params.right_feather + 1.5f), 1e-6f);
     float target_slope = 1.0f + params.adjustment_amt;
     float influence = 0.0f;
 
     if (curr_hue <= 0.5f) {
         float u = (0.5f - curr_hue) / half_left;
-        influence = 1.0f - me_smoothstep01(u);
+        influence = me_cosine_bell01(u);
     } else {
         float u = (curr_hue - 0.5f) / half_right;
-        influence = 1.0f - me_smoothstep01(u);
+        influence = me_cosine_bell01(u);
     }
 
     float rotated = target_slope * (curr_hue - 0.5f) + 0.5f;
