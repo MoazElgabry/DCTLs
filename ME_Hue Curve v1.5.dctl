@@ -1,5 +1,5 @@
 #line 2
-/* ME_Hue curve ver 1.6
+/* ME_Hue curve ver 1.5
     by Moaz Elgabry
     moazelgabry.com
     
@@ -25,12 +25,12 @@
     Values for reference white from https://de.wikipedia.org/wiki/Lab-Farbraum#Umrechnung_von_XYZ_zu_Lab
 
     Change Log: 
-    V1.6  : *Upgraded the main curve to a much smoother version for even better protection against folds and more stable behaviour with small adjustments.
+    V1.5  : *Upgraded the main curve to a much smoother version for even better protection against folds and more stable behaviour with small adjustments.
             *Added tLab (Kirk) as a Lab-family color model path with LCH hue handling.the conversions are tuned and stabliized for wide dynamic range and protected against blue-region instability, however it is not perfect.
             *Added Yrg (Kirk 2019) Lab-family model path with dedicated Yrg inset/outset.the conversions are tuned and stabliized for wide dynamic range and protected against blue-region instability, it performs better than tLab but worse than ProLab.
              The original Kirk tLab paper is here: https://www.researchgate.net/publication/332651319_tLab_A_Perceptually_Uniform_Color_Space_for_Optimal_Color_Manipulation_in_Digital_Imaging
              The original Kirk Yrg paper is here: https://www.researchgate.net/publication/335427086_Yrg_A_Perceptually_Uniform_Color_Space_for_Optimal_Color_Manipulation_in_Digital_Imaging
-    V1.5  : *Added Variation Mode - a new control type that stretches or compresses
+            *Added Variation Mode - a new control type that stretches or compresses
              hues within each bell region rather than rotating them, useful for
              clustering or spreading hue families.
     V1.4  : *Fixed compatibilty issues with opencl and metal.
@@ -100,6 +100,14 @@ DEFINE_UI_TOOLTIP(Input Gamut, "Working gamut used by Lab-family transforms and 
 #define k_hue_width_floor 0.015f
 // Chroma threshold for neutral protection in Lab-family hue adjustments.
 #define k_chroma_gate_threshold 0.02f
+// HSP low-saturation hue gate (applied in hue-adjust stage, not conversion):
+// Near neutrals, HSP hue is numerically unstable and hue shifts can create
+// tiny but visible tint noise. Fade hue adjustments from 0->1 over this S band.
+// Tuned from simulation:
+// - S <= 0.001 : effectively no hue shift
+// - S >= 0.004 : full hue shift
+#define k_hsp_sat_gate_lo 0.001f
+#define k_hsp_sat_gate_hi 0.004f
 // Lab-family toe-lift floor to stabilize near-black/negative values through nonlinear mappings.
 #define k_lab_toe_floor 1e-4f
 // Kirk-family Y-gate highs:
@@ -116,6 +124,11 @@ DEFINE_UI_TOOLTIP(Input Gamut, "Working gamut used by Lab-family transforms and 
 // Fade hue delta in that zone to avoid HDR outliers while keeping [0..1] behavior unchanged.
 #define k_pro_w_gate_lo 0.020f
 #define k_pro_w_gate_hi 0.080f
+// ProLab stabilization extension:
+// This is an additional safeguard used in this tool, not part of the original
+// ProLab publication/projection model. It adds a post-hue chroma shrink near
+// low-|w| inverse-projective regions to reduce rare HDR outliers.
+#define k_enable_pro_chroma_stabilizer 1
 // Debug switch: set to 1 to enable tLab geometric d-cap protection.
 #define k_enable_tlab_dcap 1
 
@@ -333,16 +346,17 @@ __DEVICE__ float3 rgb_to_reuleaux(float3 rgb) {
     const float Pr = 0.299f;
     const float Pg = 0.587f;
     const float Pb = 0.114f;
-    float H = hsp.x;
-    float S = hsp.y;
+    const float eps = 1e-6f;
+    float H = wrapf(hsp.x, 1.0f);
+    float S = _fminf(_fmaxf(hsp.y, 0.0f), 1.0f);
     float P = hsp.z;
 
     float3 rgb;
     float minOverMax = 1.0f - S;
-    float safeMinOverMax = _fmaxf(minOverMax, 1e-6f);
+    float safeMinOverMax = _fmaxf(minOverMax, eps);
     float part;
 
-    if (minOverMax > 0.0f) {
+    if (minOverMax > eps) {
         if (H < 1.0f / 6.0f) {  // R > G > B
             H = 6.0f * H;
             part = 1.0f + H * (1.0f / safeMinOverMax - 1.0f);
@@ -415,6 +429,13 @@ __DEVICE__ float3 rgb_to_reuleaux(float3 rgb) {
         }
     }
 
+    // Re-normalize to preserve perceived brightness under finite-precision math.
+    float P_out = _sqrtf(rgb.x * rgb.x * Pr + rgb.y * rgb.y * Pg + rgb.z * rgb.z * Pb);
+    if (P_out > eps) {
+        float p_scale = P / P_out;
+        rgb = make_float3(rgb.x * p_scale, rgb.y * p_scale, rgb.z * p_scale);
+    }
+
     return rgb;
  }
  
@@ -424,50 +445,63 @@ __DEVICE__ float3 rgb_to_reuleaux(float3 rgb) {
     const float Pr = 0.299f;
     const float Pg = 0.587f;
     const float Pb = 0.114f;
+    const float eps = 1e-6f;
     float R = rgb.x;
     float G = rgb.y;
     float B = rgb.z;
-    float safeR = _fmaxf(_fabs(R), 1e-6f);
-    float safeG = _fmaxf(_fabs(G), 1e-6f);
-    float safeB = _fmaxf(_fabs(B), 1e-6f);
+    float safeR = _fmaxf(_fabs(R), eps);
+    float safeG = _fmaxf(_fabs(G), eps);
+    float safeB = _fmaxf(_fabs(B), eps);
 
     float3 hsp;
     float P = _sqrtf(R * R * Pr + G * G * Pg + B * B * Pb);  // Perceived brightness
     hsp.z = P;
+    hsp.x = 0.0f;
+    hsp.y = 0.0f;
+
+    float maxVal = _fmaxf(R, _fmaxf(G, B));
+    float minVal = _fminf(R, _fminf(G, B));
+    float delta = maxVal - minVal;
 
     // Calculate Hue and Saturation
-    if (R == G && R == B) {  // Grayscale, no hue or saturation
-        hsp.x = 0.0f; // Hue
-        hsp.y = 0.0f; // Saturation
+    if (delta <= eps) {  // Near grayscale: hue is undefined, pin to zero.
         return hsp;
     }
 
     if (R >= G && R >= B) {  // R is largest
         if (B >= G) {
-            hsp.x = 1.0f - (B - G) / (6.0f * (R - G)); // Hue
+            float denom = _fmaxf(_fabs(R - G), eps);
+            hsp.x = 1.0f - (B - G) / (6.0f * denom); // Hue
             hsp.y = 1.0f - G / safeR;                // Saturation
         } else {
-            hsp.x = (G - B) / (6.0f * (R - B));       // Hue
+            float denom = _fmaxf(_fabs(R - B), eps);
+            hsp.x = (G - B) / (6.0f * denom);       // Hue
             hsp.y = 1.0f - B / safeR;                // Saturation
         }
     } else if (G >= R && G >= B) {  // G is largest
         if (R >= B) {
-            hsp.x = (2.0f / 6.0f) - (R - B) / (6.0f * (G - B)); // Hue
+            float denom = _fmaxf(_fabs(G - B), eps);
+            hsp.x = (2.0f / 6.0f) - (R - B) / (6.0f * denom); // Hue
             hsp.y = 1.0f - B / safeG;                          // Saturation
         } else {
-            hsp.x = (2.0f / 6.0f) + (B - R) / (6.0f * (G - R)); // Hue
+            float denom = _fmaxf(_fabs(G - R), eps);
+            hsp.x = (2.0f / 6.0f) + (B - R) / (6.0f * denom); // Hue
             hsp.y = 1.0f - R / safeG;                          // Saturation
         }
     } else {  // B is largest
         if (G >= R) {
-            hsp.x = (4.0f / 6.0f) - (G - R) / (6.0f * (B - R)); // Hue
+            float denom = _fmaxf(_fabs(B - R), eps);
+            hsp.x = (4.0f / 6.0f) - (G - R) / (6.0f * denom); // Hue
             hsp.y = 1.0f - R / safeB;                          // Saturation
         } else {
-            hsp.x = (4.0f / 6.0f) + (R - G) / (6.0f * (B - G)); // Hue
+            float denom = _fmaxf(_fabs(B - G), eps);
+            hsp.x = (4.0f / 6.0f) + (R - G) / (6.0f * denom); // Hue
             hsp.y = 1.0f - G / safeB;                          // Saturation
         }
     }
 
+    hsp.x = wrapf(hsp.x, 1.0f);
+    hsp.y = _fminf(_fmaxf(hsp.y, 0.0f), 1.0f);
     return hsp;
  }
  
@@ -1458,8 +1492,8 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, __TEXTU
     control_params_t custom_params;
     custom_params.selected_hue = selected_hue_norm;
     custom_params.adjustment_amt = adjustment_amt * soft_scale;
-    custom_params.left_feather = 0.30f + smooth_k * 0.50f;
-    custom_params.right_feather = 0.30f + smooth_k * 1.00f;
+    custom_params.left_feather = 0.20f + smooth_k * 0.50f;
+    custom_params.right_feather = 0.20f + smooth_k * 1.00f;
 
     // Tuning reference for Lab-family models except Yrg:
     // these remaps align perceived hue positions/strength in CIELab/OKLab/ProLab/tLab.
@@ -1468,6 +1502,7 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, __TEXTU
         skin_params.adjustment_amt = skin_adjustment_amt * -1.2f;
         red_params.selected_hue = 0.087f;
         yellow_params.selected_hue = 0.24f;
+        blue_params.adjustment_amt = blue_adjustment_amt * soft_scale;
         magenta_params.selected_hue = 0.88f;
         cyan_params.selected_hue = 0.6f;
         cyan_params.adjustment_amt = cyan_adjustment_amt * -0.9f;
@@ -1654,6 +1689,15 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, __TEXTU
     if (channel == 3) {
         // Fade hue adjustments to zero for near-neutrals to prevent edge fringing.
         hue_chroma_gate = me_smoothstep01(curr_color.y / k_chroma_gate_threshold);
+    } else if (color_model == HSP) {
+        // HSP-only neutral protection:
+        // gate hue adjustment by HSP saturation so low-sat pixels (near grayscale)
+        // do not pick up unstable hue tint when bells rotate/compress hue.
+        // NOTE: this is deliberately in the hue-adjust stage only; RGB<->HSP
+        // conversion remains unchanged so general roundtrip behavior is preserved.
+        float hsp_sat_u = (curr_color.y - k_hsp_sat_gate_lo) /
+                          (k_hsp_sat_gate_hi - k_hsp_sat_gate_lo);
+        hue_chroma_gate = me_smoothstep01(hsp_sat_u);
     }
 
     float3 output_mask = make_float3(1.0f, 0.0f, 0.0f);
@@ -2043,6 +2087,21 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, __TEXTU
         output_color.z = wrapf(curr_color.z + safe_hue_delta, 1.0f);
     } else {
         output_color.x = wrapf(curr_color.x + safe_hue_delta, 1.0f);
+    }
+    // ProLab post-hue chroma stabilizer (tool-specific, not original ProLab design):
+    // After hue is applied, evaluate inverse-projective denominator w at the new
+    // hue/chroma point and softly reduce chroma when |w| approaches the unstable zone.
+    // This is layered on top of the existing ProLab hue-delta gate.
+    if (k_enable_pro_chroma_stabilizer && color_model == pro && channel == 3) {
+        float out_hue_deg = output_color.z * 360.0f;
+        float a_lab_out = output_color.y * _cosf(out_hue_deg * PI / 180.0f);
+        float b_lab_out = output_color.y * _sinf(out_hue_deg * PI / 180.0f);
+        float L100_out = output_color.x * 100.0f;
+        float a100_out = a_lab_out * 100.0f;
+        float b100_out = b_lab_out * 100.0f;
+        float w_out = -0.0086294f * L100_out - 0.0002432f * a100_out + 0.0009653f * b100_out + 1.0f;
+        float pro_chroma_gate = me_smoothstep01((_fabs(w_out) - k_pro_w_gate_lo) / (k_pro_w_gate_hi - k_pro_w_gate_lo));
+        output_color.y = output_color.y * pro_chroma_gate;
     }
     float curve_pos_y_raw = curr_pos_x + accum_curve_delta;
     float curve_pos_y = _fminf(_fmaxf(curve_pos_y_raw, 0.0f), 1.0f);
