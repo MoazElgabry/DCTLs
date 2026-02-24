@@ -28,8 +28,6 @@
     V1.5  : *Upgraded the main curve to a much smoother version for even better protection against folds and more stable behaviour with small adjustments.
             *Added tLab (Kirk) as a Lab-family color model path with LCH hue handling.the conversions are tuned and stabliized for wide dynamic range and protected against blue-region instability, however it is not perfect.
             *Added Yrg (Kirk 2019) Lab-family model path with dedicated Yrg inset/outset.the conversions are tuned and stabliized for wide dynamic range and protected against blue-region instability, it performs better than tLab but worse than ProLab.
-             The original Kirk tLab paper is here: https://www.researchgate.net/publication/332651319_tLab_A_Perceptually_Uniform_Color_Space_for_Optimal_Color_Manipulation_in_Digital_Imaging
-             The original Kirk Yrg paper is here: https://www.researchgate.net/publication/335427086_Yrg_A_Perceptually_Uniform_Color_Space_for_Optimal_Color_Manipulation_in_Digital_Imaging
             *Added Variation Mode - a new control type that stretches or compresses
              hues within each bell region rather than rotating them, useful for
              clustering or spreading hue families.
