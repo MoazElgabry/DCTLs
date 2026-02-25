@@ -342,37 +342,37 @@ __DEVICE__ float3 HSPtoRGB(float3 hsp) {
         if (H < 1.0f / 6.0f) {  // R > G > B
             H = 6.0f * H;
             part = 1.0f + H * (1.0f / minOverMax - 1.0f);
-            rgb.z = P / sqrtf(Pr / (minOverMax * minOverMax) + Pg * part * part + Pb);
+            rgb.z = P / _sqrtf(Pr / (minOverMax * minOverMax) + Pg * part * part + Pb);
             rgb.x = rgb.z / minOverMax;
             rgb.y = rgb.z + H * (rgb.x - rgb.z);
         } else if (H < 2.0f / 6.0f) {  // G > R > B
             H = 6.0f * (2.0f / 6.0f - H);
             part = 1.0f + H * (1.0f / minOverMax - 1.0f);
-            rgb.z = P / sqrtf(Pg / (minOverMax * minOverMax) + Pr * part * part + Pb);
+            rgb.z = P / _sqrtf(Pg / (minOverMax * minOverMax) + Pr * part * part + Pb);
             rgb.y = rgb.z / minOverMax;
             rgb.x = rgb.z + H * (rgb.y - rgb.z);
         } else if (H < 3.0f / 6.0f) {  // G > B > R
             H = 6.0f * (H - 2.0f / 6.0f);
             part = 1.0f + H * (1.0f / minOverMax - 1.0f);
-            rgb.x = P / sqrtf(Pg / (minOverMax * minOverMax) + Pb * part * part + Pr);
+            rgb.x = P / _sqrtf(Pg / (minOverMax * minOverMax) + Pb * part * part + Pr);
             rgb.y = rgb.x / minOverMax;
             rgb.z = rgb.x + H * (rgb.y - rgb.x);
         } else if (H < 4.0f / 6.0f) {  // B > G > R
             H = 6.0f * (4.0f / 6.0f - H);
             part = 1.0f + H * (1.0f / minOverMax - 1.0f);
-            rgb.x = P / sqrtf(Pb / (minOverMax * minOverMax) + Pg * part * part + Pr);
+            rgb.x = P / _sqrtf(Pb / (minOverMax * minOverMax) + Pg * part * part + Pr);
             rgb.z = rgb.x / minOverMax;
             rgb.y = rgb.x + H * (rgb.z - rgb.x);
         } else if (H < 5.0f / 6.0f) {  // B > R > G
             H = 6.0f * (H - 4.0f / 6.0f);
             part = 1.0f + H * (1.0f / minOverMax - 1.0f);
-            rgb.y = P / sqrtf(Pb / (minOverMax * minOverMax) + Pr * part * part + Pg);
+            rgb.y = P / _sqrtf(Pb / (minOverMax * minOverMax) + Pr * part * part + Pg);
             rgb.z = rgb.y / minOverMax;
             rgb.x = rgb.y + H * (rgb.z - rgb.y);
         } else {  // R > B > G
             H = 6.0f * (6.0f / 6.0f - H);
             part = 1.0f + H * (1.0f / minOverMax - 1.0f);
-            rgb.y = P / sqrtf(Pr / (minOverMax * minOverMax) + Pb * part * part + Pg);
+            rgb.y = P / _sqrtf(Pr / (minOverMax * minOverMax) + Pb * part * part + Pg);
             rgb.x = rgb.y / minOverMax;
             rgb.z = rgb.y + H * (rgb.x - rgb.y);
         }
@@ -380,32 +380,32 @@ __DEVICE__ float3 HSPtoRGB(float3 hsp) {
         // Handle grayscale case when minOverMax == 0
         if (H < 1.0f / 6.0f) {  // R > G > B
             H = 6.0f * H;
-            rgb.x = sqrtf(P * P / (Pr + Pg * H * H));
+            rgb.x = _sqrtf(P * P / (Pr + Pg * H * H));
             rgb.y = rgb.x * H;
             rgb.z = 0.0f;
         } else if (H < 2.0f / 6.0f) {  // G > R > B
             H = 6.0f * (2.0f / 6.0f - H);
-            rgb.y = sqrtf(P * P / (Pg + Pr * H * H));
+            rgb.y = _sqrtf(P * P / (Pg + Pr * H * H));
             rgb.x = rgb.y * H;
             rgb.z = 0.0f;
         } else if (H < 3.0f / 6.0f) {  // G > B > R
             H = 6.0f * (H - 2.0f / 6.0f);
-            rgb.y = sqrtf(P * P / (Pg + Pb * H * H));
+            rgb.y = _sqrtf(P * P / (Pg + Pb * H * H));
             rgb.z = rgb.y * H;
             rgb.x = 0.0f;
         } else if (H < 4.0f / 6.0f) {  // B > G > R
             H = 6.0f * (4.0f / 6.0f - H);
-            rgb.z = sqrtf(P * P / (Pb + Pg * H * H));
+            rgb.z = _sqrtf(P * P / (Pb + Pg * H * H));
             rgb.y = rgb.z * H;
             rgb.x = 0.0f;
         } else if (H < 5.0f / 6.0f) {  // B > R > G
             H = 6.0f * (H - 4.0f / 6.0f);
-            rgb.z = sqrtf(P * P / (Pb + Pr * H * H));
+            rgb.z = _sqrtf(P * P / (Pb + Pr * H * H));
             rgb.x = rgb.z * H;
             rgb.y = 0.0f;
         } else {  // R > B > G
             H = 6.0f * (6.0f / 6.0f - H);
-            rgb.x = sqrtf(P * P / (Pr + Pb * H * H));
+            rgb.x = _sqrtf(P * P / (Pr + Pb * H * H));
             rgb.z = rgb.x * H;
             rgb.y = 0.0f;
         }
@@ -425,7 +425,7 @@ __DEVICE__ float3 RGBtoHSP(float3 rgb) {
     float B = rgb.z;
 
     float3 hsp;
-    float P = sqrtf(R * R * Pr + G * G * Pg + B * B * Pb);  // Perceived brightness
+    float P = _sqrtf(R * R * Pr + G * G * Pg + B * B * Pb);  // Perceived brightness
     hsp.z = P;
 
     // Calculate Hue and Saturation
