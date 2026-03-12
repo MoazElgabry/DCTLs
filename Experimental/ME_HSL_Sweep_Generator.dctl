@@ -1,0 +1,118 @@
+// HSL Sweep Generator v2
+// ─────────────────────────────────────────────────────────────────────────────
+//
+//    Written by Moaz Elgabry
+//    moazelgabry.com
+//
+// Generates two independent linear sweeps through Hue, Saturation, Luminance — one per spatial axis.
+//
+// Each axis linearly interpolates its own H, S, L from start to end across
+// the full width (X) or height (Y) of the frame.
+//
+// Pixel value = X contribution + Y contribution (cumulative sum).
+//
+// Zero start AND zero end on any parameter = bypass (contributes nothing).
+// This is intentional — zero is the neutral element of the additive model.
+//
+// Typical use: one axis sweeps one parameter, the other holds a constant
+// (start = end = desired value) or is fully bypassed (start = end = 0).
+//
+// H is normalised 0–1 (= 0–360°). Wrap is handled — sweeps crossing the
+// 0/1 boundary are continuous.
+//
+// Designed for square timelines e.g. 3840×3840. Frames can be rotated
+// in the timeline for horizontal/vertical variation.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// X axis (horizontal: left → right)
+DEFINE_UI_PARAMS(xH0, X Hue start,        DCTLUI_SLIDER_FLOAT, 0.0f, 0.0f, 1.0f, 0.0f)
+DEFINE_UI_PARAMS(xS0, X Saturation start, DCTLUI_SLIDER_FLOAT, 1.0f, 0.0f, 1.0f, 0.0f)
+DEFINE_UI_PARAMS(xL0, X Luminance start,  DCTLUI_SLIDER_FLOAT, 0.5f, 0.0f, 1.0f, 0.0f)
+
+DEFINE_UI_PARAMS(xH1, X Hue end,          DCTLUI_SLIDER_FLOAT, 1.0f, 0.0f, 1.0f, 0.0f)
+DEFINE_UI_PARAMS(xS1, X Saturation end,   DCTLUI_SLIDER_FLOAT, 1.0f, 0.0f, 1.0f, 0.0f)
+DEFINE_UI_PARAMS(xL1, X Luminance end,    DCTLUI_SLIDER_FLOAT, 0.5f, 0.0f, 1.0f, 0.0f)
+
+// Y axis (vertical: bottom → top)
+DEFINE_UI_PARAMS(D, Divider=============, DCTLUI_SLIDER_FLOAT, 0.0f, 0.0f, 0.0f, 0.01f)
+DEFINE_UI_PARAMS(yH0, Y Hue start,        DCTLUI_SLIDER_FLOAT, 0.0f, 0.0f, 1.0f, 0.0f)
+DEFINE_UI_PARAMS(yS0, Y Saturation start, DCTLUI_SLIDER_FLOAT, 0.0f, 0.0f, 1.0f, 0.0f)
+DEFINE_UI_PARAMS(yL0, Y Luminance start,  DCTLUI_SLIDER_FLOAT, 0.0f, 0.0f, 1.0f, 0.0f)
+
+DEFINE_UI_PARAMS(yH1, Y Hue end,          DCTLUI_SLIDER_FLOAT, 0.0f, 0.0f, 1.0f, 0.0f)
+DEFINE_UI_PARAMS(yS1, Y Saturation end,   DCTLUI_SLIDER_FLOAT, 0.0f, 0.0f, 1.0f, 0.0f)
+DEFINE_UI_PARAMS(yL1, Y Luminance end,    DCTLUI_SLIDER_FLOAT, 0.0f, 0.0f, 1.0f, 0.0f)
+
+DEFINE_UI_PARAMS(clamp_out, Clamp Output, DCTLUI_CHECK_BOX, 0)
+
+
+// ── HSL → RGB ─────────────────────────────────────────────────────────────────
+// Standard double-hex-cone. H ∈ [0,1), S ∈ [0,1], L ∈ [0,1].
+
+__DEVICE__ float hue_channel(float p, float q, float t)
+{
+    t = t < 0.0f ? t + 1.0f : t > 1.0f ? t - 1.0f : t;
+    if (6.0f * t < 1.0f) return p + (q - p) * 6.0f * t;
+    if (2.0f * t < 1.0f) return q;
+    if (3.0f * t < 2.0f) return p + (q - p) * (2.0f / 3.0f - t) * 6.0f;
+    return p;
+}
+
+__DEVICE__ float3 HSL_to_RGB(float H, float S, float L)
+{
+    if (S <= 0.0f)
+        return make_float3(L, L, L);
+
+    float q = L < 0.5f ? L * (1.0f + S) : L + S - L * S;
+    float p = 2.0f * L - q;
+
+    return make_float3(
+        hue_channel(p, q, H + 1.0f / 3.0f),
+        hue_channel(p, q, H),
+        hue_channel(p, q, H - 1.0f / 3.0f)
+    );
+}
+
+
+// ── Transform ─────────────────────────────────────────────────────────────────
+
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p_R, float p_G, float p_B)
+{
+    // Normalised coordinates spanning exactly [0, 1] across the full frame.
+    // t_x: left = 0, right = 1
+    // t_y: bottom = 0, top = 1  (DaVinci scanline 0 is top, so we flip)
+    float t_x = (float)p_X / (float)(p_Width  - 1);
+    float t_y = 1.0f - (float)p_Y / (float)(p_Height - 1);
+
+    // X axis: interpolate each parameter across t_x
+    float xH = xH0 + (xH1 - xH0) * t_x;
+    float xS = xS0 + (xS1 - xS0) * t_x;
+    float xL = xL0 + (xL1 - xL0) * t_x;
+
+    // Y axis: interpolate each parameter across t_y
+    float yH = yH0 + (yH1 - yH0) * t_y;
+    float yS = yS0 + (yS1 - yS0) * t_y;
+    float yL = yL0 + (yL1 - yL0) * t_y;
+
+    // Cumulative sum of both axis contributions
+    float H = xH + yH;
+    float S = xS + yS;
+    float L = xL + yL;
+
+    // Hue wraps continuously across 0/1 boundary
+    H = H - _floorf(H);
+
+    // S and L clamped — values outside [0,1] have no meaning in HSL geometry
+    S = _clampf(S, 0.0f, 1.0f);
+    L = _clampf(L, 0.0f, 1.0f);
+
+    float3 rgb = HSL_to_RGB(H, S, L);
+
+    if (clamp_out) {
+        rgb.x = _clampf(rgb.x, 0.0f, 1.0f);
+        rgb.y = _clampf(rgb.y, 0.0f, 1.0f);
+        rgb.z = _clampf(rgb.z, 0.0f, 1.0f);
+    }
+
+    return rgb;
+}
