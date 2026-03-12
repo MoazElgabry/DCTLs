@@ -1,6 +1,6 @@
 #line 2
 /*
-ME Localized Contrast v1.2.2
+ME Localized Contrast v1.2.3
 by Moaz Elgabry
 moazelgabry.com
 buymeacoffee.com/moazelgabry
@@ -8,6 +8,8 @@ buymeacoffee.com/moazelgabry
 Localized, smooth, range-limited contrast shaping.
 
 Changelog:
+v1.2.3 - *Removed frame-sampling overlay placement logic so LUT export remains compatible.
+         *Added a Wide-Aspect Overlays toggle that assumes a centered 2.39:1 active image for overlay placement.
 v1.2.2 - *Refactored the codebase for better compaaibility with Opencl/Metal systems.
 V1.2.1 - *Refined the chroma protection logic for negative Amount settings to better preserve color integrity while still allowing effective contrast shaping, especially in shadow regions. 
 v1.2   - *Added a new Highlight Pivot Point toggle that draws a green guide over the pivot-centered middle band to help align exposure targets when shaping contrast.
@@ -29,6 +31,7 @@ DEFINE_UI_PARAMS(p_symmetry_bias, Symmetry Bias, DCTLUI_SLIDER_FLOAT, 0.0, -0.5,
 DEFINE_UI_PARAMS(p_safety, Safety Fader, DCTLUI_SLIDER_FLOAT, 0.25, 0.25, 1.0, 0.001)
 DEFINE_UI_PARAMS(p_preserve_mid_gray, Preserve Exposure, DCTLUI_CHECK_BOX, 1)
 DEFINE_UI_PARAMS(p_highlight_pivot_point, Highlight Pivot Point, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_PARAMS(p_wide_aspect_overlays, Wide-Aspect Overlays, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(p_guide, Guide Ramp, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(p_curve, Curve Overlay, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(p_bypass, Bypass, DCTLUI_CHECK_BOX, 0)
@@ -46,6 +49,7 @@ DEFINE_UI_TOOLTIP(Bypass, "Disables processing (passes input through).")
 DEFINE_UI_TOOLTIP(Symmetry Bias, "Biases localized contrast toward one side of the center. 0 = symmetric, + favors highlights side, - favors shadows side.")
 DEFINE_UI_TOOLTIP(Preserve Exposure, "Applies a global linear gain so the processed image mid-gray returns to its original working-space value.")
 DEFINE_UI_TOOLTIP(Highlight Pivot Point, "Draws a green guide over the pivot-centered middle band to help you align the operation around your targets when the image subject is not exactly at mid gray.")
+DEFINE_UI_TOOLTIP(Wide-Aspect Overlays, "Places overlay guides inside a centered 2.39:1 active area assumption instead of using the full frame.")
 DEFINE_UI_TOOLTIP(Guide Ramp, "Shows stepped/ramp guide. Red = steps too close (risk of clipping/flat areas). Yellow = low slope (flat curve warning).")
 DEFINE_UI_TOOLTIP(Curve Overlay, "Draws the curve response on the image to visualize the current settings. the curve is encoded in the output space of the tool, so it reflects the actual applied contrast shaping.")
 DEFINE_UI_TOOLTIP(Safety Fader, "Controls how tightly Amount is constrained. Lower values are safer; higher values allow more range.")
@@ -113,9 +117,8 @@ DEFINE_UI_TOOLTIP(Shoulder Smoothness, "Global shoulder feel. 0 = stronger shoul
 // Pivot overlay and dashed identity reference opacity.
 #define k_pivot_overlay_alpha 0.35f
 #define k_curve_ref_alpha 0.75f
-// Black-bar detection threshold + centered bars assumption.
-#define k_black_threshold 0.01f
-#define k_assume_centered 1
+// Generic overlay active-area assumption for letterboxed widescreen material.
+#define k_overlay_wide_aspect 2.39f
 // Guide strip layout.
 #define k_guide_strip_height 0.08f
 #define k_guide_ramp_height 0.06f
@@ -367,73 +370,23 @@ __DEVICE__ float di_code_to_space(float di_code, int output_space) {
     float lin = di_to_linear(di_code);
     return linear_to_code_space(lin, output_space);
 }
-__DEVICE__ int4 get_black_bar_thickness(int p_Width, int p_Height, __TEXTURE__ p_TexR, __TEXTURE__ p_TexG, __TEXTURE__ p_TexB, float black_threshold, int input_space) {
-    int4 thickness = make_int4(0, 0, 0, 0);
+__DEVICE__ int4 get_overlay_margins(int p_Width, int p_Height, int use_wide_aspect) {
+    int4 margins = make_int4(0, 0, 0, 0);
+    if (use_wide_aspect == 0 || p_Width <= 1 || p_Height <= 1) return margins;
 
-    int left = 0;
-    int right = p_Height / 2;
-    int center_x = p_Width / 2;
-
-    while (left < right) {
-        int mid = (left + right) / 2;
-        float r = linear_to_di(code_to_linear_space(_tex2D(p_TexR, center_x, mid), input_space));
-        float g = linear_to_di(code_to_linear_space(_tex2D(p_TexG, center_x, mid), input_space));
-        float b = linear_to_di(code_to_linear_space(_tex2D(p_TexB, center_x, mid), input_space));
-        if (_fabs(r) > black_threshold || _fabs(g) > black_threshold || _fabs(b) > black_threshold) {
-            right = mid;
-        } else {
-            left = mid + 1;
-        }
+    float frame_aspect = (float)p_Width / _fmaxf((float)p_Height, 1.0f);
+    if (frame_aspect <= k_overlay_wide_aspect) {
+        int active_h = (int)_fminf((float)p_Height, _fmaxf(1.0f, ((float)p_Width / k_overlay_wide_aspect) + 0.5f));
+        int top = (p_Height - active_h) / 2;
+        margins.y = top;
+        margins.w = p_Height - active_h - top;
+    } else {
+        int active_w = (int)_fminf((float)p_Width, _fmaxf(1.0f, ((float)p_Height * k_overlay_wide_aspect) + 0.5f));
+        int left = (p_Width - active_w) / 2;
+        margins.x = left;
+        margins.z = p_Width - active_w - left;
     }
-    thickness.y = left;
-
-    left = 0;
-    right = p_Height / 2;
-    while (left < right) {
-        int mid = (left + right) / 2;
-        float r = linear_to_di(code_to_linear_space(_tex2D(p_TexR, center_x, p_Height - 1 - mid), input_space));
-        float g = linear_to_di(code_to_linear_space(_tex2D(p_TexG, center_x, p_Height - 1 - mid), input_space));
-        float b = linear_to_di(code_to_linear_space(_tex2D(p_TexB, center_x, p_Height - 1 - mid), input_space));
-        if (_fabs(r) > black_threshold || _fabs(g) > black_threshold || _fabs(b) > black_threshold) {
-            right = mid;
-        } else {
-            left = mid + 1;
-        }
-    }
-    thickness.w = left;
-
-    left = 0;
-    right = p_Width / 2;
-    int center_y = p_Height / 2;
-    while (left < right) {
-        int mid = (left + right) / 2;
-        float r = linear_to_di(code_to_linear_space(_tex2D(p_TexR, mid, center_y), input_space));
-        float g = linear_to_di(code_to_linear_space(_tex2D(p_TexG, mid, center_y), input_space));
-        float b = linear_to_di(code_to_linear_space(_tex2D(p_TexB, mid, center_y), input_space));
-        if (_fabs(r) > black_threshold || _fabs(g) > black_threshold || _fabs(b) > black_threshold) {
-            right = mid;
-        } else {
-            left = mid + 1;
-        }
-    }
-    thickness.x = left;
-
-    left = 0;
-    right = p_Width / 2;
-    while (left < right) {
-        int mid = (left + right) / 2;
-        float r = linear_to_di(code_to_linear_space(_tex2D(p_TexR, p_Width - 1 - mid, center_y), input_space));
-        float g = linear_to_di(code_to_linear_space(_tex2D(p_TexG, p_Width - 1 - mid, center_y), input_space));
-        float b = linear_to_di(code_to_linear_space(_tex2D(p_TexB, p_Width - 1 - mid, center_y), input_space));
-        if (_fabs(r) > black_threshold || _fabs(g) > black_threshold || _fabs(b) > black_threshold) {
-            right = mid;
-        } else {
-            left = mid + 1;
-        }
-    }
-    thickness.z = left;
-
-    return thickness;
+    return margins;
 }
 
 __DEVICE__ float process_gain_scalar(float lr, float lg, float lb, float center, float width, float amount, float symmetry_bias, float shoulder_t) {
@@ -451,8 +404,8 @@ __DEVICE__ float process_gain_scalar(float lr, float lg, float lb, float center,
     return Ycohesive / _fmaxf(Y, 1e-6f);
 }
 
-__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, __TEXTURE__ p_TexR, __TEXTURE__ p_TexG, __TEXTURE__ p_TexB) {
-    float3 inRGB = make_float3(_tex2D(p_TexR, p_X, p_Y), _tex2D(p_TexG, p_X, p_Y), _tex2D(p_TexB, p_X, p_Y));
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p_R, float p_G, float p_B) {
+    float3 inRGB = make_float3(p_R, p_G, p_B);
     float lr = code_to_linear_space(inRGB.x, p_input_space);
     float lg = code_to_linear_space(inRGB.y, p_input_space);
     float lb = code_to_linear_space(inRGB.z, p_input_space);
@@ -617,19 +570,20 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, __TEXTU
     if (p_preserve_mid_gray != 0) {
         g_mid_overlay = preserve_midgray_gain(amount_scaled_overlay, center_overlay, width_overlay, p_symmetry_bias, shoulder_t);
     }
+    int eff_w_overlay = p_Width;
+    int eff_h_overlay = p_Height;
+    int x_in_overlay = p_X;
+    int y_in_overlay = p_Y;
+    if ((p_highlight_pivot_point != 0 || p_guide != 0 || p_curve != 0) && p_wide_aspect_overlays != 0) {
+        int4 overlay_margins = get_overlay_margins(p_Width, p_Height, p_wide_aspect_overlays);
+        eff_w_overlay = p_Width - overlay_margins.x - overlay_margins.z;
+        eff_h_overlay = p_Height - overlay_margins.y - overlay_margins.w;
+        x_in_overlay = p_X - overlay_margins.x;
+        y_in_overlay = p_Y - overlay_margins.y;
+    }
 
     if (p_highlight_pivot_point != 0) {
-        int4 bar = get_black_bar_thickness(p_Width, p_Height, p_TexR, p_TexG, p_TexB, k_black_threshold, p_input_space);
-        if (k_assume_centered) {
-            int min_lr = (int)_fminf((float)bar.x, (float)bar.z);
-            int min_tb = (int)_fminf((float)bar.y, (float)bar.w);
-            bar = make_int4(min_lr, min_tb, min_lr, min_tb);
-        }
-        int eff_w = p_Width - bar.x - bar.z;
-        int eff_h = p_Height - bar.y - bar.w;
-        int x_in = p_X - bar.x;
-        int y_in = p_Y - bar.y;
-        if (eff_w > 1 && eff_h > 1 && x_in >= 0 && y_in >= 0 && x_in < eff_w && y_in < eff_h) {
+        if (eff_w_overlay > 1 && eff_h_overlay > 1 && x_in_overlay >= 0 && y_in_overlay >= 0 && x_in_overlay < eff_w_overlay && y_in_overlay < eff_h_overlay) {
             float y_stops = _log2f(_fmaxf(1e-6f, di_to_linear(luminance_di_from_code(inRGB.x, inRGB.y, inRGB.z, p_input_space))) / 0.18f);
             float center_stops_overlay = _log2f(_fmaxf(1e-6f, di_to_linear(center_overlay)) / 0.18f);
             float dist_stops = _fabs(y_stops - center_stops_overlay);
@@ -692,21 +646,10 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, __TEXTU
     }
 
     if (p_guide != 0 || p_curve != 0) {
-        // Draw overlays in active image area only (ignore letterbox bars).
-        int4 bar2 = get_black_bar_thickness(p_Width, p_Height, p_TexR, p_TexG, p_TexB, k_black_threshold, p_input_space);
-        if (k_assume_centered) {
-            int min_lr2 = (int)_fminf((float)bar2.x, (float)bar2.z);
-            int min_tb2 = (int)_fminf((float)bar2.y, (float)bar2.w);
-            bar2 = make_int4(min_lr2, min_tb2, min_lr2, min_tb2);
-        }
-
-        int eff_w2 = p_Width - bar2.x - bar2.z;
-        int eff_h2 = p_Height - bar2.y - bar2.w;
-        int x_in2 = p_X - bar2.x;
-        int y_in2 = p_Y - bar2.y;
-        if (eff_w2 > 1 && eff_h2 > 1 && x_in2 >= 0 && y_in2 >= 0 && x_in2 < eff_w2 && y_in2 < eff_h2) {
-            float x = (float)x_in2 / (float)(eff_w2 - 1);
-            float y = (float)y_in2 / (float)(eff_h2 - 1);
+        // Draw overlays in the assumed active image area only.
+        if (eff_w_overlay > 1 && eff_h_overlay > 1 && x_in_overlay >= 0 && y_in_overlay >= 0 && x_in_overlay < eff_w_overlay && y_in_overlay < eff_h_overlay) {
+            float x = (float)x_in_overlay / (float)(eff_w_overlay - 1);
+            float y = (float)y_in_overlay / (float)(eff_h_overlay - 1);
             float guide_top = 1.0f - (k_guide_strip_height + k_guide_ramp_height);
 
             if (p_curve != 0) {
