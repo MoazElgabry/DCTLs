@@ -1,4 +1,4 @@
-// HSL Sweep Generator v2
+// HSL / RGB Sweep Generator v3
 // ─────────────────────────────────────────────────────────────────────────────
 //
 //    Written by Moaz Elgabry
@@ -25,23 +25,24 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 // X axis (horizontal: left → right)
-DEFINE_UI_PARAMS(xH0, X Hue start,        DCTLUI_SLIDER_FLOAT, 0.0f, 0.0f, 1.0f, 0.0f)
-DEFINE_UI_PARAMS(xS0, X Saturation start, DCTLUI_SLIDER_FLOAT, 1.0f, 0.0f, 1.0f, 0.0f)
-DEFINE_UI_PARAMS(xL0, X Luminance start,  DCTLUI_SLIDER_FLOAT, 0.5f, 0.0f, 1.0f, 0.0f)
+DEFINE_UI_PARAMS(plot_mode, Plot Mode, DCTLUI_COMBO_BOX, 0, {MODE_HSL, MODE_RGB}, {HSL, RGB})
+DEFINE_UI_PARAMS(xH0, X H/R start,        DCTLUI_SLIDER_FLOAT, 0.0f, 0.0f, 1.0f, 0.0f)
+DEFINE_UI_PARAMS(xS0, X S/G start,        DCTLUI_SLIDER_FLOAT, 1.0f, 0.0f, 1.0f, 0.0f)
+DEFINE_UI_PARAMS(xL0, X L/B start,        DCTLUI_SLIDER_FLOAT, 0.5f, 0.0f, 1.0f, 0.0f)
 
-DEFINE_UI_PARAMS(xH1, X Hue end,          DCTLUI_SLIDER_FLOAT, 1.0f, 0.0f, 1.0f, 0.0f)
-DEFINE_UI_PARAMS(xS1, X Saturation end,   DCTLUI_SLIDER_FLOAT, 1.0f, 0.0f, 1.0f, 0.0f)
-DEFINE_UI_PARAMS(xL1, X Luminance end,    DCTLUI_SLIDER_FLOAT, 0.5f, 0.0f, 1.0f, 0.0f)
+DEFINE_UI_PARAMS(xH1, X H/R end,          DCTLUI_SLIDER_FLOAT, 1.0f, 0.0f, 1.0f, 0.0f)
+DEFINE_UI_PARAMS(xS1, X S/G end,          DCTLUI_SLIDER_FLOAT, 1.0f, 0.0f, 1.0f, 0.0f)
+DEFINE_UI_PARAMS(xL1, X L/B end,          DCTLUI_SLIDER_FLOAT, 0.5f, 0.0f, 1.0f, 0.0f)
 
 // Y axis (vertical: bottom → top)
 DEFINE_UI_PARAMS(D, Divider=============, DCTLUI_SLIDER_FLOAT, 0.0f, 0.0f, 0.0f, 0.01f)
-DEFINE_UI_PARAMS(yH0, Y Hue start,        DCTLUI_SLIDER_FLOAT, 0.0f, 0.0f, 1.0f, 0.0f)
-DEFINE_UI_PARAMS(yS0, Y Saturation start, DCTLUI_SLIDER_FLOAT, 0.0f, 0.0f, 1.0f, 0.0f)
-DEFINE_UI_PARAMS(yL0, Y Luminance start,  DCTLUI_SLIDER_FLOAT, 0.0f, 0.0f, 1.0f, 0.0f)
+DEFINE_UI_PARAMS(yH0, Y H/R start,        DCTLUI_SLIDER_FLOAT, 0.0f, 0.0f, 1.0f, 0.0f)
+DEFINE_UI_PARAMS(yS0, Y S/G start,        DCTLUI_SLIDER_FLOAT, 0.0f, 0.0f, 1.0f, 0.0f)
+DEFINE_UI_PARAMS(yL0, Y L/B start,        DCTLUI_SLIDER_FLOAT, 0.0f, 0.0f, 1.0f, 0.0f)
 
-DEFINE_UI_PARAMS(yH1, Y Hue end,          DCTLUI_SLIDER_FLOAT, 0.0f, 0.0f, 1.0f, 0.0f)
-DEFINE_UI_PARAMS(yS1, Y Saturation end,   DCTLUI_SLIDER_FLOAT, 0.0f, 0.0f, 1.0f, 0.0f)
-DEFINE_UI_PARAMS(yL1, Y Luminance end,    DCTLUI_SLIDER_FLOAT, 0.0f, 0.0f, 1.0f, 0.0f)
+DEFINE_UI_PARAMS(yH1, Y H/R end,          DCTLUI_SLIDER_FLOAT, 0.0f, 0.0f, 1.0f, 0.0f)
+DEFINE_UI_PARAMS(yS1, Y S/G end,          DCTLUI_SLIDER_FLOAT, 0.0f, 0.0f, 1.0f, 0.0f)
+DEFINE_UI_PARAMS(yL1, Y L/B end,          DCTLUI_SLIDER_FLOAT, 0.0f, 0.0f, 1.0f, 0.0f)
 
 DEFINE_UI_PARAMS(clamp_out, Clamp Output, DCTLUI_CHECK_BOX, 0)
 
@@ -95,18 +96,20 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
     float yL = yL0 + (yL1 - yL0) * t_y;
 
     // Cumulative sum of both axis contributions
-    float H = xH + yH;
-    float S = xS + yS;
-    float L = xL + yL;
+    float c0 = xH + yH;
+    float c1 = xS + yS;
+    float c2 = xL + yL;
 
     // Hue wraps continuously across 0/1 boundary
-    H = H - _floorf(H);
+    c0 = c0 - _floorf(c0);
 
     // S and L clamped — values outside [0,1] have no meaning in HSL geometry
-    S = _clampf(S, 0.0f, 1.0f);
-    L = _clampf(L, 0.0f, 1.0f);
+    c1 = _clampf(c1, 0.0f, 1.0f);
+    c2 = _clampf(c2, 0.0f, 1.0f);
 
-    float3 rgb = HSL_to_RGB(H, S, L);
+    float3 rgb = (plot_mode == 0)
+        ? HSL_to_RGB(c0, c1, c2)
+        : make_float3(xH + yH, xS + yS, xL + yL);
 
     if (clamp_out) {
         rgb.x = _clampf(rgb.x, 0.0f, 1.0f);

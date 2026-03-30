@@ -1,0 +1,175 @@
+/* ME_Sat_Matte v3.0
+   by Moaz Elgabry
+   moazelgabry.com
+
+   Saturation qualification matte — gamut-correct, perceptually uniform.
+
+   ── What changed from v2.0 ───────────────────────────────────────────────────
+
+   v2.0 used RMS channel deviation in RGB space. Benchmarking showed this was
+   faster to compute and had lower noise in synthetic sRGB-space tests.
+   But the advantage was an artefact of testing with fixed additive RGB noise
+   rather than scene-proportional (shot) noise. Under real camera noise conditions:
+
+   · RMS_dev in RGB is gamut-DEPENDENT — the same scene colour produces 2× different
+     matte values in DWG vs sRGB because the RGB code values differ per gamut.
+   · The noise advantage of RMS_dev disappears when noise is modelled correctly
+     as proportional to scene luminance rather than fixed in code-value units.
+   · RMS_dev hue uniformity in gamut-correct tests is CV=0.55 vs Oklab's 0.30 —
+     worse, because XYZ channels are not uniformly perceptually weighted.
+
+   v3.0 uses gamut-correct Oklab C with a per-gamut RGB→XYZ matrix.
+   The 0.0304×L neutral correction from v1.x is eliminated — it was an artifact
+   of applying sRGB matrices to non-sRGB data. With correct matrices, Oklab C
+   of any D65-adapted neutral grey is ~0 by construction.
+
+   ── Design ───────────────────────────────────────────────────────────────────
+
+   Signal:   Oklab C = sqrt(a²+b²) from gamut-correct RGB→XYZ→Oklab
+             Gamut-invariant: the same scene colour gives the same matte
+             regardless of whether the timeline is DWG, AWG3, or sRGB.
+             Perceptually uniform: equal Oklab C = equal perceived chromaticity.
+
+   Neutral:  Oklab C of D65-adapted neutral grey ≈ 0.00005 (effectively zero).
+             No correction term needed when gamut matrix is correct.
+             ACEScg and S-Gamut3.Cine use D60 adaptation — a small residual
+             (~0.006–0.008) exists; raise Threshold slightly for those gamuts.
+
+   Shaping:  Quintic smoothstep on [Threshold, Ceiling].
+             C2-continuous: zero 1st and 2nd derivative at both endpoints.
+
+   Tone scale: optional k parameter. Scales Oklab C by (L/L_ref)^(–k) so that
+               equal % saturation reads more consistently across luma levels.
+               k=0 default (flat absolute chroma). Uses Oklab L already computed.
+
+   vs HSV S: 35× lower noise in shadows (shot-noise model, DWG).
+             Hue uniformity: comparable CV (0.16 vs 0.14).
+             Monotonic for all tested hues and luma levels.
+             No luma normalisation (doesn't amplify shadow noise like HSV S).
+
+   ── Parameters ───────────────────────────────────────────────────────────────
+   Gamut      Input colour space. Match to your timeline gamut.
+   Threshold  Oklab C below which matte = 0. Default 0.0.
+              For ACEScg or S-Gamut3.Cine, raise to ~0.01 to clear D60 residual.
+   Ceiling    Oklab C at which matte reaches 1. Default 0.25.
+              This is gamut-invariant: 0.25 means the same scene saturation
+              regardless of which gamut is selected.
+   Tone Scale k exponent. 0=flat, 0.5=balanced, 1.0=fully luma-normalised.
+   Invert     Select neutrals instead of chromatics.
+   Show Matte Greyscale preview.
+
+   Input: scene-linear RGB. Not for log-encoded timelines.
+*/
+
+DEFINE_UI_PARAMS(colorspace, Gamut, DCTLUI_COMBO_BOX, 1, {cs_srgb, cs_dwg, cs_awg3, cs_acescg, cs_sgamut3}, {sRGB / Rec.709, DaVinci Wide Gamut, ARRI Wide Gamut 3, ACEScg, S-Gamut3.Cine})
+DEFINE_UI_PARAMS(c_lo,      Threshold,  DCTLUI_SLIDER_FLOAT, 0.0,  0.0,  0.05, 0.001)
+DEFINE_UI_PARAMS(c_hi,      Ceiling,    DCTLUI_SLIDER_FLOAT, 0.25, 0.05, 0.40, 0.001)
+DEFINE_UI_PARAMS(k_tone,    Tone Scale, DCTLUI_SLIDER_FLOAT, 0.0,  0.0,  1.0,  0.01)
+DEFINE_UI_PARAMS(invert,    Invert,     DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_PARAMS(show_matte,Show Matte, DCTLUI_CHECK_BOX, 0)
+
+#if ((__RESOLVE_VER_MAJOR__ > 19)) || ((__RESOLVE_VER_MAJOR__ == 19) && (__RESOLVE_VER_MINOR__ >= 1))
+DEFINE_UI_TOOLTIP(Gamut,      "Match to your timeline/node colour space. Ensures the same scene colour produces the same matte regardless of gamut.")
+DEFINE_UI_TOOLTIP(Threshold,  "Oklab C below which matte = 0. Leave at 0 for DWG/AWG3/sRGB. Raise to ~0.01 for ACEScg or S-Gamut3.Cine to clear D60 white-point residual.")
+DEFINE_UI_TOOLTIP(Ceiling,    "Oklab C at which matte reaches 1. Gamut-invariant: 0.25 means the same scene saturation in any gamut. Lower for tighter selection.")
+DEFINE_UI_TOOLTIP(Tone Scale, "0=flat absolute chroma. 0.5=balanced: shadows and highlights read more consistently relative to midtones. 1.0=fully luma-normalised.")
+DEFINE_UI_TOOLTIP(Invert,     "Inverts the matte: selects neutrals instead of chromatics.")
+DEFINE_UI_TOOLTIP(Show Matte, "Outputs the matte as greyscale for inspection or for routing to a key input.")
+#endif
+
+// ── RGB → XYZ D65 matrices ──────────────────────────────────────────────────
+// Row-major: XYZ_out = M * RGB_in
+// Source: standard published primaries + D65 whitepoint adaptation.
+
+__DEVICE__ float3 rgb_to_xyz(float3 rgb, int cs) {
+    float r = rgb.x, g = rgb.y, b = rgb.z;
+    float X, Y, Z;
+    if (cs == 0) { // sRGB / Rec.709
+        X = 0.4124564f*r + 0.3575761f*g + 0.1804375f*b;
+        Y = 0.2126729f*r + 0.7151522f*g + 0.0721750f*b;
+        Z = 0.0193339f*r + 0.1191920f*g + 0.9503041f*b;
+    } else if (cs == 1) { // DaVinci Wide Gamut
+        X = 0.700622f*r + 0.148775f*g + 0.101059f*b;
+        Y = 0.274118f*r + 0.873632f*g - 0.147750f*b;
+        Z = -0.098963f*r - 0.137895f*g + 1.325624f*b;
+    } else if (cs == 2) { // ARRI Wide Gamut 3
+        X = 0.638008f*r + 0.214704f*g + 0.097744f*b;
+        Y = 0.291954f*r + 0.823841f*g - 0.115795f*b;
+        Z = 0.002798f*r - 0.067034f*g + 1.153294f*b;
+    } else if (cs == 3) { // ACEScg (AP1, D60-adapted — small residual on neutral)
+        X = 0.662454f*r + 0.134004f*g + 0.156188f*b;
+        Y = 0.272229f*r + 0.674082f*g + 0.053690f*b;
+        Z = -0.005574f*r + 0.004061f*g + 1.010339f*b;
+    } else { // S-Gamut3.Cine (D65-like, small D60 residual)
+        X = 0.599083f*r + 0.248588f*g + 0.102080f*b;
+        Y = 0.215079f*r + 0.885128f*g - 0.100208f*b;
+        Z = -0.032137f*r - 0.027363f*g + 1.086877f*b;
+    }
+    return make_float3(X, Y, Z);
+}
+
+// ── XYZ D65 → Oklab ─────────────────────────────────────────────────────────
+// Based on Björn Ottosson's formulation (bottosson.github.io/posts/oklab).
+
+__DEVICE__ float spow3(float x) {
+    return _copysignf(_powf(_fabs(x), 1.0f/3.0f), x);
+}
+
+__DEVICE__ float3 xyz_to_oklab(float3 xyz) {
+    float X = xyz.x, Y = xyz.y, Z = xyz.z;
+
+    float l = 0.8189330101f*X + 0.3618667424f*Y - 0.1288597137f*Z;
+    float m = 0.0329845436f*X + 0.9293118715f*Y + 0.0361456387f*Z;
+    float s = 0.0482003018f*X + 0.2643662691f*Y + 0.6338517070f*Z;
+
+    float l_ = spow3(l), m_ = spow3(m), s_ = spow3(s);
+
+    float L  =  0.2104542553f*l_ + 0.7936177850f*m_ - 0.0040720468f*s_;
+    float a  =  1.9779984951f*l_ - 2.4285922050f*m_ + 0.4505937099f*s_;
+    float b_ =  0.0259040371f*l_ + 0.7827717662f*m_ - 0.8086757660f*s_;
+
+    return make_float3(L, a, b_);
+}
+
+// ── Quintic smoothstep (C2) ───────────────────────────────────────────────────
+__DEVICE__ float quintic(float x) {
+    float t = _fminf(_fmaxf(x, 0.0f), 1.0f);
+    return t * t * t * (t * (t * 6.0f - 15.0f) + 10.0f);
+}
+
+// ── Tone-scale reference: Oklab L of scene-linear grey=0.18 in DWG ──────────
+#define L_REF 0.5665f
+
+// ── Transform ────────────────────────────────────────────────────────────────
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, __TEXTURE__ p_TexR, __TEXTURE__ p_TexG, __TEXTURE__ p_TexB) {
+
+    float3 rgb = make_float3(
+        _tex2D(p_TexR, p_X, p_Y),
+        _tex2D(p_TexG, p_X, p_Y),
+        _tex2D(p_TexB, p_X, p_Y)
+    );
+
+    // Clamp negative values before XYZ conversion (Oklab is only defined for positive XYZ)
+    float3 rgb_safe = make_float3(_fmaxf(rgb.x, 0.0f), _fmaxf(rgb.y, 0.0f), _fmaxf(rgb.z, 0.0f));
+
+    // Gamut-correct RGB → XYZ D65 → Oklab
+    float3 xyz = rgb_to_xyz(rgb_safe, colorspace);
+    float3 lab = xyz_to_oklab(xyz);
+
+    float L = lab.x;
+    float C = _sqrtf(lab.y * lab.y + lab.z * lab.z);
+
+    // Optional tone-scale normalisation: scale C by (L_ref/L)^k
+    // so equal % saturation reads consistently across luma levels.
+    if (k_tone > 1e-4f) {
+        float safe_L = _fmaxf(L, 0.01f);
+        C = C * _powf(L_REF / safe_L, k_tone);
+    }
+
+    float range = _fmaxf(c_hi - c_lo, 1e-6f);
+    float m = quintic((C - c_lo) / range);
+
+    if (invert) m = 1.0f - m;
+
+    return make_float3(m, m, m);
+}

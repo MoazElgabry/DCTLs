@@ -1,0 +1,669 @@
+#line 2
+// Split Toning for DaVinci Resolve DCTL.
+// Internal working transfer function is DaVinci Intermediate.
+// Input can be DaVinci Intermediate or Linear and is converted in/out around the grade.
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
+#define TF_LINEAR 0
+#define TF_DI 1
+#define LUMA_MAX 0
+#define LUMA_REC709 1
+#define LUMA_MEAN 2
+#define LUMA_MIN 3
+#define SMOOTH_ARCH_MAX_DERIV 3.07920144f
+#define DIVERGE_MAX_FLOOR 0.80f
+
+// ---------- UI PARAMETERS ----------
+DEFINE_UI_PARAMS(Strength,       Overall Strength,                 DCTLUI_SLIDER_FLOAT, 0.000, 0.000, 1.5, 0.001)
+DEFINE_UI_PARAMS(StrengthBal,    Hilights vs Shadows,             DCTLUI_SLIDER_FLOAT, 0.000,-1.000, 1.000, 0.001)
+
+DEFINE_UI_PARAMS(HiHue,          Highlights Hue_deg,              DCTLUI_SLIDER_FLOAT,  45.0, -180.0, 180.0, 0.1)
+DEFINE_UI_PARAMS(ShHue,          Shadows Hue_deg,                 DCTLUI_SLIDER_FLOAT, -105.0, -180.0, 180.0, 0.1)
+
+DEFINE_UI_PARAMS(HiSat,          Highlights Saturation,           DCTLUI_SLIDER_FLOAT, 0.5, 0.000, 0.70, 0.001)
+DEFINE_UI_PARAMS(ShSat,          Shadows Saturation,              DCTLUI_SLIDER_FLOAT, 0.5, 0.000, 0.70, 0.001)
+DEFINE_UI_PARAMS(TintLuma,       Subtractive,                     DCTLUI_SLIDER_FLOAT, 0.5,-1.000, 1.000, 0.001)
+
+DEFINE_UI_PARAMS(HiConverge,     Highlights Converge/Diverge,     DCTLUI_SLIDER_FLOAT, 0.000,-1.000, 1.000, 0.001)
+DEFINE_UI_PARAMS(ShConverge,     Shadows Converge/Diverge,        DCTLUI_SLIDER_FLOAT, 0.000,-1.000, 1.000, 0.001)
+
+DEFINE_UI_PARAMS(p_balance,      Shift Pivot,                      DCTLUI_SLIDER_FLOAT, 0.000,-1.000, 1.000, 0.001)
+DEFINE_UI_PARAMS(WeightPower,    Clean mid section,               DCTLUI_SLIDER_FLOAT, 0.000, 0.000, 8.000, 0.001)
+
+// Mask luma for tone-position
+DEFINE_UI_PARAMS(LumaMode,       Luma Calculation Method,         DCTLUI_COMBO_BOX, 0, {LUMA_MAX, LUMA_REC709, LUMA_MEAN, LUMA_MIN}, {Max RGB, Rec.709, Mean RGB, Min RGB})
+
+// Patch + curve display
+DEFINE_UI_PARAMS(ShowPatches,    Show_Patches,                    DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_PARAMS(ShowCurve,      Show_Curve,                      DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_PARAMS(InputTF,        Input Transfer Function,         DCTLUI_COMBO_BOX, 1, {TF_LINEAR, TF_DI}, {Linear, DaVinci Intermediate})
+
+
+// ---------- SMALL UTILS ----------
+__DEVICE__ float clampf(float x, float a, float b) { return fminf(fmaxf(x, a), b); }
+__DEVICE__ float saturatef(float x) { return clampf(x, 0.0f, 1.0f); }
+__DEVICE__ float mixf(float a, float b, float t) { return a + (b - a) * t; }
+__DEVICE__ float3 clamp3(float3 v, float a, float b) { return make_float3(clampf(v.x,a,b), clampf(v.y,a,b), clampf(v.z,a,b)); }
+__DEVICE__ float3 mix3(float3 a, float3 b, float t) { return make_float3(mixf(a.x,b.x,t), mixf(a.y,b.y,t), mixf(a.z,b.z,t)); }
+
+__DEVICE__ float dot_luma(float3 rgb)
+{
+    return rgb.x * 0.2126f + rgb.y * 0.7152f + rgb.z * 0.0722f;
+}
+
+__DEVICE__ float di_to_linear(float t)
+{
+    float a = 0.0075f;
+    float b = 7.0f;
+    float c = 0.07329248f;
+    float m = 10.44426855f;
+    float log_cut = 0.02740668f;
+    if (t > log_cut) return _exp2f((t / c) - b) - a;
+    return t / m;
+}
+
+__DEVICE__ float linear_to_di(float x)
+{
+    float a = 0.0075f;
+    float b = 7.0f;
+    float c = 0.07329248f;
+    float m = 10.44426855f;
+    float lin_cut = 0.00262409f;
+    if (x > lin_cut) return (_log2f(x + a) + b) * c;
+    return x * m;
+}
+
+__DEVICE__ float inverse_gamma24(float code)
+{
+    return powf(saturatef(di_to_linear(code)), 2.4f);
+}
+
+__DEVICE__ float tf_to_internal_di_value(float x, int tf)
+{
+    float v = saturatef(x);
+    if (tf == TF_LINEAR) return saturatef(linear_to_di(v));
+    return v;
+}
+
+__DEVICE__ float tf_from_internal_di_value(float x, int tf)
+{
+    float v = saturatef(x);
+    if (tf == TF_LINEAR) return saturatef(di_to_linear(v));
+    return v;
+}
+
+__DEVICE__ float3 tf_to_internal_di_rgb(float3 rgb, int tf)
+{
+    if (tf == TF_LINEAR)
+    {
+        return make_float3(tf_to_internal_di_value(rgb.x, tf),
+                           tf_to_internal_di_value(rgb.y, tf),
+                           tf_to_internal_di_value(rgb.z, tf));
+    }
+    return clamp3(rgb, 0.0f, 1.0f);
+}
+
+__DEVICE__ float3 tf_from_internal_di_rgb(float3 rgb, int tf)
+{
+    if (tf == TF_LINEAR)
+    {
+        return make_float3(tf_from_internal_di_value(rgb.x, tf),
+                           tf_from_internal_di_value(rgb.y, tf),
+                           tf_from_internal_di_value(rgb.z, tf));
+    }
+    return clamp3(rgb, 0.0f, 1.0f);
+}
+
+__DEVICE__ float tf_from_internal_di_value_unclamped(float x, int tf)
+{
+    if (tf == TF_LINEAR) return di_to_linear(x);
+    return x;
+}
+
+__DEVICE__ float3 tf_from_internal_di_rgb_unclamped(float3 rgb, int tf)
+{
+    if (tf == TF_LINEAR)
+    {
+        return make_float3(tf_from_internal_di_value_unclamped(rgb.x, tf),
+                           tf_from_internal_di_value_unclamped(rgb.y, tf),
+                           tf_from_internal_di_value_unclamped(rgb.z, tf));
+    }
+    return rgb;
+}
+
+__DEVICE__ float assumed_midgray_from_tf(int tf)
+{
+    if (tf == TF_LINEAR) return tf_to_internal_di_value(0.18f, TF_LINEAR);
+    return 0.336f;
+}
+
+__DEVICE__ float mask_luma(float3 rgb, int mode)
+{
+    if (mode == LUMA_MAX) return fmaxf(rgb.x, fmaxf(rgb.y, rgb.z));
+    if (mode == LUMA_MEAN) return (rgb.x + rgb.y + rgb.z) / 3.0f;
+    if (mode == LUMA_MIN) return fminf(rgb.x, fminf(rgb.y, rgb.z));
+    return dot_luma(rgb);
+}
+
+__DEVICE__ float wrap_deg_180(float deg)
+{
+    float w = fmodf(deg + 180.0f, 360.0f);
+    if (w < 0.0f) w += 360.0f;
+    return w - 180.0f;
+}
+
+__DEVICE__ float convergence_scale(float slider, float drive)
+{
+    float s = clampf(slider, -1.0f, 1.0f);
+    float d = saturatef(drive);
+    if (s >= 0.0f) return 1.0f - s * d;
+    return 1.0f;
+}
+
+__DEVICE__ float effective_tint_sat(float satScale, float slider, float convergeDrive)
+{
+    return clampf(satScale * convergence_scale(slider, convergeDrive), 0.0f, 1.10f);
+}
+
+__DEVICE__ float side_extent_hi(float L, float pivot)
+{
+    return saturatef((L - pivot) / fmaxf(1.0f - pivot, 1e-5f));
+}
+
+__DEVICE__ float side_extent_sh(float L, float pivot)
+{
+    return saturatef((pivot - L) / fmaxf(pivot, 1e-5f));
+}
+
+__DEVICE__ float smootherstep01(float x)
+{
+    float t = saturatef(x);
+    return t * t * t * (t * (t * 6.0f - 15.0f) + 10.0f);
+}
+
+__DEVICE__ float cosine_bell01(float u)
+{
+    if (u <= 0.0f) return 1.0f;
+    if (u >= 1.0f) return 0.0f;
+    return 0.5f * (1.0f + cosf((float)M_PI * u));
+}
+
+
+// ---------- CONTINUOUS OPPONENT TINT CONSTRUCTION ----------
+__DEVICE__ float3 hue_opponent_dir(float hue_deg)
+{
+    float h = wrap_deg_180(hue_deg) * ((float)M_PI / 180.0f);
+    float ch = cosf(h);
+    float sh = sinf(h);
+
+    float3 e1 = make_float3(0.70710678f, -0.70710678f, 0.0f);
+    float3 e2 = make_float3(0.40824829f,  0.40824829f, -0.81649658f);
+
+    return make_float3(e1.x * ch + e2.x * sh,
+                       e1.y * ch + e2.y * sh,
+                       e1.z * ch + e2.z * sh);
+}
+
+__DEVICE__ float3 oklch_display_rgb(float hue_deg, float satScale)
+{
+    float sat = clampf(satScale, 0.0f, 1.10f);
+    float3 dir = hue_opponent_dir(hue_deg);
+    return clamp3(make_float3(0.50f + dir.x * 0.28f * sat,
+                              0.50f + dir.y * 0.28f * sat,
+                              0.50f + dir.z * 0.28f * sat), 0.0f, 1.0f);
+}
+
+__DEVICE__ float3 tint_delta_controlled(float hue_deg, float satScale, float tintLumaParam)
+{
+    float sat = clampf(satScale, 0.0f, 1.10f);
+    float3 dir = hue_opponent_dir(hue_deg);
+    float3 delta_raw = make_float3(dir.x * (0.28f * sat),
+                                   dir.y * (0.28f * sat),
+                                   dir.z * (0.28f * sat));
+
+    float y = dot_luma(delta_raw);
+    float3 luma_part = make_float3(y, y, y);
+    float3 chroma_part = make_float3(delta_raw.x - luma_part.x,
+                                     delta_raw.y - luma_part.y,
+                                     delta_raw.z - luma_part.z);
+
+    float k = clampf(tintLumaParam, -1.0f, 1.0f);
+    return make_float3(chroma_part.x + luma_part.x * k,
+                       chroma_part.y + luma_part.y * k,
+                       chroma_part.z + luma_part.z * k);
+}
+
+__DEVICE__ float patch_preview_sat(float baseSat, float effectiveSat)
+{
+    float base = clampf(baseSat, 0.0f, 1.10f);
+    float eff = clampf(effectiveSat, 0.0f, 1.10f);
+    return fmaxf(eff, base * 0.45f);
+}
+
+__DEVICE__ float3 patch_preview_rgb(float hue_deg, float satScale, float tintLumaParam)
+{
+    float anchor = 0.40f;
+    float lo = 0.10f;
+    float hi = 0.90f;
+
+    float3 delta = tint_delta_controlled(hue_deg, satScale, tintLumaParam);
+    float3 raw = make_float3(anchor + delta.x,
+                             anchor + delta.y,
+                             anchor + delta.z);
+
+    float rawMin = fminf(raw.x, fminf(raw.y, raw.z));
+    float rawMax = fmaxf(raw.x, fmaxf(raw.y, raw.z));
+    float scaleHi = (rawMax > anchor) ? ((hi - anchor) / fmaxf(rawMax - anchor, 1e-5f)) : 1.0f;
+    float scaleLo = (rawMin < anchor) ? ((anchor - lo) / fmaxf(anchor - rawMin, 1e-5f)) : 1.0f;
+    float scale = fminf(1.0f, fminf(scaleHi, scaleLo));
+
+    return clamp3(make_float3(anchor + (raw.x - anchor) * scale,
+                              anchor + (raw.y - anchor) * scale,
+                              anchor + (raw.z - anchor) * scale), 0.0f, 1.0f);
+}
+
+
+// ---------- TONAL RESPONSE ----------
+__DEVICE__ float smoothstep_range(float x, float lo, float hi)
+{
+    float t = (x - lo) / fmaxf(hi - lo, 1e-5f);
+    return smootherstep01(t);
+}
+
+__DEVICE__ float mid_protect_halfwidth(float pivot, float cleanMid)
+{
+    float u = smootherstep01(saturatef(cleanMid / 8.0f));
+    float base = fminf(pivot, 1.0f - pivot);
+    float minWidth = 0.0000f;
+    float maxWidth = 0.18f * base + 0.008f;
+    return clampf(mixf(minWidth, maxWidth, u), 0.0f, 0.08f);
+}
+
+__DEVICE__ float smooth_arch01(float x)
+{
+    float u = saturatef(x);
+    float a = u * (1.0f - u);
+    return 16.0f * a * a;
+}
+
+__DEVICE__ float smooth_arch01_derivative(float x)
+{
+    float u = saturatef(x);
+    return 32.0f * u * (1.0f - u) * (1.0f - 2.0f * u);
+}
+
+__DEVICE__ float smooth_arch01_second_derivative(float x)
+{
+    float u = saturatef(x);
+    return 32.0f * (1.0f - 6.0f * u + 6.0f * u * u);
+}
+
+__DEVICE__ float quintic_interp(float t, float p0, float m0, float c0, float p1, float m1, float c1)
+{
+    float tt = saturatef(t);
+    float a0 = p0;
+    float a1 = m0;
+    float a2 = 0.5f * c0;
+    float d1 = p1 - (a0 + a1 + a2);
+    float d2 = m1 - (a1 + 2.0f * a2);
+    float d3 = c1 - (2.0f * a2);
+    float a3 = 10.0f * d1 - 4.0f * d2 + 0.5f * d3;
+    float a4 = -15.0f * d1 + 7.0f * d2 - d3;
+    float a5 = 6.0f * d1 - 3.0f * d2 + 0.5f * d3;
+    float tt2 = tt * tt;
+    float tt3 = tt2 * tt;
+    float tt4 = tt3 * tt;
+    float tt5 = tt4 * tt;
+    return a0 + a1 * tt + a2 * tt2 + a3 * tt3 + a4 * tt4 + a5 * tt5;
+}
+
+__DEVICE__ float tone_weight_hi(float L, float pivot, float power)
+{
+    float protect = mid_protect_halfwidth(pivot, power);
+    float start = clampf(pivot + protect, 0.0f, 0.9999f);
+    float span = fmaxf(1.0f - start, 1e-5f);
+    float u = saturatef((L - start) / span);
+    return smooth_arch01(u);
+}
+
+__DEVICE__ float tone_weight_sh(float L, float pivot, float power)
+{
+    float protect = mid_protect_halfwidth(pivot, power);
+    float end = clampf(pivot - protect, 0.0001f, 1.0f);
+    float span = fmaxf(end, 1e-5f);
+    float u = saturatef(L / span);
+    return smooth_arch01(u);
+}
+
+__DEVICE__ float tone_weight_hi_grad(float L, float pivot, float power)
+{
+    float protect = mid_protect_halfwidth(pivot, power);
+    float start = clampf(pivot + protect, 0.0f, 0.9999f);
+    float span = fmaxf(1.0f - start, 1e-5f);
+    float u = saturatef((L - start) / span);
+    return smooth_arch01_derivative(u) / span;
+}
+
+__DEVICE__ float tone_weight_sh_grad(float L, float pivot, float power)
+{
+    float protect = mid_protect_halfwidth(pivot, power);
+    float end = clampf(pivot - protect, 0.0001f, 1.0f);
+    float span = fmaxf(end, 1e-5f);
+    float u = saturatef(L / span);
+    return smooth_arch01_derivative(u) / span;
+}
+
+__DEVICE__ float tone_weight_hi_second(float L, float pivot, float power)
+{
+    float protect = mid_protect_halfwidth(pivot, power);
+    float start = clampf(pivot + protect, 0.0f, 0.9999f);
+    float span = fmaxf(1.0f - start, 1e-5f);
+    float u = saturatef((L - start) / span);
+    return smooth_arch01_second_derivative(u) / (span * span);
+}
+
+__DEVICE__ float tone_weight_sh_second(float L, float pivot, float power)
+{
+    float protect = mid_protect_halfwidth(pivot, power);
+    float end = clampf(pivot - protect, 0.0001f, 1.0f);
+    float span = fmaxf(end, 1e-5f);
+    float u = saturatef(L / span);
+    return smooth_arch01_second_derivative(u) / (span * span);
+}
+
+__DEVICE__ float divergence_release_amount(float slider)
+{
+    return smootherstep01(saturatef(-slider));
+}
+
+__DEVICE__ float side_safe_amp_limit(float span)
+{
+    return 0.98f * span / SMOOTH_ARCH_MAX_DERIV;
+}
+
+__DEVICE__ float soft_limit_signed(float x, float limit)
+{
+    float l = fmaxf(limit, 1e-6f);
+    return l * tanhf(x / l);
+}
+
+__DEVICE__ float safe_amp_hi(float amp, float pivot, float power)
+{
+    float protect = mid_protect_halfwidth(pivot, power);
+    float start = clampf(pivot + protect, 0.0f, 0.9999f);
+    float span = fmaxf(1.0f - start, 1e-5f);
+    return soft_limit_signed(amp, side_safe_amp_limit(span));
+}
+
+__DEVICE__ float safe_amp_sh(float amp, float pivot, float power)
+{
+    float protect = mid_protect_halfwidth(pivot, power);
+    float end = clampf(pivot - protect, 0.0001f, 1.0f);
+    float span = fmaxf(end, 1e-5f);
+    return soft_limit_signed(amp, side_safe_amp_limit(span));
+}
+
+__DEVICE__ float limit_slope_to_delta(float slope, float delta)
+{
+    if (fabsf(delta) <= 1e-6f) return 0.0f;
+    float s = slope;
+    if (delta > 0.0f) s = clampf(s, 0.0f, 3.0f * delta);
+    else s = clampf(s, 3.0f * delta, 0.0f);
+    return s;
+}
+
+__DEVICE__ float cubic_hermite_segment(float x, float x0, float y0, float m0, float x1, float y1, float m1)
+{
+    float h = fmaxf(x1 - x0, 1e-5f);
+    float t = saturatef((x - x0) / h);
+    float h00 = 2.0f * t * t * t - 3.0f * t * t + 1.0f;
+    float h10 = t * t * t - 2.0f * t * t + t;
+    float h01 = -2.0f * t * t * t + 3.0f * t * t;
+    float h11 = t * t * t - t * t;
+    return h00 * y0 + h10 * h * m0 + h01 * y1 + h11 * h * m1;
+}
+
+__DEVICE__ float diverged_hi_add(float L, float pivot, float power, float baseAmp, float slider)
+{
+    float rel = divergence_release_amount(slider);
+    float amp = safe_amp_hi(baseAmp, pivot, power);
+    if (rel <= 0.0f) return amp * tone_weight_hi(L, pivot, power);
+
+    float protect = mid_protect_halfwidth(pivot, power);
+    float start = clampf(pivot + protect, 0.0f, 0.9999f);
+    float span = fmaxf(1.0f - start, 1e-5f);
+    float u = saturatef((L - start) / span);
+
+    // Adaptive onset: small divergence only touches the deep tail,
+    // while full divergence can take over from the peak outward.
+    float onset = 0.50f + powf(1.0f - rel, 1.2f) * 0.35f;
+    float floor_val = rel * DIVERGE_MAX_FLOOR;
+
+    if (u <= onset)
+        return amp * smooth_arch01(u);
+
+    // Quintic splice: C2-continuous with the arch at onset and
+    // landing at (floor, 0, 0) at the endpoint.
+    float h = fmaxf(1.0f - onset, 1e-5f);
+    float y0 = smooth_arch01(onset);
+    float m0 = smooth_arch01_derivative(onset) * h;
+    float c0 = smooth_arch01_second_derivative(onset) * h * h;
+    float t = (u - onset) / h;
+
+    return amp * quintic_interp(t, y0, m0, c0, floor_val, 0.0f, 0.0f);
+}
+
+__DEVICE__ float diverged_sh_add(float L, float pivot, float power, float baseAmp, float slider)
+{
+    float rel = divergence_release_amount(slider);
+    float amp = safe_amp_sh(baseAmp, pivot, power);
+    if (rel <= 0.0f) return amp * tone_weight_sh(L, pivot, power);
+
+    float protect = mid_protect_halfwidth(pivot, power);
+    float end = clampf(pivot - protect, 0.0001f, 1.0f);
+    float span = fmaxf(end, 1e-5f);
+    float u = saturatef(L / span);
+
+    float onset_hi = 0.50f + powf(1.0f - rel, 1.2f) * 0.35f;
+    float onset_sh = 1.0f - onset_hi;
+    float floor_val = rel * DIVERGE_MAX_FLOOR;
+
+    if (u >= onset_sh)
+        return amp * smooth_arch01(u);
+
+    // Mirror of highlights: quintic splice from (floor, 0, 0)
+    // at the endpoint into the untouched arch.
+    float h = fmaxf(onset_sh, 1e-5f);
+    float y1 = smooth_arch01(onset_sh);
+    float m1 = smooth_arch01_derivative(onset_sh) * h;
+    float c1 = smooth_arch01_second_derivative(onset_sh) * h * h;
+    float t = u / h;
+
+    return amp * quintic_interp(t, floor_val, 0.0f, 0.0f, y1, m1, c1);
+}
+
+
+// ---------- GRAPH OVERLAY ----------
+__DEVICE__ float graph_line_alpha(float py, float lineY, float thickness)
+{
+    float d = fabsf(py - lineY);
+    return saturatef(1.0f - d / fmaxf(thickness, 1e-4f));
+}
+
+__DEVICE__ float3 graph_composite(float3 baseRGB,
+                                  int p_Width, int p_Height, int p_X, int p_Y,
+                                  float showCurve,
+                                  float pivot, float power,
+                                  float sHi, float sSh,
+                                  float hiHueDisp, float shHueDisp,
+                                  float hiSatBase, float shSatBase,
+                                  float hiConv, float shConv,
+                                  float tintLumaParam,
+                                  int inputTF)
+{
+    if (showCurve <= 0.5f) return baseRGB;
+
+    float fw = (float)p_Width;
+    float fh = (float)p_Height;
+    float fx = (float)p_X;
+    float fy = (float)p_Y;
+
+    float panelW = clampf(fw * 0.86f, 760.0f, 1500.0f);
+    float panelH = clampf(fh * 0.72f, 420.0f, 860.0f);
+    float pad = clampf(fminf(fw, fh) * 0.02f, 10.0f, 28.0f);
+
+    float x0 = fw - pad - panelW;
+    float y0 = fh - pad - panelH;
+    float x1 = x0 + panelW;
+    float y1 = y0 + panelH;
+
+    if (!(fx >= x0 && fx < x1 && fy >= y0 && fy < y1)) return baseRGB;
+
+    float localX = fx - x0;
+    float localY = fy - y0;
+    float gx = localX / fmaxf(panelW - 1.0f, 1.0f);
+    float gy = localY / fmaxf(panelH - 1.0f, 1.0f);
+
+    float rampInput = gx;
+    float ramp = tf_to_internal_di_value(rampInput, inputTF);
+
+    float hiEnd = smootherstep01(side_extent_hi(ramp, pivot));
+    float shEnd = smootherstep01(side_extent_sh(ramp, pivot));
+    float hiSat = effective_tint_sat(hiSatBase, hiConv, hiEnd);
+    float shSat = effective_tint_sat(shSatBase, shConv, shEnd);
+
+    float3 d_hi = tint_delta_controlled(hiHueDisp, hiSat, tintLumaParam);
+    float3 d_sh = tint_delta_controlled(shHueDisp, shSat, tintLumaParam);
+
+    float3 outCodeRaw = make_float3(
+        ramp + diverged_hi_add(ramp, pivot, power, d_hi.x * sHi, hiConv) + diverged_sh_add(ramp, pivot, power, d_sh.x * sSh, shConv),
+        ramp + diverged_hi_add(ramp, pivot, power, d_hi.y * sHi, hiConv) + diverged_sh_add(ramp, pivot, power, d_sh.y * sSh, shConv),
+        ramp + diverged_hi_add(ramp, pivot, power, d_hi.z * sHi, hiConv) + diverged_sh_add(ramp, pivot, power, d_sh.z * sSh, shConv));
+    float allowUnclamped = fmaxf(divergence_release_amount(hiConv), divergence_release_amount(shConv));
+    float3 outCode = (allowUnclamped > 0.0f) ? outCodeRaw : clamp3(outCodeRaw, 0.0f, 1.0f);
+    float3 outPlot = tf_from_internal_di_rgb_unclamped(outCode, inputTF);
+
+    float lineLinear = (panelH - 1.0f) * (1.0f - rampInput);
+    float lineCodeR = (panelH - 1.0f) * (1.0f - outPlot.x);
+    float lineCodeG = (panelH - 1.0f) * (1.0f - outPlot.y);
+    float lineCodeB = (panelH - 1.0f) * (1.0f - outPlot.z);
+
+    float pivotX = tf_from_internal_di_value(pivot, inputTF) * (panelW - 1.0f);
+    float bg = 0.16f + 0.04f * cosine_bell01(fabsf(gy - 0.5f) * 2.0f);
+    float3 curveRGB = make_float3(bg, bg, bg);
+
+    float gridX = graph_line_alpha(localX, pivotX, 1.2f) * 0.45f;
+    float gridY = graph_line_alpha(localY, lineLinear, 0.9f) * 0.16f;
+    curveRGB = make_float3(curveRGB.x + gridX + gridY,
+                           curveRGB.y + gridX + gridY,
+                           curveRGB.z + gridX + gridY);
+
+    float edge = 0.0f;
+    edge = fmaxf(edge, graph_line_alpha(localX, 0.0f, 1.1f));
+    edge = fmaxf(edge, graph_line_alpha(localX, panelW - 1.0f, 1.1f));
+    edge = fmaxf(edge, graph_line_alpha(localY, 0.0f, 1.1f));
+    edge = fmaxf(edge, graph_line_alpha(localY, panelH - 1.0f, 1.1f));
+    curveRGB = mix3(curveRGB, make_float3(0.92f, 0.92f, 0.92f), edge);
+
+    float linearA = graph_line_alpha(localY, lineLinear, 1.0f);
+    curveRGB = mix3(curveRGB, make_float3(0.78f, 0.78f, 0.78f), linearA);
+
+    float codeRA = graph_line_alpha(localY, lineCodeR, 1.3f);
+    float codeGA = graph_line_alpha(localY, lineCodeG, 1.3f);
+    float codeBA = graph_line_alpha(localY, lineCodeB, 1.3f);
+    curveRGB = mix3(curveRGB, make_float3(0.65f, 0.22f, 0.22f), codeRA);
+    curveRGB = mix3(curveRGB, make_float3(0.22f, 0.65f, 0.22f), codeGA);
+    curveRGB = mix3(curveRGB, make_float3(0.22f, 0.42f, 0.80f), codeBA);
+
+    return curveRGB;
+}
+
+
+// ---------- ENTRY POINT ----------
+__DEVICE__ float3 transform(int p_Width,int p_Height,int p_X,int p_Y,float p_R,float p_G,float p_B)
+{
+    float3 inRGB = make_float3(p_R, p_G, p_B);
+    float3 rgb = tf_to_internal_di_rgb(inRGB, InputTF);
+
+    // Effective pivot with balance shift
+    float pivotBase = assumed_midgray_from_tf(InputTF);
+    float pivot = clampf(pivotBase + p_balance * 0.200f, 0.050f, 0.950f);
+
+    // Tonal coordinate in working (log) domain
+    float L = mask_luma(rgb, LumaMode);
+    L = saturatef(L);
+
+    // Strength distribution
+    float sAll = clampf(Strength, 0.0f, 1.5f);
+    float b = clampf(StrengthBal, -1.0f, 1.0f);
+
+    float sHi = sAll * 0.5f * (1.0f + b);
+    float sSh = sAll * 0.5f * (1.0f - b);
+
+    float hiEnd = smootherstep01(side_extent_hi(L, pivot));
+    float shEnd = smootherstep01(side_extent_sh(L, pivot));
+
+    float hiSatEff = effective_tint_sat(HiSat, HiConverge, hiEnd);
+    float shSatEff = effective_tint_sat(ShSat, ShConverge, shEnd);
+
+    float hiPatchSat = patch_preview_sat(HiSat, effective_tint_sat(HiSat, HiConverge, 1.0f));
+    float shPatchSat = patch_preview_sat(ShSat, effective_tint_sat(ShSat, ShConverge, 1.0f));
+
+    float3 d_hi = tint_delta_controlled(HiHue, hiSatEff, TintLuma);
+    float3 d_sh = tint_delta_controlled(ShHue, shSatEff, TintLuma);
+
+    float3 outInternalRaw = make_float3(
+        rgb.x + diverged_hi_add(L, pivot, WeightPower, d_hi.x * sHi, HiConverge) + diverged_sh_add(L, pivot, WeightPower, d_sh.x * sSh, ShConverge),
+        rgb.y + diverged_hi_add(L, pivot, WeightPower, d_hi.y * sHi, HiConverge) + diverged_sh_add(L, pivot, WeightPower, d_sh.y * sSh, ShConverge),
+        rgb.z + diverged_hi_add(L, pivot, WeightPower, d_hi.z * sHi, HiConverge) + diverged_sh_add(L, pivot, WeightPower, d_sh.z * sSh, ShConverge));
+    float allowUnclamped = fmaxf(divergence_release_amount(HiConverge), divergence_release_amount(ShConverge));
+    float3 outInternal = (allowUnclamped > 0.0f) ? outInternalRaw : clamp3(outInternalRaw, 0.0f, 1.0f);
+
+    float3 out = tf_from_internal_di_rgb_unclamped(outInternal, InputTF);
+    out = graph_composite(out, p_Width, p_Height, p_X, p_Y, ShowCurve, pivot, WeightPower, sHi, sSh, HiHue, ShHue, HiSat, ShSat, HiConverge, ShConverge, TintLuma, InputTF);
+
+    // Patch overlay (bottom-right)
+    float patchMask = 0.0f;
+    float3 patchRGB = out;
+
+    if (ShowPatches > 0.5f)
+    {
+        float fw = (float)p_Width;
+        float fh = (float)p_Height;
+        float fx = (float)p_X;
+        float fy = (float)p_Y;
+
+        float base = (fw < fh) ? fw : fh;
+        float patch = 0.060f * base;
+        patch = clampf(patch, 24.0f, 140.0f);
+
+        float pad = 0.25f * patch;
+        if (pad < 6.0f) pad = 6.0f;
+
+        float y0 = fh - pad - patch;
+        float x0_hi = fw - pad - patch;
+        float x0_sh = fw - pad - 2.0f * patch - 2.0f;
+
+        float inHi = (fx >= x0_hi && fx < (x0_hi + patch) && fy >= y0 && fy < (y0 + patch)) ? 1.0f : 0.0f;
+        float inSh = (fx >= x0_sh && fx < (x0_sh + patch) && fy >= y0 && fy < (y0 + patch)) ? 1.0f : 0.0f;
+
+        if (inHi > 0.5f)
+        {
+            patchMask = 1.0f;
+            patchRGB = tf_from_internal_di_rgb(patch_preview_rgb(HiHue, hiPatchSat, TintLuma), InputTF);
+        }
+        else if (inSh > 0.5f)
+        {
+            patchMask = 1.0f;
+            patchRGB = tf_from_internal_di_rgb(patch_preview_rgb(ShHue, shPatchSat, TintLuma), InputTF);
+        }
+    }
+
+    out = make_float3(out.x * (1.0f - patchMask) + patchRGB.x * patchMask,
+                      out.y * (1.0f - patchMask) + patchRGB.y * patchMask,
+                      out.z * (1.0f - patchMask) + patchRGB.z * patchMask);
+    return out;
+}
