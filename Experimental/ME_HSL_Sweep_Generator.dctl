@@ -1,31 +1,33 @@
-// HSL / RGB Sweep Generator v3
-// ─────────────────────────────────────────────────────────────────────────────
+// HSL / RGB Sweep Generator v4
+// -----------------------------------------------------------------------------
 //
 //    Written by Moaz Elgabry
 //    moazelgabry.com
 //
-// Generates two independent linear sweeps through Hue, Saturation, Luminance — one per spatial axis.
+// Generates two independent linear sweeps through either HSL or RGB, one per
+// spatial axis.
 //
-// Each axis linearly interpolates its own H, S, L from start to end across
-// the full width (X) or height (Y) of the frame.
+// Each axis linearly interpolates its own channel triplet from start to end
+// across the full square draw region.
 //
 // Pixel value = X contribution + Y contribution (cumulative sum).
 //
 // Zero start AND zero end on any parameter = bypass (contributes nothing).
-// This is intentional — zero is the neutral element of the additive model.
+// This is intentional; zero is the neutral element of the additive model.
 //
 // Typical use: one axis sweeps one parameter, the other holds a constant
 // (start = end = desired value) or is fully bypassed (start = end = 0).
 //
-// H is normalised 0–1 (= 0–360°). Wrap is handled — sweeps crossing the
-// 0/1 boundary are continuous.
+// In HSL mode, H is normalized 0-1 (= 0-360 degrees). Wrap is handled, so
+// sweeps crossing the 0/1 boundary are continuous.
 //
-// Designed for square timelines e.g. 3840×3840. Frames can be rotated
-// in the timeline for horizontal/vertical variation.
-// ─────────────────────────────────────────────────────────────────────────────
+// The generator always draws inside the largest centered square that fits in
+// the current frame. Any extra area in a non-square timeline is filled black.
+// -----------------------------------------------------------------------------
 
-// X axis (horizontal: left → right)
 DEFINE_UI_PARAMS(plot_mode, Plot Mode, DCTLUI_COMBO_BOX, 0, {MODE_HSL, MODE_RGB}, {HSL, RGB})
+
+// X axis (horizontal: left to right)
 DEFINE_UI_PARAMS(xH0, X H/R start,        DCTLUI_SLIDER_FLOAT, 0.0f, 0.0f, 1.0f, 0.0f)
 DEFINE_UI_PARAMS(xS0, X S/G start,        DCTLUI_SLIDER_FLOAT, 1.0f, 0.0f, 1.0f, 0.0f)
 DEFINE_UI_PARAMS(xL0, X L/B start,        DCTLUI_SLIDER_FLOAT, 0.5f, 0.0f, 1.0f, 0.0f)
@@ -34,7 +36,7 @@ DEFINE_UI_PARAMS(xH1, X H/R end,          DCTLUI_SLIDER_FLOAT, 1.0f, 0.0f, 1.0f,
 DEFINE_UI_PARAMS(xS1, X S/G end,          DCTLUI_SLIDER_FLOAT, 1.0f, 0.0f, 1.0f, 0.0f)
 DEFINE_UI_PARAMS(xL1, X L/B end,          DCTLUI_SLIDER_FLOAT, 0.5f, 0.0f, 1.0f, 0.0f)
 
-// Y axis (vertical: bottom → top)
+// Y axis (vertical: bottom to top)
 DEFINE_UI_PARAMS(D, Divider=============, DCTLUI_SLIDER_FLOAT, 0.0f, 0.0f, 0.0f, 0.01f)
 DEFINE_UI_PARAMS(yH0, Y H/R start,        DCTLUI_SLIDER_FLOAT, 0.0f, 0.0f, 1.0f, 0.0f)
 DEFINE_UI_PARAMS(yS0, Y S/G start,        DCTLUI_SLIDER_FLOAT, 0.0f, 0.0f, 1.0f, 0.0f)
@@ -44,11 +46,12 @@ DEFINE_UI_PARAMS(yH1, Y H/R end,          DCTLUI_SLIDER_FLOAT, 0.0f, 0.0f, 1.0f,
 DEFINE_UI_PARAMS(yS1, Y S/G end,          DCTLUI_SLIDER_FLOAT, 0.0f, 0.0f, 1.0f, 0.0f)
 DEFINE_UI_PARAMS(yL1, Y L/B end,          DCTLUI_SLIDER_FLOAT, 0.0f, 0.0f, 1.0f, 0.0f)
 
+DEFINE_UI_PARAMS(centered_square, Centered Square, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(clamp_out, Clamp Output, DCTLUI_CHECK_BOX, 0)
 
 
-// ── HSL → RGB ─────────────────────────────────────────────────────────────────
-// Standard double-hex-cone. H ∈ [0,1), S ∈ [0,1], L ∈ [0,1].
+// -- HSL to RGB ---------------------------------------------------------------
+// Standard double-hex-cone. H in [0,1), S in [0,1], L in [0,1].
 
 __DEVICE__ float hue_channel(float p, float q, float t)
 {
@@ -75,15 +78,53 @@ __DEVICE__ float3 HSL_to_RGB(float H, float S, float L)
 }
 
 
-// ── Transform ─────────────────────────────────────────────────────────────────
+// -- Square region helpers ----------------------------------------------------
+
+__DEVICE__ int square_region_size(int width, int height)
+{
+    return width < height ? width : height;
+}
+
+__DEVICE__ int square_region_offset(int full_size, int square_size)
+{
+    return (full_size - square_size) / 2;
+}
+
+__DEVICE__ int point_is_inside_square(int px, int py, int square_x0, int square_y0, int square_size)
+{
+    return px >= square_x0 && px < square_x0 + square_size &&
+           py >= square_y0 && py < square_y0 + square_size;
+}
+
+
+// -- Transform ----------------------------------------------------------------
 
 __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p_R, float p_G, float p_B)
 {
-    // Normalised coordinates spanning exactly [0, 1] across the full frame.
-    // t_x: left = 0, right = 1
-    // t_y: bottom = 0, top = 1  (DaVinci scanline 0 is top, so we flip)
-    float t_x = (float)p_X / (float)(p_Width  - 1);
-    float t_y = 1.0f - (float)p_Y / (float)(p_Height - 1);
+    float t_x;
+    float t_y;
+
+    if (centered_square) {
+        // Draw inside the largest centered square; fill the rest of the frame with black.
+        int square_size = square_region_size(p_Width, p_Height);
+        int square_x0 = square_region_offset(p_Width, square_size);
+        int square_y0 = square_region_offset(p_Height, square_size);
+
+        if (!point_is_inside_square(p_X, p_Y, square_x0, square_y0, square_size)) {
+            return make_float3(0.0f, 0.0f, 0.0f);
+        }
+
+        // Normalized coordinates spanning exactly [0, 1] across the square region.
+        float square_den = square_size > 1 ? (float)(square_size - 1) : 1.0f;
+        t_x = (float)(p_X - square_x0) / square_den;
+        t_y = 1.0f - (float)(p_Y - square_y0) / square_den;
+    } else {
+        // Normalized coordinates spanning exactly [0, 1] across the full frame.
+        float width_den = p_Width > 1 ? (float)(p_Width - 1) : 1.0f;
+        float height_den = p_Height > 1 ? (float)(p_Height - 1) : 1.0f;
+        t_x = (float)p_X / width_den;
+        t_y = 1.0f - (float)p_Y / height_den;
+    }
 
     // X axis: interpolate each parameter across t_x
     float xH = xH0 + (xH1 - xH0) * t_x;
@@ -100,16 +141,17 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
     float c1 = xS + yS;
     float c2 = xL + yL;
 
-    // Hue wraps continuously across 0/1 boundary
-    c0 = c0 - _floorf(c0);
-
-    // S and L clamped — values outside [0,1] have no meaning in HSL geometry
-    c1 = _clampf(c1, 0.0f, 1.0f);
-    c2 = _clampf(c2, 0.0f, 1.0f);
-
-    float3 rgb = (plot_mode == 0)
-        ? HSL_to_RGB(c0, c1, c2)
-        : make_float3(xH + yH, xS + yS, xL + yL);
+    float3 rgb;
+    if (plot_mode == 0) {
+        // HSL mode: wrap hue and clamp saturation/luminance before conversion.
+        c0 = c0 - _floorf(c0);
+        c1 = _clampf(c1, 0.0f, 1.0f);
+        c2 = _clampf(c2, 0.0f, 1.0f);
+        rgb = HSL_to_RGB(c0, c1, c2);
+    } else {
+        // RGB mode: interpret the sweeps directly as R, G, B.
+        rgb = make_float3(c0, c1, c2);
+    }
 
     if (clamp_out) {
         rgb.x = _clampf(rgb.x, 0.0f, 1.0f);
