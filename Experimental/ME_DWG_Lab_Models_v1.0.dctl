@@ -1,0 +1,322 @@
+#line 2
+/*
+    ME_DWG_Lab_Models_v1.0
+    Standalone DWG/DI to Lab-family model converter.
+
+    The Lab-family matrix/nonlinearity paths match ME_Hue Curve v1.5.
+    By default this outputs raw Lab-family coordinates. Enable Convert to LCH
+    when you want the same L, C, normalized H channel layout used for hue work.
+
+    Inverse expects the matching Lab or LCH-coded model data and converts back to DWG/DI.
+*/
+
+DEFINE_UI_PARAMS(p_inverse, Inverse, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_PARAMS(p_lch, Convert to LCH, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_PARAMS(p_model, Lab model, DCTLUI_COMBO_BOX, 2, {cie, ok, pro}, {CIE Lab, OK Lab, Pro Lab})
+DEFINE_UI_PARAMS(p_colorspace, Expected color space, DCTLUI_COMBO_BOX, 0, {dwg_di}, {DWG DI})
+
+#if ((__RESOLVE_VER_MAJOR__ > 19)) || ((__RESOLVE_VER_MAJOR__ == 19) && (__RESOLVE_VER_MINOR__ >= 1))
+DEFINE_UI_TOOLTIP(Inverse, "Off converts DWG/DI to the selected Lab-family model. On converts back to DWG/DI.")
+DEFINE_UI_TOOLTIP(Convert to LCH, "Converts Lab-family a/b channels to C/H. H is normalized 0-1. Use the same setting for the inverse instance.")
+DEFINE_UI_TOOLTIP(Lab model, "Selects the Lab-family transform.")
+DEFINE_UI_TOOLTIP(Expected color space, "Expected working color space for this standalone converter.")
+#endif
+
+#define PI 3.1415926535897932384626f
+
+__DEVICE__ float3 v_x_mtx_3x3_s(float3 v,
+                                float m00, float m01, float m02,
+                                float m10, float m11, float m12,
+                                float m20, float m21, float m22) {
+    return make_float3(
+        m00 * v.x + m01 * v.y + m02 * v.z,
+        m10 * v.x + m11 * v.y + m12 * v.z,
+        m20 * v.x + m21 * v.y + m22 * v.z
+    );
+}
+
+__DEVICE__ float3 rgb_inset_by_space(float3 rgb, int colorspace) {
+    if (colorspace == 0) {
+        return make_float3(
+            rgb.x * 0.8196988689806680f + rgb.y * 0.0831443464238070f + rgb.z * 0.0971568559890394f,
+            rgb.x * 0.0798277156498572f + rgb.y * 0.8230150003581090f + rgb.z * 0.0971566277722028f,
+            rgb.x * 0.0798274940832882f + rgb.y * 0.0831439197810352f + rgb.z * 0.8370271282400680f
+        );
+    }
+    return rgb;
+}
+
+__DEVICE__ float3 rgb_outset_by_space(float3 rgb, int colorspace) {
+    if (colorspace == 0) {
+        return make_float3(
+            rgb.x * 1.2436926069760300f + rgb.y * -0.1123769034158060f + rgb.z * -0.1313160575408690f,
+            rgb.x * -0.1078941848637390f + rgb.y * 1.2392105840938500f + rgb.z * -0.1313157697772900f,
+            rgb.x * -0.1078938970156720f + rgb.y * -0.1123763563087380f + rgb.z * 1.2202719663128800f
+        );
+    }
+    return rgb;
+}
+
+#define D65_x 0.3127f
+#define D65_y 0.3290f
+#define D65_Y 1.0000f
+
+__DEVICE__ float spowf(float base, float exp) {
+    return _copysignf(_powf(_fabs(base), exp), base);
+}
+
+__DEVICE__ float3 v_x_mtx_4x4_s(float3 v,
+                                float m00, float m01, float m02, float m03,
+                                float m10, float m11, float m12, float m13,
+                                float m20, float m21, float m22, float m23,
+                                float m30, float m31, float m32, float m33) {
+    float x = m00 * v.x + m01 * v.y + m02 * v.z + m03;
+    float y = m10 * v.x + m11 * v.y + m12 * v.z + m13;
+    float z = m20 * v.x + m21 * v.y + m22 * v.z + m23;
+    float w = m30 * v.x + m31 * v.y + m32 * v.z + m33;
+    float safe_w = _copysignf(_fmaxf(_fabs(w), 1e-6f), w);
+    return make_float3(x / safe_w, y / safe_w, z / safe_w);
+}
+
+__DEVICE__ float3 rgb_to_xyz_by_space(float3 RGB, int colorspace) {
+    if (colorspace == 0) {
+        return v_x_mtx_3x3_s(
+            RGB,
+            0.70062239f, 0.14877482f, 0.10105872f,
+            0.27411851f, 0.87363190f, -0.14775041f,
+            -0.09896291f, -0.13789533f, 1.32591599f
+        );
+    }
+    return RGB;
+}
+
+__DEVICE__ float3 xyz_to_rgb_by_space(float3 XYZ, int colorspace) {
+    if (colorspace == 0) {
+        return v_x_mtx_3x3_s(
+            XYZ,
+            1.51667204f, -0.28147805f, -0.14696363f,
+            -0.46491710f, 1.25142378f, 0.17488461f,
+            0.06484905f, 0.10913934f, 0.76141462f
+        );
+    }
+    return XYZ;
+}
+
+__DEVICE__ float3 xyY_to_XYZ(float3 xyY) {
+    float3 XYZ;
+    XYZ.x = xyY.x * xyY.z / _fmaxf(xyY.y, 1e-10f);
+    XYZ.y = xyY.z;
+    XYZ.z = (1.0f - xyY.x - xyY.y) * xyY.z / _fmaxf(xyY.y, 1e-10f);
+    return XYZ;
+}
+
+__DEVICE__ float3 XYZ_to_CIELab(float3 XYZ, float offset, float scale) {
+    float Xr = 95.047f;
+    float Yr = 100.0f;
+    float Zr = 108.883f;
+    float E = 216.0f / 24389.0f;
+    float K = 24389.0f / 27.0f;
+
+    float xr = 100.0f * XYZ.x / Xr;
+    float yr = 100.0f * XYZ.y / Yr;
+    float zr = 100.0f * XYZ.z / Zr;
+
+    float fx = xr > E ? spowf(xr, 1.0f / 3.0f) : (K * xr + 16.0f) / 116.0f;
+    float fy = yr > E ? spowf(yr, 1.0f / 3.0f) : (K * yr + 16.0f) / 116.0f;
+    float fz = zr > E ? spowf(zr, 1.0f / 3.0f) : (K * zr + 16.0f) / 116.0f;
+
+    float L = 116.0f * fy - 16.0f;
+    float a = 500.0f * (fx - fy);
+    float b = 200.0f * (fy - fz);
+
+    L = L * 0.01f;
+    a = a * 0.01f * 0.25f * scale + offset;
+    b = b * 0.01f * 0.25f * scale + offset;
+
+    return make_float3(L, a, b);
+}
+
+__DEVICE__ float3 CIELab_to_XYZ(float3 Lab, float offset, float scale) {
+    float Xr = 95.047f;
+    float Yr = 100.0f;
+    float Zr = 108.883f;
+    float E = 216.0f / 24389.0f;
+    float K = 24389.0f / 27.0f;
+
+    float L = Lab.x;
+    float a = Lab.y;
+    float b = Lab.z;
+
+    L = L * 100.0f;
+    a = (a - offset) * 4.0f / scale * 100.0f;
+    b = (b - offset) * 4.0f / scale * 100.0f;
+
+    float fy = (L + 16.0f) / 116.0f;
+    float fx = a / 500.0f + fy;
+    float fz = fy - b / 200.0f;
+
+    float xr = spowf(fx, 3.0f) > E ? spowf(fx, 3.0f) : (116.0f * fx - 16.0f) / K;
+    float yr = L > (K * E) ? spowf((L + 16.0f) / 116.0f, 3.0f) : L / K;
+    float zr = spowf(fz, 3.0f) > E ? spowf(fz, 3.0f) : (116.0f * fz - 16.0f) / K;
+
+    return make_float3(xr * Xr / 100.0f, yr * Yr / 100.0f, zr * Zr / 100.0f);
+}
+
+__DEVICE__ float3 XYZ_to_OKLab(float3 XYZ, float offset, float scale) {
+    const float X = XYZ.x;
+    const float Y = XYZ.y;
+    const float Z = XYZ.z;
+
+    const float l = (X * 0.8189330101f) + (Y * 0.3618667424f) + (Z * -0.1288597137f);
+    const float m = (X * 0.0329845436f) + (Y * 0.9293118715f) + (Z * 0.0361456387f);
+    const float s = (X * 0.0482003018f) + (Y * 0.2643662691f) + (Z * 0.6338517070f);
+
+    const float l_prime = spowf(l, 1.0f / 3.0f);
+    const float m_prime = spowf(m, 1.0f / 3.0f);
+    const float s_prime = spowf(s, 1.0f / 3.0f);
+
+    const float L = (l_prime * 0.2104542553f) + (m_prime * 0.7936177850f) + (s_prime * -0.0040720468f);
+    const float a = (l_prime * 1.9779984951f) + (m_prime * -2.4285922050f) + (s_prime * 0.4505937099f);
+    const float b = (l_prime * 0.0259040371f) + (m_prime * 0.7827717662f) + (s_prime * -0.8086757660f);
+
+    return make_float3(L, a * scale + offset, b * scale + offset);
+}
+
+__DEVICE__ float3 OKLab_to_XYZ(float3 Lab, float offset, float scale) {
+    const float L = Lab.x;
+    const float a = (Lab.y - offset) / scale;
+    const float b = (Lab.z - offset) / scale;
+
+    const float l_prime = (L * 1.00000000f) + (a * 0.39633784f) + (b * 0.21580376f);
+    const float m_prime = (L * 1.00000000f) + (a * -0.10556135f) + (b * -0.06385418f);
+    const float s_prime = (L * 1.00000000f) + (a * -0.08948418f) + (b * -1.29148555f);
+
+    const float l = spowf(l_prime, 3.0f);
+    const float m = spowf(m_prime, 3.0f);
+    const float s = spowf(s_prime, 3.0f);
+
+    const float X = (l * 1.2270138511f) + (m * -0.55779998065f) + (s * 0.2812561489f);
+    const float Y = (l * -0.0405801784f) + (m * 1.1122568696f) + (s * -0.0716766786f);
+    const float Z = (l * -0.0763812845f) + (m * -0.4214819784f) + (s * 1.5861632204f);
+
+    return make_float3(X, Y, Z);
+}
+
+__DEVICE__ float3 XYZ_to_ProLab(float3 XYZ, float offset, float scale) {
+    float3 XYZ_n = xyY_to_XYZ(make_float3(D65_x, D65_y, D65_Y));
+
+    XYZ = make_float3(
+        XYZ.x * (1.0f / _fmaxf(XYZ_n.x, 1e-10f)),
+        XYZ.y * (1.0f / _fmaxf(XYZ_n.y, 1e-10f)),
+        XYZ.z * (1.0f / _fmaxf(XYZ_n.z, 1e-10f))
+    );
+
+    float3 Lab = v_x_mtx_4x4_s(
+        XYZ,
+        75.54f, 486.66f, 167.39f, 0.0f,
+        617.72f, -595.45f, -22.27f, 0.0f,
+        48.34f, 194.94f, -243.28f, 0.0f,
+        0.7554f, 3.8666f, 1.6739f, 1.0f
+    );
+
+    Lab = make_float3(Lab.x * 0.01f, Lab.y * 0.01f, Lab.z * 0.01f);
+    Lab.y = Lab.y * 0.5f * scale + offset;
+    Lab.z = Lab.z * 0.5f * scale + offset;
+
+    return Lab;
+}
+
+__DEVICE__ float3 ProLab_to_XYZ(float3 Lab, float offset, float scale) {
+    float3 XYZ_n = xyY_to_XYZ(make_float3(D65_x, D65_y, D65_Y));
+
+    Lab.y = (Lab.y - offset) * 2.0f / scale;
+    Lab.z = (Lab.z - offset) * 2.0f / scale;
+    Lab = make_float3(Lab.x * 100.0f, Lab.y * 100.0f, Lab.z * 100.0f);
+
+    float3 XYZ = v_x_mtx_4x4_s(
+        Lab,
+        0.0013706f, 0.0013874f, 0.0008161f, 0.0f,
+        0.0013706f, -0.0002432f, 0.0009653f, 0.0f,
+        0.0013706f, 0.0000808f, -0.0031748f, 0.0f,
+        -0.0086294f, -0.0002432f, 0.0009653f, 1.0f
+    );
+
+    return make_float3(XYZ.x * XYZ_n.x, XYZ.y * XYZ_n.y, XYZ.z * XYZ_n.z);
+}
+
+__DEVICE__ float3 Lab_to_LCH(float3 Lab) {
+    float3 LCH;
+    LCH.x = Lab.x;
+    LCH.y = _sqrtf(Lab.y * Lab.y + Lab.z * Lab.z);
+    LCH.z = _atan2f(Lab.z, Lab.y) * 180.0f / PI;
+    LCH.z = LCH.z < 0.0f ? LCH.z + 360.0f : LCH.z;
+    LCH.z /= 360.0f;
+    return LCH;
+}
+
+__DEVICE__ float3 LCH_to_Lab(float3 LCH) {
+    LCH.z *= 360.0f;
+    return make_float3(
+        LCH.x,
+        LCH.y * _cosf(LCH.z * PI / 180.0f),
+        LCH.y * _sinf(LCH.z * PI / 180.0f)
+    );
+}
+
+__DEVICE__ float3 DWG_to_lab_model(float3 rgb_in, int model, int colorspace, int convert_to_lch) {
+    float offset = 0.0f;
+    float scale = 2.0f;
+    float3 RGB = rgb_inset_by_space(rgb_in, colorspace);
+    float3 XYZ = rgb_to_xyz_by_space(RGB, colorspace);
+    float3 Lab = make_float3(0.0f, 0.0f, 0.0f);
+
+    if (model == 0) {
+        Lab = XYZ_to_CIELab(XYZ, offset, scale);
+    } else if (model == 1) {
+        Lab = XYZ_to_OKLab(XYZ, offset, scale);
+    } else {
+        Lab = XYZ_to_ProLab(XYZ, offset, scale);
+    }
+
+    if (convert_to_lch) {
+        return Lab_to_LCH(Lab);
+    }
+
+    return Lab;
+}
+
+__DEVICE__ float3 lab_model_to_DWG(float3 model_in, int model, int colorspace, int convert_to_lch) {
+    float offset = 0.0f;
+    float scale = 2.0f;
+    float3 Lab = model_in;
+    float3 XYZ = make_float3(0.0f, 0.0f, 0.0f);
+
+    if (convert_to_lch) {
+        Lab = LCH_to_Lab(model_in);
+    }
+
+    if (model == 0) {
+        XYZ = CIELab_to_XYZ(Lab, offset, scale);
+    } else if (model == 1) {
+        XYZ = OKLab_to_XYZ(Lab, offset, scale);
+    } else {
+        XYZ = ProLab_to_XYZ(Lab, offset, scale);
+    }
+
+    float3 RGB = xyz_to_rgb_by_space(XYZ, colorspace);
+    return rgb_outset_by_space(RGB, colorspace);
+}
+
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p_R, float p_G, float p_B) {
+    float3 input_rgb = make_float3(p_R, p_G, p_B);
+    float3 output_rgb = input_rgb;
+    int dwg_di_space = 0;
+
+    if (p_inverse) {
+        output_rgb = lab_model_to_DWG(input_rgb, p_model, dwg_di_space, p_lch);
+    } else {
+        output_rgb = DWG_to_lab_model(input_rgb, p_model, dwg_di_space, p_lch);
+    }
+
+    return output_rgb;
+}

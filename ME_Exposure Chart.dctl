@@ -871,6 +871,133 @@ Thanks to Thatcher Freeman for the original code to draw the chart and to render
     return result;
   }
 
+ // Apple Log transfer function, from Apple's profile constants.
+ // Apple Log 2 uses this same curve in the ACES Apple-provided transforms;
+ // the profiles differ in their primaries, which this chart does not transform.
+ // https://github.com/aces-aswf/aces-input-and-colorspaces/tree/main/apple
+ __DEVICE__ float inline apple_log_channel(float x, int inv) {
+    const float R0 = -0.05641088f;
+    const float Rt = 0.01f;
+    const float C = 47.28711236f;
+    const float beta = 0.00964052f;
+    const float gamma = 0.08550479f;
+    const float delta = 0.69336945f;
+    const float Pt = C * (Rt - R0) * (Rt - R0);
+
+    if (inv == 1) {
+        if (x >= Pt) return _exp2f((x - delta) / gamma) - beta;
+        if (x >= 0.0f) return _sqrtf(x / C) + R0;
+        return R0;
+    }
+
+    if (x < R0) return 0.0f;
+    if (x < Rt) {
+        float d = x - R0;
+        return C * d * d;
+    }
+    return gamma * _log2f(x + beta) + delta;
+ }
+
+ __DEVICE__ float3 inline oetf_apple_log(float3 x, int inv) {
+    return make_float3(apple_log_channel(x.x, inv), apple_log_channel(x.y, inv), apple_log_channel(x.z, inv));
+ }
+
+ // Sony S-Log (first-generation S-Log), scene-linear to legal-range code values.
+ // Formula reference: Alwan's implementation of SonyCorporation2012a.
+ __DEVICE__ float inline sony_slog1_channel(float x, int inv) {
+    const float legalScale = 876.0f / 1023.0f;
+    const float legalOffset = 64.0f / 1023.0f;
+    const float linearCut = 0.030001222851889303f;
+
+    if (inv == 1) {
+        float full = (x - legalOffset) / legalScale;
+        float scene = (full >= linearCut)
+            ? _powf(10.0f, (full - 0.646596f) / 0.432699f) - 0.037584f
+            : (full - linearCut) / 5.0f;
+        return scene * 0.9f;
+    }
+
+    float scene = x / 0.9f;
+    float full = (scene >= 0.0f)
+        ? 0.432699f * _log10f(scene + 0.037584f) + 0.646596f
+        : 5.0f * scene + linearCut;
+    return full * legalScale + legalOffset;
+ }
+
+ __DEVICE__ float3 inline oetf_sony_slog1(float3 x, int inv) {
+    return make_float3(sony_slog1_channel(x.x, inv), sony_slog1_channel(x.y, inv), sony_slog1_channel(x.z, inv));
+ }
+
+ __DEVICE__ float inline canon_clog1_channel(float x, int inv) {
+    // Canon's C-Log v1.2 constants; negative scene values are clamped by design.
+    const float a = 0.45310179f;
+    const float k = 10.1596f;
+    const float offset = 0.12512248f;
+    if (inv == 1) return ((_powf(10.0f, (x - offset) / a) - 1.0f) / k) * 0.9f;
+    x = _fmaxf(x, 0.0f) / 0.9f;
+    return a * _log10f(k * x + 1.0f) + offset;
+ }
+
+ __DEVICE__ float3 inline oetf_canon_clog1(float3 x, int inv) {
+    return make_float3(canon_clog1_channel(x.x, inv), canon_clog1_channel(x.y, inv), canon_clog1_channel(x.z, inv));
+ }
+
+ __DEVICE__ float inline blackmagic_filmgen4_channel(float x, int inv) {
+    // Blackmagic Film Gen 4 formula as independently implemented by Alwan.
+    const float A = 5.2212906000378565f;
+    const float B = -0.00007134598996420424f;
+    const float C = 0.03630411093543444f;
+    const float D = 0.21566456116952773f;
+    const float E = 0.7133134738229736f;
+    const float LIN_CUT = 0.00500072683168086f;
+    const float LOG_CUT = 0.026038902009648163f;
+    if (inv == 1) return (x <= LOG_CUT) ? (x - B) / A : _expf((x - E) / D) - C;
+    return (x <= LIN_CUT) ? A * x + B : D * _logf(x + C) + E;
+ }
+
+ __DEVICE__ float3 inline oetf_blackmagic_filmgen4(float3 x, int inv) {
+    return make_float3(blackmagic_filmgen4_channel(x.x, inv), blackmagic_filmgen4_channel(x.y, inv), blackmagic_filmgen4_channel(x.z, inv));
+ }
+
+ __DEVICE__ float inline kinfinity_kinelog3_channel(float x, int inv) {
+    // https://kinefinity.com/support/guides/kinelog3-technical-specifications
+    const float a = 66.64f;
+    const float b = 0.296f;
+    const float c = 0.907136f;
+    const float d = 0.092864f;
+    const float cut = -0.008239f;
+    const float slope = 0.017178f;
+    if (inv == 1) return (x >= 0.0f)
+        ? (_powf(10.0f, (x - d) / (b * c)) - 1.0f) / a
+        : x * slope + cut;
+    return (x >= cut) ? _log10f(a * x + 1.0f) * b * c + d : (x - cut) / slope;
+ }
+
+ __DEVICE__ float3 inline oetf_kinfinity_kinelog3(float3 x, int inv) {
+    return make_float3(kinfinity_kinelog3_channel(x.x, inv), kinfinity_kinelog3_channel(x.y, inv), kinfinity_kinelog3_channel(x.z, inv));
+ }
+
+ __DEVICE__ float inline gopro_gplog2_channel(float x, int inv) {
+    // Official GoPro Labs Log_600 curve: https://gopro.github.io/labs/log/
+    if (inv == 1) return (_powf(600.0f, x) - 1.0f) / 599.0f;
+    return _log10f(_fmaxf(x, 0.0f) * 599.0f + 1.0f) / _log10f(600.0f);
+ }
+
+ __DEVICE__ float3 inline oetf_gopro_gplog2(float3 x, int inv) {
+    return make_float3(gopro_gplog2_channel(x.x, inv), gopro_gplog2_channel(x.y, inv), gopro_gplog2_channel(x.z, inv));
+ }
+
+ __DEVICE__ float inline gopro_gplog400_channel(float x, int inv) {
+    // GoPro Labs LOGB profile with base 400, the documented GP-Log equivalent.
+    // https://gopro.github.io/labs/control/tech/
+    if (inv == 1) return (_powf(400.0f, x) - 1.0f) / 399.0f;
+    return _log10f(_fmaxf(x, 0.0f) * 399.0f + 1.0f) / _log10f(400.0f);
+ }
+
+ __DEVICE__ float3 inline oetf_gopro_gplog400(float3 x, int inv) {
+    return make_float3(gopro_gplog400_channel(x.x, inv), gopro_gplog400_channel(x.y, inv), gopro_gplog400_channel(x.z, inv));
+ }
+
  __DEVICE__ float3 inline LinToGammaCurve (float3 in, float gamma) {
     float3 out;
 
@@ -919,6 +1046,14 @@ Thanks to Thatcher Freeman for the original code to draw the chart and to render
     if (TF == 20) return LinToGammaCurve(in, 2.4);
     if (TF == 21) return LinToGammaCurve(in, 2.6);
     if (TF == 22) return in; // Lin
+    if (TF == 23) return oetf_apple_log(in, 0);
+    if (TF == 24) return oetf_apple_log(in, 0); // Apple Log 2 transfer curve
+    if (TF == 25) return oetf_sony_slog1(in, 0);
+    if (TF == 26) return oetf_canon_clog1(in, 0);
+    if (TF == 27) return oetf_blackmagic_filmgen4(in, 0);
+    if (TF == 28) return oetf_kinfinity_kinelog3(in, 0);
+    if (TF == 29) return oetf_gopro_gplog2(in, 0);
+    if (TF == 30) return oetf_gopro_gplog400(in, 0);
 
 
     
@@ -948,6 +1083,14 @@ Thanks to Thatcher Freeman for the original code to draw the chart and to render
     if (TF == 20) return GammaCurveToLin(in, 2.4);
     if (TF == 21) return GammaCurveToLin(in, 2.6);
     if (TF == 22) return in; // Lin
+    if (TF == 23) return oetf_apple_log(in, 1);
+    if (TF == 24) return oetf_apple_log(in, 1); // Apple Log 2 transfer curve
+    if (TF == 25) return oetf_sony_slog1(in, 1);
+    if (TF == 26) return oetf_canon_clog1(in, 1);
+    if (TF == 27) return oetf_blackmagic_filmgen4(in, 1);
+    if (TF == 28) return oetf_kinfinity_kinelog3(in, 1);
+    if (TF == 29) return oetf_gopro_gplog2(in, 1);
+    if (TF == 30) return oetf_gopro_gplog400(in, 1);
 
 
     
@@ -1057,8 +1200,9 @@ DEFINE_UI_PARAMS(opt_scope, :: Wide Aspect Mode ::, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(opt_card, Midgray Card Display, DCTLUI_COMBO_BOX, 1, {CARD_FULL_SCREEN, CARD_BOX, CARD_NONE}, {Full Screen, Box, None})
 
 DEFINE_UI_PARAMS(evaluation_p, Evaluation mode, DCTLUI_COMBO_BOX, 3, {quantize_clamp, T_log, eval_off}, {Quantize + clamp, Evaluate in T-log, Off})
+DEFINE_UI_PARAMS(opt_quant_plot, Show Quantization Plot, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(annotation_mode, Annotation, DCTLUI_COMBO_BOX, 0, {ANNOTATE_NONE, ANNOTATE_MIDGRAY_BASELINE, ANNOTATE_START_FROM_ZERO}, {Off, Midgray Baseline, Start from Zero})
-DEFINE_UI_PARAMS(p_TF, Transfer Function, DCTLUI_COMBO_BOX, 2, {logc3, logc4, di, aces_cct, log3g10, slog2,slog3, bmd_f5, clog2, clog3, dlog, fLog, fLog2, vlog,goprotune, Leicallog, nlog,tlog,cineon, g22, g24, g26, linear}, {ARRI LogC3, ARRI LogC4,  DaVinci Intermediate, ACEScct, RED Log3G10, Sony S-Log2,Sony S-Log3, BMD Film Gen 5, Canon Log 2,Canon Log 3, DJI D-Log, FujiFilm F-Log, FujiFilm F-Log2, Panasonic V-Log, Gopro protune, Leica - Llog, Nikon Nlog, Filmlight T log,Kodak Cineon,Gamma 2.2, Gamma 2.4, Gamma 2.6, Linear})
+DEFINE_UI_PARAMS(p_TF, Transfer Function, DCTLUI_COMBO_BOX, 2, {logc3, logc4, di, aces_cct, log3g10, slog2,slog3, bmd_f5, clog2, clog3, dlog, fLog, fLog2, vlog,goprotune, Leicallog, nlog,tlog,cineon, g22, g24, g26, linear, apple_log, apple_log2, slog1, clog1, bmd_f4, kinelog3, gplog2, gplog400}, {ARRI LogC3, ARRI LogC4, DaVinci Intermediate, ACEScct, RED Log3G10, Sony S-Log2, Sony S-Log3, Blackmagic Film Gen 5, Canon Log 2, Canon Log 3, DJI D-Log, Fujifilm F-Log, Fujifilm F-Log2, Panasonic V-Log, GoPro Protune Flat, Leica L-Log, Nikon N-Log, FilmLight T-Log, Kodak Cineon, Gamma 2.2, Gamma 2.4, Gamma 2.6, Linear, Apple Log, Apple Log 2, Sony S-Log1, Canon Log, Blackmagic Film Gen 4, Kinefinity KineLOG3, GoPro GP-Log2, GoPro GP-Log (LOGB base 400)})
 DEFINE_UI_PARAMS(opt_label, Show Label, DCTLUI_CHECK_BOX, 1) // Checkbox to toggle label display
 
 
@@ -1268,7 +1412,100 @@ __CONSTANT__ int font[FONT_LENGTH][FONT_HEIGHT] = {{0, 0, 0, 0, 0, 0, 0, 0, 0, 0
         c_trans.x += c_trans.scale * c_width / FONT_HEIGHT;
     }
  }
- 
+
+__DEVICE__ float3 draw_quantization_plot(float x, float y, int width, int height, int num_steps, int bit_depth, float mid_gray_value, int TF, char curve_info[]) {
+    const float plot_left = 0.08f;
+    const float plot_right = 0.92f;
+    const float code_top = 0.12f;
+    const float code_bottom = 0.56f;
+    const float error_top = 0.70f;
+    const float error_bottom = 0.91f;
+    const float3 background = make_float3(0.025f, 0.03f, 0.04f);
+    const float3 grid_color = make_float3(0.13f, 0.15f, 0.17f);
+    const float3 ideal_color = make_float3(0.9f, 0.9f, 0.9f);
+    const float3 quantized_color = make_float3(1.0f, 0.55f, 0.12f);
+    const float3 error_color = make_float3(0.25f, 1.0f, 0.3f);
+    const float3 clipped_color = make_float3(1.0f, 0.1f, 0.65f);
+    const float3 mid_gray_color = make_float3(0.12f, 0.78f, 0.95f);
+    float middle_step = (float)(num_steps / 2);
+    float mid_gray_axis_x = plot_left + ((middle_step + 0.5f) / (float)num_steps) * (plot_right - plot_left);
+    float mid_gray_x_tolerance = 1.5f / (float)width;
+    float3 output = background;
+
+    if (x >= plot_left && x <= plot_right) {
+        float stops = (x - plot_left) / (plot_right - plot_left) * (float)num_steps - 0.5f - middle_step;
+        float linear_value = _fmaxf(mid_gray_value, 0.000001f) * _exp2f(stops);
+        float encoded = LinToTF(make_float3(linear_value, linear_value, linear_value), TF).x;
+        float quantized = quantize(make_float3(encoded, encoded, encoded), 0, bit_depth).x;
+        float reconstructed = Linearize(make_float3(quantized, quantized, quantized), TF).x;
+        float error_stops = reconstructed > 0.00000001f ? _log2f(reconstructed / linear_value) : -1.0f;
+        float code_height = code_bottom - code_top;
+        float ideal_y = code_bottom - _saturatef(encoded) * code_height;
+        float quantized_y = code_bottom - quantized * code_height;
+        float zero_y = (error_top + error_bottom) * 0.5f;
+        float error_half_height = (error_bottom - error_top) * 0.5f;
+        float error_y = zero_y - _fmaxf(-1.0f, _fminf(error_stops, 1.0f)) * error_half_height;
+        float line_tolerance = _fmaxf(1.5f / (float)height, 0.0015f);
+        float stop_grid = _fabs(stops - _round(stops));
+        float code_grid = _fabs((code_bottom - y) / code_height * 4.0f - _round((code_bottom - y) / code_height * 4.0f));
+        float error_grid = _fabs(y - zero_y);
+        float error_half_grid = _fabs(_fabs(y - zero_y) - error_half_height * 0.5f);
+
+        if (y >= code_top && y <= code_bottom) {
+            if (stop_grid < 0.025f || code_grid < 0.035f) output = grid_color;
+            if (_fabs(x - mid_gray_axis_x) < mid_gray_x_tolerance) output = mid_gray_color;
+            if (_fabs(y - ideal_y) < line_tolerance) output = ideal_color;
+            if (_fabs(y - quantized_y) < line_tolerance) output = quantized_color;
+            if ((encoded < 0.0f || encoded > 1.0f) && _fabs(y - (code_top + 0.008f)) < line_tolerance) output = clipped_color;
+        } else if (y >= error_top && y <= error_bottom) {
+            if (error_grid < line_tolerance || error_half_grid < line_tolerance || stop_grid < 0.025f) output = grid_color;
+            if (_fabs(x - mid_gray_axis_x) < mid_gray_x_tolerance) output = mid_gray_color;
+            if (_fabs(y - error_y) < line_tolerance) output = error_color;
+            if ((encoded < 0.0f || encoded > 1.0f || reconstructed <= 0.0f) && _fabs(y - error_y) < line_tolerance) output = clipped_color;
+        }
+    }
+
+    if (y >= code_top - 0.007f && y < code_top) {
+        float marker_half_width = (code_top - y);
+        if (_fabs(x - mid_gray_axis_x) < marker_half_width) output = mid_gray_color;
+    }
+
+    curr_pos_t curr_pos = make_curr_pos(x, y);
+    char header[] = "REFERENCE AND QUANTIZED CODE VALUES";
+    char mid_gray_label[] = "0 STOPS";
+    char error_header[] = "RECONSTRUCTION ERROR (STOPS)";
+    char unquantized_legend[] = "UNQUANTIZED";
+    char quantized_legend[] = "QUANTIZED";
+    char clipped_legend[] = "CLIPPED";
+    char positive_one[] = "+1";
+    char zero[] = "0";
+    char negative_one[] = "-1";
+    char x_axis[] = "EXPOSURE (STOPS FROM MID-GRAY)";
+    char_trans_t header_trans = make_char_trans(plot_left, 0.035f, 0.027f);
+    char_trans_t curve_info_trans = make_char_trans(plot_left, 0.082f, 0.018f);
+    char_trans_t mid_gray_label_trans = make_char_trans(mid_gray_axis_x - 0.032f, 0.100f, 0.012f);
+    char_trans_t error_trans = make_char_trans(plot_left, 0.625f, 0.024f);
+    char_trans_t unquantized_trans = make_char_trans(0.56f, 0.055f, 0.019f);
+    char_trans_t quantized_trans = make_char_trans(0.71f, 0.055f, 0.019f);
+    char_trans_t clipped_trans = make_char_trans(0.83f, 0.055f, 0.019f);
+    char_trans_t positive_one_trans = make_char_trans(0.04f, error_top, 0.018f);
+    char_trans_t zero_trans = make_char_trans(0.04f, (error_top + error_bottom) * 0.5f, 0.018f);
+    char_trans_t negative_one_trans = make_char_trans(0.04f, error_bottom - 0.018f, 0.018f);
+    char_trans_t x_axis_trans = make_char_trans(0.37f, 0.945f, 0.019f);
+    draw_string(header, make_float3(0.9f, 0.9f, 0.9f), &header_trans, &curr_pos, &output);
+    draw_string(curve_info, make_float3(0.75f, 0.82f, 0.9f), &curve_info_trans, &curr_pos, &output);
+    draw_string(mid_gray_label, mid_gray_color, &mid_gray_label_trans, &curr_pos, &output);
+    draw_string(error_header, make_float3(0.9f, 0.9f, 0.9f), &error_trans, &curr_pos, &output);
+    draw_string(unquantized_legend, ideal_color, &unquantized_trans, &curr_pos, &output);
+    draw_string(quantized_legend, quantized_color, &quantized_trans, &curr_pos, &output);
+    draw_string(clipped_legend, clipped_color, &clipped_trans, &curr_pos, &output);
+    draw_string(positive_one, make_float3(0.75f, 0.75f, 0.75f), &positive_one_trans, &curr_pos, &output);
+    draw_string(zero, make_float3(0.75f, 0.75f, 0.75f), &zero_trans, &curr_pos, &output);
+    draw_string(negative_one, make_float3(0.75f, 0.75f, 0.75f), &negative_one_trans, &curr_pos, &output);
+    draw_string(x_axis, make_float3(0.75f, 0.75f, 0.75f), &x_axis_trans, &curr_pos, &output);
+    return output;
+}
+
  __DEVICE__ float string_width_in_units(char str[], float scale) {
     float width = 0.0f;
     int i = 0;
@@ -1453,7 +1690,7 @@ __CONSTANT__ int font[FONT_LENGTH][FONT_HEIGHT] = {{0, 0, 0, 0, 0, 0, 0, 0, 0, 0
         }
     } else if (index == 14) {
         {
-            char name[] = "GoPro Protune";
+            char name[] = "GoPro Protune Flat";
             strcpy(output, name);
         }
     } else if (index == 15) {
@@ -1496,9 +1733,47 @@ __CONSTANT__ int font[FONT_LENGTH][FONT_HEIGHT] = {{0, 0, 0, 0, 0, 0, 0, 0, 0, 0
             char name[] = "Linear";
             strcpy(output, name);
         }
-    }
-    // Add other cases similarly
-    else {
+    } else if (index == 23) {
+        {
+            char name[] = "Apple Log";
+            strcpy(output, name);
+        }
+    } else if (index == 24) {
+        {
+            char name[] = "Apple Log 2";
+            strcpy(output, name);
+        }
+    } else if (index == 25) {
+        {
+            char name[] = "Sony S-Log1";
+            strcpy(output, name);
+        }
+    } else if (index == 26) {
+        {
+            char name[] = "Canon Log";
+            strcpy(output, name);
+        }
+    } else if (index == 27) {
+        {
+            char name[] = "Blackmagic Film Gen 4";
+            strcpy(output, name);
+        }
+    } else if (index == 28) {
+        {
+            char name[] = "Kinefinity KineLOG3";
+            strcpy(output, name);
+        }
+    } else if (index == 29) {
+        {
+            char name[] = "GoPro GP-Log2";
+            strcpy(output, name);
+        }
+    } else if (index == 30) {
+        {
+            char name[] = "GoPro GP-Log (LOGB base 400)";
+            strcpy(output, name);
+        }
+    } else {
         {
             char name[] = "Unknown";
             strcpy(output, name);
@@ -1587,6 +1862,38 @@ __CONSTANT__ int font[FONT_LENGTH][FONT_HEIGHT] = {{0, 0, 0, 0, 0, 0, 0, 0, 0, 0
     output[runner] = '\0';
  }
 
+__DEVICE__ float3 draw_quantization_axis_labels(float3 output, float x, float y, int num_steps) {
+    float middle_step = (float)(num_steps / 2);
+    float first_stop = -0.5f - middle_step;
+    float last_stop = (float)num_steps - 0.5f - middle_step;
+    char first_stop_text[16];
+    char last_stop_text[16];
+    char signed_last_stop_text[20];
+    char total_stops_text[8];
+    char span_text[48];
+    char plus[] = "+";
+    char span_prefix[] = " STOPS TOTAL | GRID = 1 STOP";
+    float3 label_color = make_float3(0.75f, 0.75f, 0.75f);
+    curr_pos_t curr_pos = make_curr_pos(x, y);
+
+    float2str(first_stop, first_stop_text, 1);
+    float2str(last_stop, last_stop_text, 1);
+    strcpy(signed_last_stop_text, plus);
+    strcat(signed_last_stop_text, last_stop_text, signed_last_stop_text);
+    int2str(num_steps, total_stops_text);
+    strcpy(span_text, total_stops_text);
+    strcat(span_text, span_prefix, span_text);
+
+    float span_width = string_width_in_units(span_text, 0.018f);
+    char_trans_t first_stop_trans = make_char_trans(0.08f, 0.915f, 0.018f);
+    char_trans_t span_trans = make_char_trans(0.5f - span_width * 0.5f, 0.915f, 0.018f);
+    char_trans_t last_stop_trans = make_char_trans(0.85f, 0.915f, 0.018f);
+    draw_string(first_stop_text, label_color, &first_stop_trans, &curr_pos, &output);
+    draw_string(span_text, label_color, &span_trans, &curr_pos, &output);
+    draw_string(signed_last_stop_text, label_color, &last_stop_trans, &curr_pos, &output);
+    return output;
+}
+
 
 
 // Main Transform function
@@ -1651,6 +1958,23 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
         // Custom Mid-Gray is disabled; use predefined mid-gray and selected transfer function
         mid_gray_value = 0.18f;
         slct_p_TF = p_TF;
+    }
+
+    if (opt_quant_plot == 1) {
+        char curve_name[64];
+        char bit_depth_text[4];
+        char curve_info[96];
+        char bit_suffix[] = "-BIT";
+        char custom_midgray_suffix[] = " | CUSTOM MID-GRAY";
+        get_tf_name(slct_p_TF, curve_name);
+        int2str(bit_depth, bit_depth_text, 4);
+        strcpy(curve_info, curve_name);
+        strcat(curve_info, " | ", curve_info);
+        strcat(curve_info, bit_depth_text, curve_info);
+        strcat(curve_info, bit_suffix, curve_info);
+        if (opt_mid == 1) strcat(curve_info, custom_midgray_suffix, curve_info);
+        float3 plot = draw_quantization_plot(x, y, p_Width, p_Height, num_steps, bit_depth, mid_gray_value, slct_p_TF, curve_info);
+        return draw_quantization_axis_labels(plot, x, y, num_steps);
     }
 
     // Compute mid-gray in the transfer function space

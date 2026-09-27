@@ -1,0 +1,200 @@
+/* ME_Sat_Matte v4.0 - experimental one-slider qualification
+   by Moaz Elgabry | moazelgabry.com
+
+   Coverage 0 = black (nothing selected), 100 = white (everything selected).
+   Raise Coverage to progressively include low, then higher saturation.
+   Input Space is setup, not a creative control. Only DWG is supported here.
+   Output is RGB plus alpha. Show Matte previews the matte over a checkerboard.
+   Resolve Alpha Fix inverse-compensates the alpha for Resolve's alpha transform.
+
+   Pipeline: decode -> stable saturation score -> local variation analysis
+             -> smooth coverage -> adaptive spatial average.
+   Regularized Oklab-based proxy: bounded signed root, quadratic neutral response,
+   and an analysis-only neutral pedestal plus shadow floor. This trades dark-color discrimination for
+   noise stability. Negative linear RGB is preserved. No RGB pre-blur or clip.
+   An 11x11 neighborhood measures score variance and its affine-gradient component.
+   Coherent edges favor 7x7 instead of 11x11 matte smoothing.
+   All adaptation is independent of Coverage,
+   preserving monotone selection. Fine texture can be mistaken for noise.
+   RGB/chroma vectors are never averaged, avoiding complementary-hue cancellation.
+   Radius <= 5 pixels at the image resolution delivered by Resolve.
+   No temporal denoising, calibrated camera-noise estimate, or zero-freckles claim.
+
+   Matrix/transfer sources and reproducible Python tests: sat_matte_v4/README.md.
+   Original v3.0 is retained separately. Not yet validated in Resolve.
+*/
+
+DEFINE_UI_PARAMS(input_space, Input Space, DCTLUI_COMBO_BOX, 0, {dwg_linear, dwg_intermediate}, {DWG Linear, DWG Intermediate})
+DEFINE_UI_PARAMS(coverage, Coverage, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 100.0, 0.1)
+DEFINE_UI_PARAMS(show_matte, Show Matte, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_PARAMS(invert_matte, Invert Matte, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_PARAMS(resolve_alpha_fix, Resolve Alpha Fix, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_PARAMS(spatial_smoothing, Spatial Smoothing, DCTLUI_CHECK_BOX, 1)
+DEFINE_DCTL_ALPHA_MODE_STRAIGHT
+
+#if ((__RESOLVE_VER_MAJOR__ > 19)) || ((__RESOLVE_VER_MAJOR__ == 19) && (__RESOLVE_VER_MINOR__ >= 1))
+DEFINE_UI_TOOLTIP(Input Space, "Match the signal entering this DCTL: linear DWG or DWG with DaVinci Intermediate encoding.")
+DEFINE_UI_TOOLTIP(Coverage, "0: nothing selected. Raise to include low saturation first, then more colorful areas. 100: everything selected. White is selected; black is excluded.")
+DEFINE_UI_TOOLTIP(Show Matte, "Shows the qualified matte over a transparency checkerboard.")
+DEFINE_UI_TOOLTIP(Invert Matte, "Inverts the qualified matte.")
+DEFINE_UI_TOOLTIP(Resolve Alpha Fix, "Pre-compensates alpha with Resolve's exact inverse alpha curve.")
+DEFINE_UI_TOOLTIP(Spatial Smoothing, "Turns adaptive spatial smoothing on or off for comparison.")
+#endif
+
+__DEVICE__ float me_decode_di(float v) {
+    return v <= 0.02740668f ? v / 10.44426855f
+        : _exp2f(v / 0.07329248f - 7.0f) - 0.0075f;
+}
+
+// Smooth signed cube-root approximation; finite slope at zero.
+__DEVICE__ float me_stable_root(float v) {
+    return v / _powf(v * v + 0.0000010000f, 1.0f / 3.0f);
+}
+
+// Pure pixel math; texture access belongs only to the transform below.
+__DEVICE__ float me_sat_score(float3 rgb) {
+    float rg = rgb.x - rgb.y;
+    float bg = rgb.z - rgb.y;
+    // Analysis-only neutral lift; avoids interpreting deep-shadow noise as color.
+    float base = rgb.y + 0.02000000f;
+    // DWG -> updated Oklab LMS, normalized for rounded D65 white coefficients.
+    float l = base + 0.5872198589f * rg + -0.0075927843f * bg;
+    float m = base + 0.2827499676f * rg + 0.0334949664f * bg;
+    float s = base + 0.1120041085f * rg + 0.6933883919f * bg;
+    float lm = me_stable_root(m);
+    float dl = me_stable_root(l) - lm;
+    float ds = me_stable_root(s) - lm;
+    float light = lm + 0.2104542553f * dl - 0.0040720468f * ds;
+    float a = 1.9779984951f * dl + 0.4505937099f * ds;
+    float b = 0.0259040371f * dl - 0.8086757660f * ds;
+    float c2 = a * a + b * b;
+    return c2 / (c2 + 0.06250000f * (light * light + 0.01000000f));
+}
+
+__DEVICE__ float me_quintic(float t) {
+    t = _fminf(_fmaxf(t, 0.0f), 1.0f);
+    float u = _fminf(t, 1.0f - t);
+    float q = u * u * u * (10.0f + u * (-15.0f + 6.0f * u));
+    return t <= 0.5f ? q : 1.0f - q;
+}
+
+__DEVICE__ float me_coverage(float score, float p) {
+    score = _fminf(_fmaxf(score, 0.0f), 1.0f);
+    return me_quintic((p - 0.60000000f * score) / 0.40000000f);
+}
+
+__DEVICE__ float me_alpha_inverse(float y) {
+    y = _fminf(_fmaxf(y, 0.0f), 1.0f);
+    return y <= (3.0f / 7.0f) ? (-1.0f + _sqrtf(1.0f + 7.0f * y)) * 0.5f : (7.0f * y + 1.0f) / 8.0f;
+}
+
+__DEVICE__ float me_weight(int offset) {
+    int d = offset < 0 ? -offset : offset;
+    if (d == 0) return 252.0f;
+    if (d == 1) return 210.0f;
+    if (d == 2) return 120.0f;
+    if (d == 3) return 45.0f;
+    if (d == 4) return 10.0f;
+    return 1.0f;
+}
+
+__DEVICE__ float me_small_weight(int offset) {
+    int d = offset < 0 ? -offset : offset;
+    if (d == 0) return 20.0f;
+    if (d == 1) return 15.0f;
+    if (d == 2) return 6.0f;
+    return 1.0f;
+}
+
+__DEVICE__ float4 transform(int p_Width, int p_Height, int p_X, int p_Y, __TEXTURE__ p_TexR, __TEXTURE__ p_TexG, __TEXTURE__ p_TexB, __TEXTURE__ p_TexA) {
+    // Preserve exact endpoints while still honoring presentation, inversion,
+    // and alpha compensation. A fully excluded preview needs no image read.
+    if (coverage <= 0.0f || coverage >= 100.0f) {
+        float matte = coverage <= 0.0f ? 0.0f : 1.0f;
+        if (invert_matte) matte = 1.0f - matte;
+        float3 out = make_float3(matte, matte, matte);
+        if (show_matte) {
+            float square = _fmaxf((float)p_Height / 16.0f, 1.0f);
+            int row = (int)_floorf((float)p_Y / square);
+            int col = (int)_floorf((float)p_X / square);
+            float checker = ((row + col) % 2 == 0) ? 0.35f : 0.18f;
+            out = make_float3(checker, checker, checker);
+            if (matte > 0.0f) {
+                out = make_float3(_tex2D(p_TexR, p_X, p_Y),
+                                  _tex2D(p_TexG, p_X, p_Y),
+                                  _tex2D(p_TexB, p_X, p_Y));
+                if (input_space == 1) {
+                    out = make_float3(me_decode_di(out.x), me_decode_di(out.y),
+                                      me_decode_di(out.z));
+                }
+            }
+        }
+        float alpha = resolve_alpha_fix ? me_alpha_inverse(matte) : matte;
+        return make_float4(out.x, out.y, out.z, alpha);
+    }
+    float3 center_rgb = make_float3(_tex2D(p_TexR, p_X, p_Y),
+        _tex2D(p_TexG, p_X, p_Y), _tex2D(p_TexB, p_X, p_Y));
+    if (input_space == 1) {
+        center_rgb = make_float3(me_decode_di(center_rgb.x), me_decode_di(center_rgb.y),
+                                 me_decode_di(center_rgb.z));
+    }
+    float center_score = me_sat_score(center_rgb);
+    float total = 0.0f, small = 0.0f;
+    float score_sum = 0.0f, square_sum = 0.0f;
+    float moment_x = 0.0f, moment_y = 0.0f;
+    for (int dy = -5; dy <= 5; ++dy) {
+        int sy = p_Y + dy;
+        sy = sy < 0 ? 0 : (sy >= p_Height ? p_Height - 1 : sy);
+        float wy = me_weight(dy);
+        for (int dx = -5; dx <= 5; ++dx) {
+            int sx = p_X + dx;
+            sx = sx < 0 ? 0 : (sx >= p_Width ? p_Width - 1 : sx);
+            float s = center_score;
+            if (dx != 0 || dy != 0) {
+                float3 rgb = make_float3(_tex2D(p_TexR, sx, sy),
+                    _tex2D(p_TexG, sx, sy), _tex2D(p_TexB, sx, sy));
+                if (input_space == 1) {
+                    rgb = make_float3(me_decode_di(rgb.x), me_decode_di(rgb.y),
+                                      me_decode_di(rgb.z));
+                }
+                s = me_sat_score(rgb);
+            }
+            float w = wy * me_weight(dx);
+            float t = (coverage * 0.01f - 0.60000000f * s) / 0.40000000f;
+            float q = me_quintic(t);
+            total += w * q;
+            // Centering avoids false noise from float cancellation on flat colors.
+            float delta = s - center_score;
+            score_sum += w * delta;
+            square_sum += w * delta * delta;
+            moment_x += w * (float)dx * delta;
+            moment_y += w * (float)dy * delta;
+            if (dx >= -3 && dx <= 3 && dy >= -3 && dy <= 3) {
+                float sw = me_small_weight(dx) * me_small_weight(dy);
+                small += sw * q;
+            }
+        }
+    }
+    float mean = score_sum / 1048576.0f;
+    float variance = _fmaxf(square_sum / 1048576.0f - mean * mean, 0.0f);
+    float mx = moment_x / 1048576.0f, my = moment_y / 1048576.0f;
+    float explained = (mx * mx + my * my) / 2.5f;
+    float edge = spatial_smoothing ? me_quintic(explained / (variance + 0.0000250000f)) : 0.0f;
+    float center_q = me_coverage(center_score, coverage * 0.01f);
+    float broad = spatial_smoothing ? total / 1048576.0f : center_q;
+    float narrow = spatial_smoothing ? small / 4096.0f : broad;
+    float matte = _fminf(_fmaxf((1.0f - edge) * broad + edge * narrow, 0.0f), 1.0f);
+    if (invert_matte) matte = 1.0f - matte;
+    float3 out = make_float3(matte, matte, matte);
+    if (show_matte) {
+        float square = _fmaxf((float)p_Height / 16.0f, 1.0f);
+        int row = (int)_floorf((float)p_Y / square);
+        int col = (int)_floorf((float)p_X / square);
+        float checker = ((row + col) % 2 == 0) ? 0.35f : 0.18f;
+        out = make_float3((1.0f - matte) * checker + matte * center_rgb.x,
+                          (1.0f - matte) * checker + matte * center_rgb.y,
+                          (1.0f - matte) * checker + matte * center_rgb.z);
+    }
+    float alpha = resolve_alpha_fix ? me_alpha_inverse(matte) : matte;
+    return make_float4(out.x, out.y, out.z, alpha);
+}
