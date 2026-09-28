@@ -1,7 +1,7 @@
 #line 2 
 /*
 
-Exposure Chart DCTL ver 1.4
+Exposure Chart DCTL ver 1.5
 by Moaz Elgabry, moazelgabry.com
 
 Thanks to Thatcher Freeman for the original code to draw the chart and to render text
@@ -673,9 +673,7 @@ Thanks to Thatcher Freeman for the original code to draw the chart and to render
     if (inv == 1) {
         // **Inverse Transformation (Log to Linear)**
         
-        // Step 1: Apply piecewise transformation to each component
-        // If x <= LOG_CUT, apply linear scaling: x / M
-        // Else, apply exponential scaling: exp2(x / C - B) - A
+
         result.x = (x.x <= LOG_CUT) ? (x.x / M) : (_exp2f(x.x / C - B) - A);
         result.y = (x.y <= LOG_CUT) ? (x.y / M) : (_exp2f(x.y / C - B) - A);
         result.z = (x.z <= LOG_CUT) ? (x.z / M) : (_exp2f(x.z / C - B) - A);
@@ -683,9 +681,6 @@ Thanks to Thatcher Freeman for the original code to draw the chart and to render
     else {
         // **Forward Transformation (Linear to Log)**
         
-        // Step 1: Apply piecewise transformation to each component
-        // If x <= LIN_CUT, apply linear scaling: x * M
-        // Else, apply logarithmic scaling: (log2(x + A) + B) * C
         result.x = (x.x <= LIN_CUT) ? (x.x * M) : ((_log2f(x.x + A) + B) * C);
         result.y = (x.y <= LIN_CUT) ? (x.y * M) : ((_log2f(x.y + A) + B) * C);
         result.z = (x.z <= LIN_CUT) ? (x.z * M) : ((_log2f(x.z + A) + B) * C);
@@ -871,6 +866,133 @@ Thanks to Thatcher Freeman for the original code to draw the chart and to render
     return result;
   }
 
+ // Apple Log transfer function, from Apple's profile constants.
+ // Apple Log 2 uses this same curve in the ACES Apple-provided transforms;
+ // the profiles differ in their primaries, which this chart does not transform.
+ // https://github.com/aces-aswf/aces-input-and-colorspaces/tree/main/apple
+ __DEVICE__ float inline apple_log_channel(float x, int inv) {
+    const float R0 = -0.05641088f;
+    const float Rt = 0.01f;
+    const float C = 47.28711236f;
+    const float beta = 0.00964052f;
+    const float gamma = 0.08550479f;
+    const float delta = 0.69336945f;
+    const float Pt = C * (Rt - R0) * (Rt - R0);
+
+    if (inv == 1) {
+        if (x >= Pt) return _exp2f((x - delta) / gamma) - beta;
+        if (x >= 0.0f) return _sqrtf(x / C) + R0;
+        return R0;
+    }
+
+    if (x < R0) return 0.0f;
+    if (x < Rt) {
+        float d = x - R0;
+        return C * d * d;
+    }
+    return gamma * _log2f(x + beta) + delta;
+ }
+
+ __DEVICE__ float3 inline oetf_apple_log(float3 x, int inv) {
+    return make_float3(apple_log_channel(x.x, inv), apple_log_channel(x.y, inv), apple_log_channel(x.z, inv));
+ }
+
+ // Sony S-Log (first-generation S-Log), scene-linear to legal-range code values.
+ // Formula reference: Alwan's implementation of SonyCorporation2012a.
+ __DEVICE__ float inline sony_slog1_channel(float x, int inv) {
+    const float legalScale = 876.0f / 1023.0f;
+    const float legalOffset = 64.0f / 1023.0f;
+    const float linearCut = 0.030001222851889303f;
+
+    if (inv == 1) {
+        float full = (x - legalOffset) / legalScale;
+        float scene = (full >= linearCut)
+            ? _powf(10.0f, (full - 0.646596f) / 0.432699f) - 0.037584f
+            : (full - linearCut) / 5.0f;
+        return scene * 0.9f;
+    }
+
+    float scene = x / 0.9f;
+    float full = (scene >= 0.0f)
+        ? 0.432699f * _log10f(scene + 0.037584f) + 0.646596f
+        : 5.0f * scene + linearCut;
+    return full * legalScale + legalOffset;
+ }
+
+ __DEVICE__ float3 inline oetf_sony_slog1(float3 x, int inv) {
+    return make_float3(sony_slog1_channel(x.x, inv), sony_slog1_channel(x.y, inv), sony_slog1_channel(x.z, inv));
+ }
+
+ __DEVICE__ float inline canon_clog1_channel(float x, int inv) {
+    // Canon's C-Log v1.2 constants; negative scene values are clamped by design.
+    const float a = 0.45310179f;
+    const float k = 10.1596f;
+    const float offset = 0.12512248f;
+    if (inv == 1) return ((_powf(10.0f, (x - offset) / a) - 1.0f) / k) * 0.9f;
+    x = _fmaxf(x, 0.0f) / 0.9f;
+    return a * _log10f(k * x + 1.0f) + offset;
+ }
+
+ __DEVICE__ float3 inline oetf_canon_clog1(float3 x, int inv) {
+    return make_float3(canon_clog1_channel(x.x, inv), canon_clog1_channel(x.y, inv), canon_clog1_channel(x.z, inv));
+ }
+
+ __DEVICE__ float inline blackmagic_filmgen4_channel(float x, int inv) {
+    // Blackmagic Film Gen 4 formula as independently implemented by Alwan.
+    const float A = 5.2212906000378565f;
+    const float B = -0.00007134598996420424f;
+    const float C = 0.03630411093543444f;
+    const float D = 0.21566456116952773f;
+    const float E = 0.7133134738229736f;
+    const float LIN_CUT = 0.00500072683168086f;
+    const float LOG_CUT = 0.026038902009648163f;
+    if (inv == 1) return (x <= LOG_CUT) ? (x - B) / A : _expf((x - E) / D) - C;
+    return (x <= LIN_CUT) ? A * x + B : D * _logf(x + C) + E;
+ }
+
+ __DEVICE__ float3 inline oetf_blackmagic_filmgen4(float3 x, int inv) {
+    return make_float3(blackmagic_filmgen4_channel(x.x, inv), blackmagic_filmgen4_channel(x.y, inv), blackmagic_filmgen4_channel(x.z, inv));
+ }
+
+ __DEVICE__ float inline kinfinity_kinelog3_channel(float x, int inv) {
+    // https://kinefinity.com/support/guides/kinelog3-technical-specifications
+    const float a = 66.64f;
+    const float b = 0.296f;
+    const float c = 0.907136f;
+    const float d = 0.092864f;
+    const float cut = -0.008239f;
+    const float slope = 0.017178f;
+    if (inv == 1) return (x >= 0.0f)
+        ? (_powf(10.0f, (x - d) / (b * c)) - 1.0f) / a
+        : x * slope + cut;
+    return (x >= cut) ? _log10f(a * x + 1.0f) * b * c + d : (x - cut) / slope;
+ }
+
+ __DEVICE__ float3 inline oetf_kinfinity_kinelog3(float3 x, int inv) {
+    return make_float3(kinfinity_kinelog3_channel(x.x, inv), kinfinity_kinelog3_channel(x.y, inv), kinfinity_kinelog3_channel(x.z, inv));
+ }
+
+ __DEVICE__ float inline gopro_gplog2_channel(float x, int inv) {
+    // Official GoPro Labs Log_600 curve: https://gopro.github.io/labs/log/
+    if (inv == 1) return (_powf(600.0f, x) - 1.0f) / 599.0f;
+    return _log10f(_fmaxf(x, 0.0f) * 599.0f + 1.0f) / _log10f(600.0f);
+ }
+
+ __DEVICE__ float3 inline oetf_gopro_gplog2(float3 x, int inv) {
+    return make_float3(gopro_gplog2_channel(x.x, inv), gopro_gplog2_channel(x.y, inv), gopro_gplog2_channel(x.z, inv));
+ }
+
+ __DEVICE__ float inline gopro_gplog400_channel(float x, int inv) {
+    // GoPro Labs LOGB profile with base 400, the documented GP-Log equivalent.
+    // https://gopro.github.io/labs/control/tech/
+    if (inv == 1) return (_powf(400.0f, x) - 1.0f) / 399.0f;
+    return _log10f(_fmaxf(x, 0.0f) * 399.0f + 1.0f) / _log10f(400.0f);
+ }
+
+ __DEVICE__ float3 inline oetf_gopro_gplog400(float3 x, int inv) {
+    return make_float3(gopro_gplog400_channel(x.x, inv), gopro_gplog400_channel(x.y, inv), gopro_gplog400_channel(x.z, inv));
+ }
+
  __DEVICE__ float3 inline LinToGammaCurve (float3 in, float gamma) {
     float3 out;
 
@@ -896,63 +1018,80 @@ Thanks to Thatcher Freeman for the original code to draw the chart and to render
 //functions to apply transfer function conversions
  
  __DEVICE__ float3 inline LinToTF (float3 in, int TF) {
-    if (TF ==  0) return oetf_arri_logc3(in,0);
-    if (TF ==  1) return oetf_arri_logc4(in, 0);
-    if (TF ==  2) return oetf_davinci_intermediate(in,0);
-    if (TF ==  3) return oetf_acescct(in,0);
-    if (TF ==  4) return oetf_red_log3g10(in,0);
-    if (TF ==  5) return oetf_sony_slog2(in,0);
-    if (TF ==  6) return oetf_sony_slog3(in,0);
-    if (TF ==  7) return oetf_blackmagic_filmgen5(in,0);
-    if (TF ==  8) return oetf_canon_clog2(in,0);
-    if (TF ==  9) return oetf_canon_clog3(in,0);
-    if (TF == 10) return oetf_dji_dlog(in,0);
-    if (TF == 11) return oetf_fujifilm_flog(in,0);
-    if (TF == 12) return oetf_fujifilm_flog2(in,0);
-    if (TF == 13) return oetf_panasonic_vlog(in,0);
-    if (TF == 14) return oetf_gopro_protune(in,0);
-    if (TF == 15) return oetf_leica_llog(in,0);
-    if (TF == 16) return oetf_nikon_nlog(in,0);
-    if (TF == 17) return oetf_filmlight_tlog(in,0);
-    if (TF == 18) return oetf_kodak_cineon(in,0);
-    if (TF == 19) return LinToGammaCurve(in, 2.2);
-    if (TF == 20) return LinToGammaCurve(in, 2.4);
-    if (TF == 21) return LinToGammaCurve(in, 2.6);
-    if (TF == 22) return in; // Lin
+    if (TF ==  0) return oetf_davinci_intermediate(in, 0);
+    if (TF ==  1) return oetf_acescct(in, 0);
+    if (TF ==  2) return oetf_arri_logc3(in, 0);
+    if (TF ==  3) return oetf_arri_logc4(in, 0);
+    if (TF ==  4) return oetf_sony_slog1(in, 0);
+    if (TF ==  5) return oetf_sony_slog2(in, 0);
+    if (TF ==  6) return oetf_sony_slog3(in, 0);
+    if (TF ==  7) return oetf_canon_clog1(in, 0);
+    if (TF ==  8) return oetf_canon_clog2(in, 0);
+    if (TF ==  9) return oetf_canon_clog3(in, 0);
+    if (TF == 10) return oetf_red_log3g10(in, 0);
+    if (TF == 11) return oetf_blackmagic_filmgen4(in, 0);
+    if (TF == 12) return oetf_blackmagic_filmgen5(in, 0);
+    if (TF == 13) return oetf_dji_dlog(in, 0);
+    if (TF == 14) return oetf_fujifilm_flog(in, 0);
+    if (TF == 15) return oetf_fujifilm_flog2(in, 0);
+    if (TF == 16) return oetf_panasonic_vlog(in, 0);
+    if (TF == 17) return oetf_gopro_protune(in, 0);
+    if (TF == 18) return oetf_gopro_gplog2(in, 0);
+    if (TF == 19) return oetf_gopro_gplog400(in, 0);
+    if (TF == 20) return oetf_kinfinity_kinelog3(in, 0);
+    if (TF == 21) return oetf_leica_llog(in, 0);
+    if (TF == 22) return oetf_nikon_nlog(in, 0);
+    if (TF == 23) return oetf_filmlight_tlog(in, 0);
+    if (TF == 24) return oetf_kodak_cineon(in, 0);
+    if (TF == 25) return oetf_apple_log(in, 0);
+    if (TF == 26) return oetf_apple_log(in, 0); // Apple Log 2 transfer curve
+    if (TF == 27) return LinToGammaCurve(in, 2.2);
+    if (TF == 28) return LinToGammaCurve(in, 2.4);
+    if (TF == 29) return LinToGammaCurve(in, 2.6);
+    if (TF == 30) return in; // Lin
 
 
     
     return make_float3(1, 0, 0); // Red on error
     }
  __DEVICE__ float3 inline Linearize (float3 in, int TF) {
-    if (TF ==  0) return oetf_arri_logc3(in, 1);
-    if (TF ==  1) return oetf_arri_logc4(in, 1);
-    if (TF ==  2) return oetf_davinci_intermediate(in, 1);
-    if (TF ==  3) return oetf_acescct(in, 1);
-    if (TF ==  4) return oetf_red_log3g10(in, 1);
+    if (TF ==  0) return oetf_davinci_intermediate(in, 1);
+    if (TF ==  1) return oetf_acescct(in, 1);
+    if (TF ==  2) return oetf_arri_logc3(in, 1);
+    if (TF ==  3) return oetf_arri_logc4(in, 1);
+    if (TF ==  4) return oetf_sony_slog1(in, 1);
     if (TF ==  5) return oetf_sony_slog2(in, 1);
     if (TF ==  6) return oetf_sony_slog3(in, 1);
-    if (TF ==  7) return oetf_blackmagic_filmgen5(in, 1);
+    if (TF ==  7) return oetf_canon_clog1(in, 1);
     if (TF ==  8) return oetf_canon_clog2(in, 1);
     if (TF ==  9) return oetf_canon_clog3(in, 1);
-    if (TF == 10) return oetf_dji_dlog(in, 1);
-    if (TF == 11) return oetf_fujifilm_flog(in, 1);
-    if (TF == 12) return oetf_fujifilm_flog2(in, 1);
-    if (TF == 13) return oetf_panasonic_vlog(in, 1);
-    if (TF == 14) return oetf_gopro_protune(in, 1);
-    if (TF == 15) return oetf_leica_llog(in, 1);
-    if (TF == 16) return oetf_nikon_nlog(in, 1);
-    if (TF == 17) return oetf_filmlight_tlog(in, 1);
-    if (TF == 18) return oetf_kodak_cineon(in, 1);
-    if (TF == 19) return GammaCurveToLin(in, 2.2);
-    if (TF == 20) return GammaCurveToLin(in, 2.4);
-    if (TF == 21) return GammaCurveToLin(in, 2.6);
-    if (TF == 22) return in; // Lin
+    if (TF == 10) return oetf_red_log3g10(in, 1);
+    if (TF == 11) return oetf_blackmagic_filmgen4(in, 1);
+    if (TF == 12) return oetf_blackmagic_filmgen5(in, 1);
+    if (TF == 13) return oetf_dji_dlog(in, 1);
+    if (TF == 14) return oetf_fujifilm_flog(in, 1);
+    if (TF == 15) return oetf_fujifilm_flog2(in, 1);
+    if (TF == 16) return oetf_panasonic_vlog(in, 1);
+    if (TF == 17) return oetf_gopro_protune(in, 1);
+    if (TF == 18) return oetf_gopro_gplog2(in, 1);
+    if (TF == 19) return oetf_gopro_gplog400(in, 1);
+    if (TF == 20) return oetf_kinfinity_kinelog3(in, 1);
+    if (TF == 21) return oetf_leica_llog(in, 1);
+    if (TF == 22) return oetf_nikon_nlog(in, 1);
+    if (TF == 23) return oetf_filmlight_tlog(in, 1);
+    if (TF == 24) return oetf_kodak_cineon(in, 1);
+    if (TF == 25) return oetf_apple_log(in, 1);
+    if (TF == 26) return oetf_apple_log(in, 1); // Apple Log 2 transfer curve
+    if (TF == 27) return GammaCurveToLin(in, 2.2);
+    if (TF == 28) return GammaCurveToLin(in, 2.4);
+    if (TF == 29) return GammaCurveToLin(in, 2.6);
+    if (TF == 30) return in; // Lin
 
 
     
     return make_float3(1, 0, 0); // Red on error
     }    
+
  
  __DEVICE__ float inline set_mid_gray (float mid_gray, int TF) {
 
@@ -1057,8 +1196,9 @@ DEFINE_UI_PARAMS(opt_scope, :: Wide Aspect Mode ::, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(opt_card, Midgray Card Display, DCTLUI_COMBO_BOX, 1, {CARD_FULL_SCREEN, CARD_BOX, CARD_NONE}, {Full Screen, Box, None})
 
 DEFINE_UI_PARAMS(evaluation_p, Evaluation mode, DCTLUI_COMBO_BOX, 3, {quantize_clamp, T_log, eval_off}, {Quantize + clamp, Evaluate in T-log, Off})
+DEFINE_UI_PARAMS(opt_quant_plot, Show Quantization Plot, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_PARAMS(annotation_mode, Annotation, DCTLUI_COMBO_BOX, 0, {ANNOTATE_NONE, ANNOTATE_MIDGRAY_BASELINE, ANNOTATE_START_FROM_ZERO}, {Off, Midgray Baseline, Start from Zero})
-DEFINE_UI_PARAMS(p_TF, Transfer Function, DCTLUI_COMBO_BOX, 2, {logc3, logc4, di, aces_cct, log3g10, slog2,slog3, bmd_f5, clog2, clog3, dlog, fLog, fLog2, vlog,goprotune, Leicallog, nlog,tlog,cineon, g22, g24, g26, linear}, {ARRI LogC3, ARRI LogC4,  DaVinci Intermediate, ACEScct, RED Log3G10, Sony S-Log2,Sony S-Log3, BMD Film Gen 5, Canon Log 2,Canon Log 3, DJI D-Log, FujiFilm F-Log, FujiFilm F-Log2, Panasonic V-Log, Gopro protune, Leica - Llog, Nikon Nlog, Filmlight T log,Kodak Cineon,Gamma 2.2, Gamma 2.4, Gamma 2.6, Linear})
+DEFINE_UI_PARAMS(p_TF, Transfer Function, DCTLUI_COMBO_BOX, 0, {di, aces_cct, logc3, logc4, slog1, slog2, slog3, clog1, clog2, clog3, log3g10, bmd_f4, bmd_f5, dlog, fLog, fLog2, vlog, goprotune, gplog2, gplog400, kinelog3, Leicallog, nlog, tlog, cineon, apple_log, apple_log2, g22, g24, g26, linear}, {DaVinci Intermediate, ACEScct, ARRI LogC3, ARRI LogC4, Sony S-Log1, Sony S-Log2, Sony S-Log3, Canon Log, Canon Log 2, Canon Log 3, RED Log3G10, Blackmagic Film Gen 4, Blackmagic Film Gen 5, DJI D-Log, Fujifilm F-Log, Fujifilm F-Log2, Panasonic V-Log, GoPro Protune Flat, GoPro GP-Log2, GoPro GP-Log (LOGB base 400), Kinefinity KineLOG3, Leica L-Log, Nikon N-Log, FilmLight T-Log, Kodak Cineon, Apple Log, Apple Log 2, Gamma 2.2, Gamma 2.4, Gamma 2.6, Linear})
 DEFINE_UI_PARAMS(opt_label, Show Label, DCTLUI_CHECK_BOX, 1) // Checkbox to toggle label display
 
 
@@ -1067,142 +1207,329 @@ DEFINE_UI_PARAMS(opt_label, Show Label, DCTLUI_CHECK_BOX, 1) // Checkbox to togg
 // FONT STUFF //
 ////////////////
 
-#define FONT_WIDTH 10
-#define FONT_HEIGHT 16
-#define FONT_LENGTH 127
+// Open Sans Medium 500 rasterized at 4x and stored as 3-bit coverage for smooth edges.
+// Pair spacing uses compact optical adjustments because the embedded font has no kern feature.
+// Copyright 2020 The Open Sans Project Authors. Licensed under SIL Open Font License 1.1.
+// See "Open Sans OFL.txt" for the complete license text.
+#define FONT_WIDTH 32
+#define FONT_HEIGHT 32
+#define FONT_FIRST_CHAR 32
+#define FONT_LENGTH 95
+#define FONT_COVERAGE_BITS 3
+#define FONT_PIXELS_PER_INT 10
+#define FONT_PACKED_WIDTH 4
+#define FONT_KERNING_BITS 6
+#define FONT_KERNINGS_PER_INT 5
+#define FONT_KERNING_SCALE 16.0f
 
-__CONSTANT__ int font_widths[FONT_LENGTH] = {
-    10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10,
-    10, 3,  4,  7,  6,  10, 8,  2,  4,  4,  6,  6,  3,  4,  3,  4,  6,  5,  6,  6,  7,  6,  6,  6,  6,  6,  3,  3,  7,  6,  7,  6,
-    10, 8,  7,  8,  8,  7,  7,  8,  8,  3,  5,  8,  7,  9,  7,  8,  7,  8,  8,  7,  6,  8,  8,  10, 7,  6,  7,  4,  4,  3,  6,  7,
-    3,  6,  7,  6,  6,  6,  4,  6,  7,  3,  3,  6,  3,  9,  7,  6,  7,  6,  6,  5,  4,  7,  6,  8,  6,  6,  6,  4,  3,  4,  6};
-__CONSTANT__ int font[FONT_LENGTH][FONT_HEIGHT] = {{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 8, 8, 8, 8, 8, 8, 0, 8, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 20, 20, 20, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 80, 80, 252, 40, 40, 252, 40, 40, 0, 0, 0, 0},
-                                                   {0, 0, 0, 16, 56, 84, 20, 56, 80, 84, 56, 16, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 272, 296, 168, 144, 576, 1344, 1312, 544, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 48, 72, 72, 48, 296, 196, 196, 312, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 4, 4, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 16, 8, 8, 4, 4, 4, 4, 8, 8, 16, 0, 0},
-                                                   {0, 0, 0, 0, 4, 8, 8, 16, 16, 16, 16, 8, 8, 4, 0, 0},
-                                                   {0, 0, 0, 0, 0, 84, 56, 84, 0, 0, 0, 0, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 0, 0, 16, 16, 124, 16, 16, 0, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 8, 4, 0, 0},
-                                                   {0, 0, 0, 0, 0, 0, 0, 0, 0, 28, 0, 0, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 16, 16, 16, 8, 8, 8, 4, 4, 4, 0, 0, 0},
-                                                   {0, 0, 0, 0, 56, 68, 68, 68, 68, 68, 68, 56, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 32, 48, 40, 32, 32, 32, 32, 32, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 56, 68, 64, 32, 16, 8, 4, 124, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 56, 68, 64, 48, 64, 64, 68, 56, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 64, 96, 80, 72, 68, 252, 64, 64, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 124, 4, 4, 60, 64, 64, 68, 56, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 56, 68, 4, 60, 68, 68, 68, 56, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 124, 64, 32, 32, 16, 16, 8, 8, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 56, 68, 68, 56, 68, 68, 68, 56, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 56, 68, 68, 68, 120, 64, 64, 56, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 0, 0, 0, 8, 0, 0, 0, 8, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 0, 0, 0, 8, 0, 0, 0, 8, 8, 4, 0, 0},
-                                                   {0, 0, 0, 0, 0, 0, 192, 48, 12, 48, 192, 0, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 0, 0, 0, 124, 0, 124, 0, 0, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 0, 0, 12, 48, 192, 48, 12, 0, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 56, 68, 68, 32, 16, 16, 0, 16, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 0, 480, 528, 1480, 1320, 1320, 968, 1040, 992, 0, 0, 0},
-                                                   {0, 0, 0, 0, 32, 32, 80, 80, 136, 248, 260, 260, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 120, 136, 136, 120, 136, 136, 136, 120, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 240, 264, 4, 4, 4, 4, 264, 240, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 120, 136, 264, 264, 264, 264, 136, 120, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 248, 8, 8, 120, 8, 8, 8, 248, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 248, 8, 8, 120, 8, 8, 8, 8, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 240, 264, 4, 4, 452, 260, 264, 240, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 264, 264, 264, 504, 264, 264, 264, 264, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 8, 8, 8, 8, 8, 8, 8, 8, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 32, 32, 32, 32, 32, 32, 36, 24, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 136, 72, 40, 24, 40, 72, 136, 264, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 8, 8, 8, 8, 8, 8, 8, 248, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 520, 792, 792, 680, 680, 584, 584, 520, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 136, 152, 152, 168, 168, 200, 200, 136, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 112, 136, 260, 260, 260, 260, 136, 112, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 120, 136, 136, 136, 120, 8, 8, 8, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 112, 136, 260, 260, 260, 260, 200, 496, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 248, 264, 264, 264, 248, 72, 136, 264, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 112, 136, 8, 48, 64, 128, 136, 112, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 124, 16, 16, 16, 16, 16, 16, 16, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 264, 264, 264, 264, 264, 264, 264, 240, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 260, 260, 136, 136, 80, 80, 32, 32, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 1092, 1092, 1092, 680, 680, 680, 272, 272, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 136, 80, 80, 32, 32, 80, 80, 136, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 68, 68, 40, 40, 16, 16, 16, 16, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 252, 128, 64, 32, 16, 8, 4, 252, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 24, 8, 8, 8, 8, 8, 8, 8, 8, 24, 0, 0},
-                                                   {0, 0, 0, 0, 4, 4, 4, 8, 8, 8, 16, 16, 16, 0, 0, 0},
-                                                   {0, 0, 0, 0, 12, 8, 8, 8, 8, 8, 8, 8, 8, 12, 0, 0},
-                                                   {0, 0, 0, 0, 16, 40, 40, 68, 68, 0, 0, 0, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 252, 0, 0},
-                                                   {0, 0, 0, 0, 4, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 0, 0, 0, 56, 68, 120, 68, 120, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 8, 8, 8, 120, 136, 136, 136, 120, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 0, 0, 0, 56, 68, 4, 68, 56, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 64, 64, 64, 120, 68, 68, 68, 120, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 0, 0, 0, 56, 68, 124, 4, 120, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 16, 8, 8, 28, 8, 8, 8, 8, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 0, 0, 0, 120, 68, 68, 68, 120, 64, 56, 0, 0},
-                                                   {0, 0, 0, 0, 8, 8, 8, 120, 136, 136, 136, 136, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 0, 8, 0, 8, 8, 8, 8, 8, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 0, 8, 0, 8, 8, 8, 8, 8, 8, 4, 0, 0},
-                                                   {0, 0, 0, 0, 8, 8, 8, 72, 40, 24, 40, 72, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 8, 8, 8, 8, 8, 8, 8, 8, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 0, 0, 0, 440, 584, 584, 584, 584, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 0, 0, 0, 120, 136, 136, 136, 136, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 0, 0, 0, 56, 68, 68, 68, 56, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 0, 0, 0, 120, 136, 136, 136, 120, 8, 8, 0, 0},
-                                                   {0, 0, 0, 0, 0, 0, 0, 120, 68, 68, 68, 120, 64, 64, 0, 0},
-                                                   {0, 0, 0, 0, 0, 0, 0, 104, 24, 8, 8, 8, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 0, 0, 0, 56, 4, 24, 32, 28, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 0, 8, 8, 28, 8, 8, 8, 16, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 0, 0, 0, 136, 136, 136, 136, 240, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 0, 0, 0, 68, 68, 40, 40, 16, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 0, 0, 0, 292, 292, 340, 136, 136, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 0, 0, 0, 68, 40, 16, 40, 68, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 0, 0, 0, 68, 68, 40, 40, 16, 16, 12, 0, 0},
-                                                   {0, 0, 0, 0, 0, 0, 0, 124, 32, 16, 8, 124, 0, 0, 0, 0},
-                                                   {0, 0, 0, 0, 16, 8, 8, 8, 8, 4, 8, 8, 8, 8, 16, 0},
-                                                   {0, 0, 0, 0, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 0, 0},
-                                                   {0, 0, 0, 0, 4, 8, 8, 8, 8, 16, 8, 8, 8, 8, 4, 0},
-                                                   {0, 0, 0, 0, 0, 0, 0, 80, 40, 0, 0, 0, 0, 0, 0, 0}};
+__CONSTANT__ float font_widths[FONT_LENGTH] = {
+    5.750f, 6.000f, 9.250f, 14.250f, 12.500f, 18.500f, 16.250f, 5.000f,
+    6.750f, 6.750f, 12.000f, 12.500f, 5.750f, 7.000f, 6.000f, 8.250f,
+    12.500f, 12.500f, 12.500f, 12.500f, 12.500f, 12.500f, 12.500f, 12.500f,
+    12.500f, 12.500f, 6.000f, 6.000f, 12.500f, 12.500f, 12.500f, 9.750f,
+    19.750f, 14.250f, 14.250f, 14.000f, 16.000f, 12.250f, 11.500f, 16.000f,
+    16.250f, 6.500f, 6.250f, 13.750f, 11.750f, 20.000f, 17.000f, 17.250f,
+    13.500f, 17.250f, 13.750f, 12.000f, 12.250f, 16.250f, 13.500f, 20.500f,
+    13.250f, 12.750f, 12.750f, 7.250f, 8.250f, 7.250f, 12.500f, 9.500f,
+    6.500f, 12.500f, 13.500f, 10.750f, 13.500f, 12.500f, 7.750f, 12.000f,
+    13.750f, 5.750f, 5.750f, 12.000f, 5.750f, 20.750f, 13.750f, 13.250f,
+    13.500f, 13.500f, 9.250f, 10.500f, 8.250f, 13.750f, 11.500f, 17.500f,
+    11.750f, 11.500f, 10.500f, 8.250f, 12.000f, 8.250f, 12.500f
+};
+__CONSTANT__ float font_left_bearings[FONT_LENGTH] = {
+    0.000f, 0.000f, 0.000f, 0.000f, 0.000f, 0.000f, 0.000f, 0.000f,
+    0.000f, 0.000f, 0.000f, 0.000f, 0.000f, 0.000f, 0.000f, 0.000f,
+    0.000f, 0.000f, 0.000f, 0.000f, 0.000f, 0.000f, 0.000f, 0.000f,
+    0.000f, 0.000f, 0.000f, 0.000f, 0.000f, 0.000f, 0.000f, 0.000f,
+    0.000f, 0.000f, 0.000f, 0.000f, 0.000f, 0.000f, 0.000f, 0.000f,
+    0.000f, 0.000f, -1.750f, 0.000f, 0.000f, 0.000f, 0.000f, 0.000f,
+    0.000f, 0.000f, 0.000f, 0.000f, 0.000f, 0.000f, 0.000f, 0.000f,
+    0.000f, 0.000f, 0.000f, 0.000f, 0.000f, 0.000f, 0.000f, -0.250f,
+    0.000f, 0.000f, 0.000f, 0.000f, 0.000f, 0.000f, 0.000f, 0.000f,
+    0.000f, 0.000f, -1.500f, 0.000f, 0.000f, 0.000f, 0.000f, 0.000f,
+    0.000f, 0.000f, 0.000f, 0.000f, 0.000f, 0.000f, 0.000f, 0.000f,
+    0.000f, 0.000f, 0.000f, 0.000f, 0.000f, 0.000f, 0.000f
+};
+__CONSTANT__ int font_kerning_packed[(FONT_LENGTH * FONT_LENGTH + FONT_KERNINGS_PER_INT - 1) / FONT_KERNINGS_PER_INT] = {
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 971480640,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480640, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480640, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480640, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480640, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480640, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480640, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480640, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480640, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480640, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480640,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480640, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480640, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480640, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480640, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480640, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480640, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480640, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480640, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480640, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480640,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480640, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480640, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480640, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480640, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480640, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480640, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480640, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480640, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480640, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480640,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480640, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480640, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 719801977, 971406959, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480640, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480640, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480640, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480640, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480640, 971480697, 971480697, 971480697, 971480697, 971480697, 969907833, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 954703481, 971480697, 954703481, 971480697, 971480697,
+    971480697, 971480640, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480640, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480640,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480640, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480640, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480640, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 853986937, 971443826, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480640, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480640, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480640, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480640, 971480697, 971480697, 971480697, 971480697, 971480697, 968859257, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 921149042, 971480697, 904371833, 971480697, 971480697,
+    971480697, 971480640, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480640, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480640,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480640, 971480697,
+    971480697, 971480697, 971480697, 971480697, 968597113, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 669449833, 971480697, 669490809, 969617017, 652713580, 971480697, 971480640, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480640, 971480697, 971480697, 971480697,
+    971480697, 971480697, 968072825, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 854040174,
+    971480697, 820485753, 971480697, 971480692, 971480697, 971480640, 971480697, 971480697, 971480697, 971480697,
+    971480697, 968859257, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 921149044, 971480697,
+    887594617, 971480697, 971480697, 971480697, 971480640, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480640, 971480697, 971480697, 971480697, 971480697, 971480697, 966762105,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 686268007, 971480697, 669490809, 971480697,
+    971480686, 971480697, 971480640, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480640, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480640, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480640,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480640, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480640, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480640, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480640, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480640, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480640, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480640, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480640, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480640, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480640,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480640, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480640, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480640, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480640, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480640, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480640, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480640, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480640, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480640, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480640,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480640, 971480697,
+    921136761, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480640, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480640, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480640, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480640, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480640, 971480697, 988262009, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480640, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480640, 971480697, 954699385, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480640, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480640,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480640, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480640, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480640, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697, 971480697,
+    971480697, 971480697, 971480697, 971480697, 971480697
+};
+__CONSTANT__ int font_bitmap[FONT_LENGTH][FONT_HEIGHT][FONT_PACKED_WIDTH] = {
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {6992, 0, 0, 0}, {12240, 0, 0, 0}, {8136, 0, 0, 0}, {8136, 0, 0, 0}, {8136, 0, 0, 0}, {4040, 0, 0, 0}, {3520, 0, 0, 0}, {3520, 0, 0, 0}, {3456, 0, 0, 0}, {3456, 0, 0, 0}, {3456, 0, 0, 0}, {640, 0, 0, 0}, {0, 0, 0, 0}, {6984, 0, 0, 0}, {16344, 0, 0, 0}, {8144, 0, 0, 0}, {576, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {9766744, 0, 0, 0}, {12421592, 0, 0, 0}, {10291160, 0, 0, 0}, {8194000, 0, 0, 0}, {8160720, 0, 0, 0}, {6063560, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {1409024, 37, 0, 0}, {136249344, 39, 0, 0}, {269975552, 23, 0, 0}, {403673088, 15, 0, 0}, {690991680, 79, 0, 0}, {1073741800, 3071, 0, 0}, {1016326416, 1317, 0, 0}, {973266944, 2, 0, 0}, {989983232, 1, 0, 0}, {1028257425, 146, 0, 0}, {1073741820, 511, 0, 0}, {795442321, 146, 0, 0}, {524311552, 0, 0, 0}, {257969728, 0, 0, 0}, {127942272, 0, 0, 0}, {113254080, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {1376256, 0, 0, 0}, {1966080, 0, 0, 0}, {654305344, 2, 0, 0}, {1071611784, 5, 0, 0}, {287153120, 1, 0, 0}, {1935336, 0, 0, 0}, {1936352, 0, 0, 0}, {1761232, 0, 0, 0}, {46136448, 0, 0, 0}, {805253120, 1, 0, 0}, {1048412160, 6, 0, 0}, {824016896, 23, 0, 0}, {673021952, 23, 0, 0}, {993886872, 15, 0, 0}, {1073704944, 3, 0, 0}, {350219536, 0, 0, 0}, {1933312, 0, 0, 0}, {1933312, 0, 0, 0}, {557056, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {457920, 10880, 0, 0}, {1822160, 3456, 0, 0}, {8225768, 1496, 0, 0}, {10256816, 377, 0, 0}, {12353976, 124, 0, 0}, {146571704, 47, 0, 0}, {681345456, 79439, 0, 0}, {962463200, 1048460, 0, 0}, {1041756104, 4134368, 0, 0}, {524442176, 8192440, 0, 0}, {113246208, 10289529, 0, 0}, {49020928, 10256761, 0, 0}, {12353536, 10289529, 0, 0}, {6160384, 8225200, 0, 0}, {1544192, 4172248, 0, 0}, {475136, 786240, 0, 0}, {4096, 41472, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {232734720, 0, 0, 0}, {1071118848, 1, 0, 0}, {1023471232, 4, 0, 0}, {989875904, 4, 0, 0}, {1023438464, 3, 0, 0}, {931265536, 1, 0, 0}, {251388416, 0, 0, 0}, {12575232, 0, 0, 0}, {67043008, 60480, 0, 0}, {535576528, 24256, 0, 0}, {1063258600, 12163, 0, 0}, {973080560, 3567, 0, 0}, {268437488, 1023, 0, 0}, {553659872, 2047, 0, 0}, {1071054728, 20446, 0, 0}, {520087616, 130176, 0, 0}, {2392064, 32768, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {1880, 0, 0, 0}, {2520, 0, 0, 0}, {2008, 0, 0, 0}, {2000, 0, 0, 0}, {1488, 0, 0, 0}, {1480, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {152064, 0, 0, 0}, {96768, 0, 0, 0}, {24256, 0, 0, 0}, {12160, 0, 0, 0}, {3536, 0, 0, 0}, {2528, 0, 0, 0}, {1512, 0, 0, 0}, {1008, 0, 0, 0}, {1017, 0, 0, 0}, {441, 0, 0, 0}, {441, 0, 0, 0}, {1017, 0, 0, 0}, {1008, 0, 0, 0}, {1512, 0, 0, 0}, {2520, 0, 0, 0}, {3528, 0, 0, 0}, {12096, 0, 0, 0}, {24192, 0, 0, 0}, {129024, 0, 0, 0}, {110592, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {297, 0, 0, 0}, {2528, 0, 0, 0}, {8064, 0, 0, 0}, {20160, 0, 0, 0}, {28224, 0, 0, 0}, {96768, 0, 0, 0}, {129024, 0, 0, 0}, {194048, 0, 0, 0}, {193536, 0, 0, 0}, {226304, 0, 0, 0}, {226304, 0, 0, 0}, {193536, 0, 0, 0}, {194048, 0, 0, 0}, {129024, 0, 0, 0}, {97280, 0, 0, 0}, {28224, 0, 0, 0}, {16128, 0, 0, 0}, {8136, 0, 0, 0}, {2024, 0, 0, 0}, {225, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {3575808, 0, 0, 0}, {2064384, 0, 0, 0}, {1769472, 0, 0, 0}, {286982872, 4, 0, 0}, {1069244408, 15, 0, 0}, {618653976, 3, 0, 0}, {12570624, 0, 0, 0}, {65926656, 0, 0, 0}, {398524032, 0, 0, 0}, {377506944, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {294912, 0, 0, 0}, {4063232, 0, 0, 0}, {4063232, 0, 0, 0}, {4063232, 0, 0, 0}, {4063232, 0, 0, 0}, {767515488, 21, 0, 0}, {1073741808, 31, 0, 0}, {4063232, 0, 0, 0}, {4063232, 0, 0, 0}, {4063232, 0, 0, 0}, {4063232, 0, 0, 0}, {851968, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {6336, 0, 0, 0}, {8144, 0, 0, 0}, {3032, 0, 0, 0}, {2016, 0, 0, 0}, {1008, 0, 0, 0}, {305, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {748977, 0, 0, 0}, {786425, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {6984, 0, 0, 0}, {16344, 0, 0, 0}, {8144, 0, 0, 0}, {576, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {11829248, 0, 0, 0}, {12419072, 0, 0, 0}, {6193152, 0, 0, 0}, {1806336, 0, 0, 0}, {1294336, 0, 0, 0}, {516096, 0, 0, 0}, {193536, 0, 0, 0}, {129024, 0, 0, 0}, {65024, 0, 0, 0}, {24256, 0, 0, 0}, {12096, 0, 0, 0}, {3528, 0, 0, 0}, {2520, 0, 0, 0}, {1008, 0, 0, 0}, {442, 0, 0, 0}, {252, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {64967680, 0, 0, 0}, {805011072, 0, 0, 0}, {1042304896, 3, 0, 0}, {973082064, 6, 0, 0}, {805308896, 15, 0, 0}, {671090152, 23, 0, 0}, {671090160, 31, 0, 0}, {536872432, 39, 0, 0}, {536872432, 39, 0, 0}, {671090160, 31, 0, 0}, {671090152, 31, 0, 0}, {805308384, 23, 0, 0}, {956304344, 15, 0, 0}, {1023422408, 4, 0, 0}, {936574656, 1, 0, 0}, {234874368, 0, 0, 0}, {2654208, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {28639232, 0, 0, 0}, {33533952, 0, 0, 0}, {33519616, 0, 0, 0}, {33349504, 0, 0, 0}, {33327360, 0, 0, 0}, {33325056, 0, 0, 0}, {33325056, 0, 0, 0}, {33325056, 0, 0, 0}, {33325056, 0, 0, 0}, {33325056, 0, 0, 0}, {33325056, 0, 0, 0}, {33325056, 0, 0, 0}, {33325056, 0, 0, 0}, {33325056, 0, 0, 0}, {33325056, 0, 0, 0}, {30965760, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {81782336, 0, 0, 0}, {939229072, 1, 0, 0}, {1044388312, 4, 0, 0}, {989855808, 6, 0, 0}, {973078528, 6, 0, 0}, {989855744, 5, 0, 0}, {1040187392, 3, 0, 0}, {929038336, 0, 0, 0}, {266862592, 0, 0, 0}, {50135040, 0, 0, 0}, {6266880, 0, 0, 0}, {783360, 0, 0, 0}, {97920, 0, 0, 0}, {12240, 0, 0, 0}, {920350704, 30, 0, 0}, {1073741808, 31, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {216000640, 0, 0, 0}, {939229152, 1, 0, 0}, {1042285976, 5, 0, 0}, {989855744, 6, 0, 0}, {973078528, 6, 0, 0}, {1006632960, 4, 0, 0}, {799576064, 1, 0, 0}, {83884544, 0, 0, 0}, {788190720, 1, 0, 0}, {1025507328, 5, 0, 0}, {956301312, 23, 0, 0}, {805306368, 31, 0, 0}, {956301312, 23, 0, 0}, {1006632977, 6, 0, 0}, {1070746617, 2, 0, 0}, {369098656, 0, 0, 0}, {2433536, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {759169024, 0, 0, 0}, {1071906816, 0, 0, 0}, {938737664, 0, 0, 0}, {933068800, 0, 0, 0}, {926388224, 0, 0, 0}, {925360128, 0, 0, 0}, {927070208, 0, 0, 0}, {924868224, 0, 0, 0}, {924852096, 0, 0, 0}, {924845536, 0, 0, 0}, {929637818, 19, 0, 0}, {1073741821, 191, 0, 0}, {1066251994, 92, 0, 0}, {924844032, 0, 0, 0}, {924844032, 0, 0, 0}, {924844032, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {766958336, 2, 0, 0}, {1073741696, 2, 0, 0}, {153399168, 0, 0, 0}, {3968, 0, 0, 0}, {4040, 0, 0, 0}, {3528, 0, 0, 0}, {43437520, 0, 0, 0}, {939524048, 1, 0, 0}, {1046779008, 5, 0, 0}, {973078528, 15, 0, 0}, {805306368, 23, 0, 0}, {805306368, 23, 0, 0}, {956301312, 15, 0, 0}, {1025507408, 6, 0, 0}, {936791016, 1, 0, 0}, {218103704, 0, 0, 0}, {332288, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {1073319936, 3, 0, 0}, {903865344, 3, 0, 0}, {425536, 0, 0, 0}, {16192, 0, 0, 0}, {3528, 0, 0, 0}, {2520, 0, 0, 0}, {503227872, 0, 0, 0}, {1071086056, 4, 0, 0}, {989872112, 15, 0, 0}, {671091184, 31, 0, 0}, {536872424, 39, 0, 0}, {536872936, 39, 0, 0}, {671091672, 31, 0, 0}, {973094784, 15, 0, 0}, {1068695168, 3, 0, 0}, {520086528, 0, 0, 0}, {2654208, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {766958441, 29, 0, 0}, {1073741817, 39, 0, 0}, {841257544, 23, 0, 0}, {973078528, 6, 0, 0}, {1040187392, 3, 0, 0}, {926941184, 0, 0, 0}, {530579456, 0, 0, 0}, {266600448, 0, 0, 0}, {82837504, 0, 0, 0}, {33325056, 0, 0, 0}, {12451840, 0, 0, 0}, {6230016, 0, 0, 0}, {1814528, 0, 0, 0}, {1040384, 0, 0, 0}, {226816, 0, 0, 0}, {129536, 0, 0, 0}, {512, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {215995904, 0, 0, 0}, {1071087360, 2, 0, 0}, {1006645200, 6, 0, 0}, {956304344, 15, 0, 0}, {956304344, 6, 0, 0}, {1023422408, 4, 0, 0}, {801799872, 0, 0, 0}, {83883008, 0, 0, 0}, {519797312, 0, 0, 0}, {1063276488, 4, 0, 0}, {822086120, 23, 0, 0}, {536871920, 31, 0, 0}, {536871920, 31, 0, 0}, {822086120, 23, 0, 0}, {1066262480, 4, 0, 0}, {520092288, 0, 0, 0}, {2691072, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {62903808, 0, 0, 0}, {805011200, 0, 0, 0}, {1044393424, 3, 0, 0}, {973080552, 6, 0, 0}, {805307888, 23, 0, 0}, {671089648, 31, 0, 0}, {805307888, 31, 0, 0}, {989858784, 31, 0, 0}, {934141896, 31, 0, 0}, {702545024, 23, 0, 0}, {805638144, 15, 0, 0}, {956301312, 6, 0, 0}, {1023410176, 3, 0, 0}, {931135488, 0, 0, 0}, {251283712, 0, 0, 0}, {27000704, 0, 0, 0}, {42048, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {7048, 0, 0, 0}, {16344, 0, 0, 0}, {7568, 0, 0, 0}, {64, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {6984, 0, 0, 0}, {16344, 0, 0, 0}, {8144, 0, 0, 0}, {576, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {7048, 0, 0, 0}, {12256, 0, 0, 0}, {7568, 0, 0, 0}, {64, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {1800, 0, 0, 0}, {4048, 0, 0, 0}, {2528, 0, 0, 0}, {1512, 0, 0, 0}, {440, 0, 0, 0}, {249, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 9, 0, 0}, {419430400, 39, 0, 0}, {1065615360, 22, 0, 0}, {368971776, 0, 0, 0}, {5765184, 0, 0, 0}, {53144, 0, 0, 0}, {11760, 0, 0, 0}, {3112136, 0, 0, 0}, {218050560, 0, 0, 0}, {1067974656, 13, 0, 0}, {553648128, 39, 0, 0}, {0, 9, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {939523560, 31, 0, 0}, {766958432, 21, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {460175064, 11, 0, 0}, {1073741808, 31, 0, 0}, {153391688, 1, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {16, 0, 0, 0}, {1464, 0, 0, 0}, {90072, 0, 0, 0}, {5764672, 0, 0, 0}, {385449984, 0, 0, 0}, {1046478848, 21, 0, 0}, {989855744, 31, 0, 0}, {804585472, 2, 0, 0}, {27251712, 0, 0, 0}, {425880, 0, 0, 0}, {1976, 0, 0, 0}, {16, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {5733721, 0, 0, 0}, {67071484, 0, 0, 0}, {116129889, 0, 0, 0}, {264241152, 0, 0, 0}, {264241152, 0, 0, 0}, {116129792, 0, 0, 0}, {33390592, 0, 0, 0}, {3915776, 0, 0, 0}, {488960, 0, 0, 0}, {64512, 0, 0, 0}, {28160, 0, 0, 0}, {9216, 0, 0, 0}, {0, 0, 0, 0}, {55872, 0, 0, 0}, {130752, 0, 0, 0}, {97856, 0, 0, 0}, {4608, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {1048838144, 6591, 0, 0}, {637440000, 130980, 0, 0}, {3400192, 1298944, 0, 0}, {97280, 6193152, 0, 0}, {721432320, 14419246, 0, 0}, {935594944, 32509429, 0, 0}, {66324432, 65539008, 0, 0}, {12354528, 65276872, 0, 0}, {8225256, 65276360, 0, 0}, {6128104, 65538512, 0, 0}, {8225256, 32246232, 0, 0}, {14451680, 14158833, 0, 0}, {787482072, 4157167, 0, 0}, {761269192, 452100, 0, 0}, {16128, 0, 0, 0}, {424448, 5120, 0, 0}, {618643456, 16300, 0, 0}, {1070661632, 1911, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {45383680, 0, 0, 0}, {100499456, 0, 0, 0}, {266272768, 0, 0, 0}, {527933440, 0, 0, 0}, {925876224, 0, 0, 0}, {1040707584, 2, 0, 0}, {990049792, 4, 0, 0}, {956398080, 6, 0, 0}, {671116864, 23, 0, 0}, {901148416, 47, 0, 0}, {1073741696, 127, 0, 0}, {306785744, 253, 0, 0}, {2528, 443, 0, 0}, {1017, 1529, 0, 0}, {443, 3040, 0, 0}, {253, 7632, 0, 0}, {1, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {481745664, 1, 0, 0}, {1073741696, 39, 0, 0}, {707051392, 191, 0, 0}, {12160, 317, 0, 0}, {12160, 380, 0, 0}, {12160, 253, 0, 0}, {556056448, 119, 0, 0}, {1073741696, 4, 0, 0}, {1052176256, 38, 0, 0}, {134229888, 382, 0, 0}, {12160, 1018, 0, 0}, {12160, 1017, 0, 0}, {12160, 1019, 0, 0}, {268447616, 382, 0, 0}, {1054568320, 119, 0, 0}, {788529024, 3, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {1070923776, 166, 0, 0}, {922735104, 511, 0, 0}, {3111936, 217, 0, 0}, {61184, 0, 0, 0}, {16328, 0, 0, 0}, {3536, 0, 0, 0}, {3040, 0, 0, 0}, {2528, 0, 0, 0}, {2528, 0, 0, 0}, {3040, 0, 0, 0}, {3544, 0, 0, 0}, {12240, 0, 0, 0}, {24448, 0, 0, 0}, {458368, 72, 0, 0}, {767555072, 381, 0, 0}, {1073651712, 247, 0, 0}, {304349184, 1, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {481745664, 1, 0, 0}, {1073741696, 39, 0, 0}, {572833664, 383, 0, 0}, {12160, 2546, 0, 0}, {12160, 8152, 0, 0}, {12160, 16256, 0, 0}, {12160, 20288, 0, 0}, {12160, 24320, 0, 0}, {12160, 24320, 0, 0}, {12160, 20288, 0, 0}, {12160, 16256, 0, 0}, {12160, 8144, 0, 0}, {12160, 3057, 0, 0}, {419442560, 958, 0, 0}, {1071345536, 111, 0, 0}, {652214144, 2, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {766958336, 5, 0, 0}, {1073741696, 6, 0, 0}, {153403264, 1, 0, 0}, {12160, 0, 0, 0}, {12160, 0, 0, 0}, {12160, 0, 0, 0}, {153403264, 1, 0, 0}, {1073741696, 4, 0, 0}, {766963584, 3, 0, 0}, {12160, 0, 0, 0}, {12160, 0, 0, 0}, {12160, 0, 0, 0}, {12160, 0, 0, 0}, {12160, 0, 0, 0}, {920350592, 5, 0, 0}, {1073741696, 6, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {766958336, 5, 0, 0}, {1073741696, 6, 0, 0}, {153403264, 1, 0, 0}, {12160, 0, 0, 0}, {12160, 0, 0, 0}, {12160, 0, 0, 0}, {12160, 0, 0, 0}, {613572480, 2, 0, 0}, {1073741696, 4, 0, 0}, {306790272, 1, 0, 0}, {12160, 0, 0, 0}, {12160, 0, 0, 0}, {12160, 0, 0, 0}, {12160, 0, 0, 0}, {12160, 0, 0, 0}, {12160, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {1053884416, 1334, 0, 0}, {922730496, 3583, 0, 0}, {3406336, 1736, 0, 0}, {97984, 0, 0, 0}, {16328, 0, 0, 0}, {8144, 0, 0, 0}, {3040, 0, 0, 0}, {419432928, 6363, 0, 0}, {989858272, 12287, 0, 0}, {419433440, 12187, 0, 0}, {3544, 12160, 0, 0}, {12232, 12160, 0, 0}, {24384, 12160, 0, 0}, {458368, 12160, 0, 0}, {635433984, 12277, 0, 0}, {1073352704, 6591, 0, 0}, {304087040, 9, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {11008, 6976, 0, 0}, {12160, 12224, 0, 0}, {12160, 12160, 0, 0}, {12160, 12160, 0, 0}, {12160, 12160, 0, 0}, {12160, 12160, 0, 0}, {153403264, 12169, 0, 0}, {1073741696, 12287, 0, 0}, {766963584, 12269, 0, 0}, {12160, 12160, 0, 0}, {12160, 12160, 0, 0}, {12160, 12160, 0, 0}, {12160, 12160, 0, 0}, {12160, 12160, 0, 0}, {12160, 12160, 0, 0}, {12160, 12160, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {11008, 0, 0, 0}, {12160, 0, 0, 0}, {12160, 0, 0, 0}, {12160, 0, 0, 0}, {12160, 0, 0, 0}, {12160, 0, 0, 0}, {12160, 0, 0, 0}, {12160, 0, 0, 0}, {12160, 0, 0, 0}, {12160, 0, 0, 0}, {12160, 0, 0, 0}, {12160, 0, 0, 0}, {12160, 0, 0, 0}, {12160, 0, 0, 0}, {12160, 0, 0, 0}, {12160, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {184832, 0, 0, 0}, {259072, 0, 0, 0}, {226304, 0, 0, 0}, {226304, 0, 0, 0}, {226304, 0, 0, 0}, {226304, 0, 0, 0}, {226304, 0, 0, 0}, {226304, 0, 0, 0}, {226304, 0, 0, 0}, {226304, 0, 0, 0}, {226304, 0, 0, 0}, {226304, 0, 0, 0}, {226304, 0, 0, 0}, {226304, 0, 0, 0}, {226304, 0, 0, 0}, {226304, 0, 0, 0}, {226304, 0, 0, 0}, {195072, 0, 0, 0}, {98221, 0, 0, 0}, {15871, 0, 0, 0}, {81, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {11008, 874, 0, 0}, {134229888, 318, 0, 0}, {822095744, 39, 0, 0}, {1023422336, 5, 0, 0}, {799027072, 0, 0, 0}, {250621824, 0, 0, 0}, {31305600, 0, 0, 0}, {12570496, 0, 0, 0}, {67075968, 0, 0, 0}, {267149184, 0, 0, 0}, {933244800, 0, 0, 0}, {1042296704, 4, 0, 0}, {973090688, 23, 0, 0}, {536883072, 119, 0, 0}, {12160, 382, 0, 0}, {12160, 2033, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {11008, 0, 0, 0}, {12160, 0, 0, 0}, {12160, 0, 0, 0}, {12160, 0, 0, 0}, {12160, 0, 0, 0}, {12160, 0, 0, 0}, {12160, 0, 0, 0}, {12160, 0, 0, 0}, {12160, 0, 0, 0}, {12160, 0, 0, 0}, {12160, 0, 0, 0}, {12160, 0, 0, 0}, {12160, 0, 0, 0}, {12160, 0, 0, 0}, {920350592, 14, 0, 0}, {1073741696, 15, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {88832, 11968512, 0, 0}, {196480, 14667776, 0, 0}, {524160, 14643712, 0, 0}, {1035648, 14579200, 0, 0}, {1814400, 14515200, 0, 0}, {4136832, 14474816, 0, 0}, {10329984, 14462720, 0, 0}, {14458752, 14454656, 0, 0}, {49553280, 14485968, 0, 0}, {82583424, 14484968, 0, 0}, {132390784, 14483896, 0, 0}, {396369792, 14483706, 0, 0}, {792731520, 14483581, 0, 0}, {1040195456, 14483503, 0, 0}, {1006641024, 14483487, 0, 0}, {973086592, 14450702, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {23296, 19008, 0, 0}, {163712, 28288, 0, 0}, {524160, 24192, 0, 0}, {1564032, 24192, 0, 0}, {8363904, 24192, 0, 0}, {31297408, 24192, 0, 0}, {100147072, 24192, 0, 0}, {401088384, 24192, 0, 0}, {931143552, 24192, 0, 0}, {1040195456, 24196, 0, 0}, {973086592, 24143, 0, 0}, {671096704, 24175, 0, 0}, {134225792, 28479, 0, 0}, {8064, 24571, 0, 0}, {8064, 28648, 0, 0}, {8064, 24456, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {936738816, 101, 0, 0}, {922739712, 1535, 0, 0}, {2850368, 12265, 0, 0}, {61248, 28480, 0, 0}, {12232, 97856, 0, 0}, {3544, 162304, 0, 0}, {3040, 194560, 0, 0}, {3040, 226816, 0, 0}, {2528, 226816, 0, 0}, {3040, 194560, 0, 0}, {3544, 195072, 0, 0}, {8136, 130048, 0, 0}, {24448, 61184, 0, 0}, {425600, 16344, 0, 0}, {750777856, 2558, 0, 0}, {1073651712, 175, 0, 0}, {170131456, 1, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {347527936, 0, 0, 0}, {1073741696, 13, 0, 0}, {992264064, 47, 0, 0}, {402665344, 127, 0, 0}, {12160, 191, 0, 0}, {12160, 191, 0, 0}, {268447616, 127, 0, 0}, {840970112, 39, 0, 0}, {1073442688, 13, 0, 0}, {501219200, 0, 0, 0}, {12160, 0, 0, 0}, {12160, 0, 0, 0}, {12160, 0, 0, 0}, {12160, 0, 0, 0}, {12160, 0, 0, 0}, {12160, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {936738816, 101, 0, 0}, {922739712, 1535, 0, 0}, {2850368, 12265, 0, 0}, {61248, 28480, 0, 0}, {12232, 97856, 0, 0}, {3544, 162304, 0, 0}, {3040, 194560, 0, 0}, {3040, 226816, 0, 0}, {2528, 226816, 0, 0}, {3040, 194560, 0, 0}, {3544, 195072, 0, 0}, {8136, 130048, 0, 0}, {24448, 65280, 0, 0}, {425600, 16344, 0, 0}, {750777856, 2558, 0, 0}, {1073651712, 183, 0, 0}, {572784640, 119, 0, 0}, {0, 957, 0, 0}, {0, 7665, 0, 0}, {0, 19272, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {347527936, 0, 0, 0}, {1073741696, 14, 0, 0}, {858046336, 47, 0, 0}, {268447616, 127, 0, 0}, {12160, 190, 0, 0}, {134229888, 191, 0, 0}, {402665344, 55, 0, 0}, {1030311808, 23, 0, 0}, {805306240, 2, 0, 0}, {533581696, 0, 0, 0}, {1061171072, 1, 0, 0}, {1006645120, 5, 0, 0}, {822095744, 31, 0, 0}, {402665344, 119, 0, 0}, {12160, 318, 0, 0}, {12160, 1458, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {635393536, 1, 0, 0}, {1073479488, 4, 0, 0}, {570437584, 1, 0, 0}, {2528, 0, 0, 0}, {2024, 0, 0, 0}, {7648, 0, 0, 0}, {126920, 0, 0, 0}, {26999936, 0, 0, 0}, {536817664, 0, 0, 0}, {1067974656, 3, 0, 0}, {1006632960, 6, 0, 0}, {956301312, 15, 0, 0}, {956301312, 7, 0, 0}, {1025507416, 5, 0, 0}, {1071013368, 1, 0, 0}, {234880928, 0, 0, 0}, {2433536, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {766958444, 45, 0, 0}, {1073741822, 63, 0, 0}, {159322697, 9, 0, 0}, {4128768, 0, 0, 0}, {6225920, 0, 0, 0}, {6225920, 0, 0, 0}, {6225920, 0, 0, 0}, {6225920, 0, 0, 0}, {6225920, 0, 0, 0}, {6225920, 0, 0, 0}, {6225920, 0, 0, 0}, {6225920, 0, 0, 0}, {6225920, 0, 0, 0}, {6225920, 0, 0, 0}, {6225920, 0, 0, 0}, {6225920, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {6976, 6976, 0, 0}, {8136, 12224, 0, 0}, {8136, 12160, 0, 0}, {8136, 12160, 0, 0}, {8136, 12160, 0, 0}, {8136, 12160, 0, 0}, {8136, 12160, 0, 0}, {8136, 12160, 0, 0}, {8136, 12160, 0, 0}, {8136, 12160, 0, 0}, {8136, 12160, 0, 0}, {12160, 8136, 0, 0}, {20288, 3544, 0, 0}, {130688, 2034, 0, 0}, {901511168, 383, 0, 0}, {1073688576, 30, 0, 0}, {172228608, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {173, 872, 0, 0}, {380, 1018, 0, 0}, {1018, 316, 0, 0}, {2032, 190, 0, 0}, {268438488, 55, 0, 0}, {671096776, 39, 0, 0}, {956317504, 15, 0, 0}, {989880000, 6, 0, 0}, {1023475264, 3, 0, 0}, {1059191296, 1, 0, 0}, {795047424, 0, 0, 0}, {531100160, 0, 0, 0}, {265277440, 0, 0, 0}, {100376576, 0, 0, 0}, {67043328, 0, 0, 0}, {31326208, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {671088876, 754974741, 1, 0}, {973078971, 1061158959, 1, 0}, {1006633977, 794820663, 0, 0}, {1040188912, 530579645, 0, 0}, {790628832, 266600763, 0, 0}, {658508760, 115868089, 0, 0}, {394272712, 99353584, 0, 0}, {264253312, 66324448, 0, 0}, {99110656, 33328080, 0, 0}, {65826432, 14487496, 0, 0}, {49577536, 10329920, 0, 0}, {16350208, 6176448, 0, 0}, {12515328, 4152896, 0, 0}, {8385536, 1833984, 0, 0}, {4190720, 1308672, 0, 0}, {1560576, 783360, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {874, 236, 0, 0}, {268438000, 127, 0, 0}, {805318600, 23, 0, 0}, {1006661312, 5, 0, 0}, {927071232, 1, 0, 0}, {531100672, 0, 0, 0}, {100384768, 0, 0, 0}, {33488896, 0, 0, 0}, {50302976, 0, 0, 0}, {116908032, 0, 0, 0}, {664991232, 0, 0, 0}, {1059126848, 2, 0, 0}, {989876032, 6, 0, 0}, {805309904, 39, 0, 0}, {268436977, 191, 0, 0}, {380, 380, 0, 0}, {1, 64, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {236, 172, 0, 0}, {402654203, 127, 0, 0}, {805308904, 31, 0, 0}, {989863888, 6, 0, 0}, {1040207680, 2, 0, 0}, {794885696, 0, 0, 0}, {398620672, 0, 0, 0}, {100135424, 0, 0, 0}, {33538048, 0, 0, 0}, {10424320, 0, 0, 0}, {8290304, 0, 0, 0}, {8290304, 0, 0, 0}, {8290304, 0, 0, 0}, {8290304, 0, 0, 0}, {8290304, 0, 0, 0}, {8290304, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {766958440, 29, 0, 0}, {1073741816, 47, 0, 0}, {992252488, 23, 0, 0}, {1040187392, 4, 0, 0}, {931135488, 0, 0, 0}, {266862592, 0, 0, 0}, {66584576, 0, 0, 0}, {14548992, 0, 0, 0}, {4169728, 0, 0, 0}, {1040384, 0, 0, 0}, {194560, 0, 0, 0}, {65152, 0, 0, 0}, {16256, 0, 0, 0}, {3040, 0, 0, 0}, {920350201, 46, 0, 0}, {1073741818, 55, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {1235784, 0, 0, 0}, {1306576, 0, 0, 0}, {3024, 0, 0, 0}, {3024, 0, 0, 0}, {3024, 0, 0, 0}, {3024, 0, 0, 0}, {3024, 0, 0, 0}, {3024, 0, 0, 0}, {3024, 0, 0, 0}, {3024, 0, 0, 0}, {3024, 0, 0, 0}, {3024, 0, 0, 0}, {3024, 0, 0, 0}, {3024, 0, 0, 0}, {3024, 0, 0, 0}, {3024, 0, 0, 0}, {3024, 0, 0, 0}, {302032, 0, 0, 0}, {1572816, 0, 0, 0}, {636680, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {172, 0, 0, 0}, {379, 0, 0, 0}, {1008, 0, 0, 0}, {2016, 0, 0, 0}, {3536, 0, 0, 0}, {12160, 0, 0, 0}, {20160, 0, 0, 0}, {28224, 0, 0, 0}, {96768, 0, 0, 0}, {193536, 0, 0, 0}, {516096, 0, 0, 0}, {1032192, 0, 0, 0}, {1810432, 0, 0, 0}, {4128768, 0, 0, 0}, {10321920, 0, 0, 0}, {14188544, 0, 0, 0}, {2097152, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {121707, 0, 0, 0}, {163771, 0, 0, 0}, {128512, 0, 0, 0}, {128512, 0, 0, 0}, {128512, 0, 0, 0}, {128512, 0, 0, 0}, {128512, 0, 0, 0}, {128512, 0, 0, 0}, {128512, 0, 0, 0}, {128512, 0, 0, 0}, {128512, 0, 0, 0}, {128512, 0, 0, 0}, {128512, 0, 0, 0}, {128512, 0, 0, 0}, {128512, 0, 0, 0}, {128512, 0, 0, 0}, {128512, 0, 0, 0}, {129097, 0, 0, 0}, {163836, 0, 0, 0}, {83674, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {1736704, 0, 0, 0}, {8364032, 0, 0, 0}, {14372864, 0, 0, 0}, {65401344, 0, 0, 0}, {130087424, 0, 0, 0}, {524312128, 0, 0, 0}, {1023418112, 0, 0, 0}, {973081544, 4, 0, 0}, {671090144, 15, 0, 0}, {268435824, 39, 0, 0}, {8, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {805306366, 0, 0, 0}, {325957338, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {1896, 0, 0, 0}, {8144, 0, 0, 0}, {61056, 0, 0, 0}, {119296, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {215963200, 0, 0, 0}, {938966784, 1, 0, 0}, {1042290240, 4, 0, 0}, {989855744, 5, 0, 0}, {989855744, 5, 0, 0}, {1073698368, 5, 0, 0}, {1030942600, 5, 0, 0}, {973081576, 5, 0, 0}, {1006634480, 5, 0, 0}, {1061160944, 5, 0, 0}, {1039552480, 5, 0, 0}, {813694720, 5, 0, 0}, {37376, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {2888, 0, 0, 0}, {4040, 0, 0, 0}, {3528, 0, 0, 0}, {4040, 0, 0, 0}, {4040, 0, 0, 0}, {651791816, 1, 0, 0}, {1071373768, 14, 0, 0}, {822181832, 47, 0, 0}, {268451784, 127, 0, 0}, {8136, 190, 0, 0}, {8136, 254, 0, 0}, {4040, 254, 0, 0}, {8136, 190, 0, 0}, {134229960, 127, 0, 0}, {671117256, 47, 0, 0}, {1049882056, 23, 0, 0}, {805214152, 2, 0, 0}, {19136512, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {500908544, 0, 0, 0}, {937163904, 0, 0, 0}, {167829384, 0, 0, 0}, {3544, 0, 0, 0}, {2536, 0, 0, 0}, {2024, 0, 0, 0}, {2024, 0, 0, 0}, {2024, 0, 0, 0}, {3040, 0, 0, 0}, {134234056, 0, 0, 0}, {917995264, 0, 0, 0}, {671081984, 0, 0, 0}, {2392064, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {268435456, 37, 0, 0}, {402653184, 47, 0, 0}, {402653184, 47, 0, 0}, {402653184, 47, 0, 0}, {402653184, 47, 0, 0}, {297489408, 47, 0, 0}, {670826176, 47, 0, 0}, {1006653384, 47, 0, 0}, {671092184, 47, 0, 0}, {402655720, 47, 0, 0}, {402655208, 47, 0, 0}, {268437480, 47, 0, 0}, {402655208, 47, 0, 0}, {536873952, 47, 0, 0}, {973090768, 47, 0, 0}, {800259840, 47, 0, 0}, {67102720, 47, 0, 0}, {294912, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {215958016, 0, 0, 0}, {936869504, 1, 0, 0}, {1006649216, 5, 0, 0}, {805309400, 15, 0, 0}, {690264552, 23, 0, 0}, {1073741800, 31, 0, 0}, {479349736, 12, 0, 0}, {2024, 0, 0, 0}, {3032, 0, 0, 0}, {16328, 1, 0, 0}, {898858688, 6, 0, 0}, {939512832, 3, 0, 0}, {19169280, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {43429888, 0, 0, 0}, {67107328, 0, 0, 0}, {2191040, 0, 0, 0}, {20224, 0, 0, 0}, {16128, 0, 0, 0}, {5697441, 0, 0, 0}, {8355836, 0, 0, 0}, {20224, 0, 0, 0}, {20224, 0, 0, 0}, {20224, 0, 0, 0}, {20224, 0, 0, 0}, {20224, 0, 0, 0}, {20224, 0, 0, 0}, {20224, 0, 0, 0}, {20224, 0, 0, 0}, {20224, 0, 0, 0}, {16128, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {767289408, 37, 0, 0}, {1073115016, 29, 0, 0}, {926944224, 0, 0, 0}, {1040189416, 2, 0, 0}, {1040189416, 2, 0, 0}, {1061161952, 1, 0, 0}, {535977864, 0, 0, 0}, {46136896, 0, 0, 0}, {7552, 0, 0, 0}, {7632, 0, 0, 0}, {788528960, 1, 0, 0}, {1071345488, 15, 0, 0}, {822084538, 31, 0, 0}, {536871101, 31, 0, 0}, {822083837, 23, 0, 0}, {1066220026, 4, 0, 0}, {520093584, 0, 0, 0}, {2433536, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {2888, 0, 0, 0}, {4040, 0, 0, 0}, {3528, 0, 0, 0}, {4040, 0, 0, 0}, {4040, 0, 0, 0}, {786009544, 2, 0, 0}, {1071373768, 23, 0, 0}, {687964104, 47, 0, 0}, {268451784, 55, 0, 0}, {134225864, 55, 0, 0}, {134225864, 55, 0, 0}, {134221768, 55, 0, 0}, {134221768, 55, 0, 0}, {134221768, 55, 0, 0}, {134221768, 55, 0, 0}, {134221768, 63, 0, 0}, {134221256, 55, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {640, 0, 0, 0}, {8144, 0, 0, 0}, {8144, 0, 0, 0}, {576, 0, 0, 0}, {0, 0, 0, 0}, {2888, 0, 0, 0}, {4040, 0, 0, 0}, {3528, 0, 0, 0}, {4040, 0, 0, 0}, {4040, 0, 0, 0}, {4040, 0, 0, 0}, {4040, 0, 0, 0}, {4040, 0, 0, 0}, {4040, 0, 0, 0}, {4040, 0, 0, 0}, {4040, 0, 0, 0}, {3528, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {8704, 0, 0, 0}, {162304, 0, 0, 0}, {162304, 0, 0, 0}, {8192, 0, 0, 0}, {0, 0, 0, 0}, {120320, 0, 0, 0}, {162304, 0, 0, 0}, {129024, 0, 0, 0}, {129024, 0, 0, 0}, {129024, 0, 0, 0}, {129024, 0, 0, 0}, {129024, 0, 0, 0}, {129024, 0, 0, 0}, {129024, 0, 0, 0}, {129024, 0, 0, 0}, {129024, 0, 0, 0}, {129024, 0, 0, 0}, {129536, 0, 0, 0}, {129024, 0, 0, 0}, {129536, 0, 0, 0}, {65380, 0, 0, 0}, {15870, 0, 0, 0}, {657, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {2888, 0, 0, 0}, {4040, 0, 0, 0}, {3528, 0, 0, 0}, {3528, 0, 0, 0}, {3528, 0, 0, 0}, {687869384, 13, 0, 0}, {1042288072, 3, 0, 0}, {532942280, 0, 0, 0}, {83398600, 0, 0, 0}, {10390984, 0, 0, 0}, {4185544, 0, 0, 0}, {12550088, 0, 0, 0}, {83410888, 0, 0, 0}, {401083848, 0, 0, 0}, {929041864, 1, 0, 0}, {1023414216, 6, 0, 0}, {822087112, 39, 0, 0}, {0, 8, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {2888, 0, 0, 0}, {4040, 0, 0, 0}, {3528, 0, 0, 0}, {4040, 0, 0, 0}, {4040, 0, 0, 0}, {4040, 0, 0, 0}, {4040, 0, 0, 0}, {4040, 0, 0, 0}, {4040, 0, 0, 0}, {4040, 0, 0, 0}, {4040, 0, 0, 0}, {4040, 0, 0, 0}, {4040, 0, 0, 0}, {4040, 0, 0, 0}, {4040, 0, 0, 0}, {4040, 0, 0, 0}, {3528, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {651790152, 5728896, 0, 0}, {1071373768, 50327517, 0, 0}, {989953992, 99909951, 0, 0}, {805322696, 115867695, 0, 0}, {671096776, 115867687, 0, 0}, {671096776, 115867679, 0, 0}, {671092680, 115867679, 0, 0}, {671092680, 115867679, 0, 0}, {671092680, 115867679, 0, 0}, {671092680, 115867679, 0, 0}, {671092680, 115867679, 0, 0}, {536874440, 115605535, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {786007880, 2, 0, 0}, {1071369160, 23, 0, 0}, {687964104, 47, 0, 0}, {268451784, 55, 0, 0}, {134225864, 55, 0, 0}, {134225864, 55, 0, 0}, {134221768, 55, 0, 0}, {134221768, 55, 0, 0}, {134221768, 55, 0, 0}, {134221768, 55, 0, 0}, {134221768, 63, 0, 0}, {134221256, 55, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {366690816, 0, 0, 0}, {1071381632, 3, 0, 0}, {989908872, 23, 0, 0}, {536874456, 47, 0, 0}, {134220264, 127, 0, 0}, {134219752, 127, 0, 0}, {134219752, 127, 0, 0}, {134219752, 127, 0, 0}, {402656216, 55, 0, 0}, {822099912, 31, 0, 0}, {1068695232, 5, 0, 0}, {520082432, 0, 0, 0}, {2392064, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {651790152, 1, 0, 0}, {1071369672, 14, 0, 0}, {822181832, 47, 0, 0}, {268451784, 127, 0, 0}, {8136, 190, 0, 0}, {8136, 254, 0, 0}, {8136, 253, 0, 0}, {8136, 190, 0, 0}, {134229960, 127, 0, 0}, {671150024, 47, 0, 0}, {1050144200, 15, 0, 0}, {805215688, 2, 0, 0}, {19140552, 0, 0, 0}, {8136, 0, 0, 0}, {4040, 0, 0, 0}, {4040, 0, 0, 0}, {4040, 0, 0, 0}, {1152, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {29053952, 37, 0, 0}, {670826176, 47, 0, 0}, {1006653384, 47, 0, 0}, {671092184, 47, 0, 0}, {402655720, 47, 0, 0}, {402655208, 47, 0, 0}, {268437480, 47, 0, 0}, {402655208, 47, 0, 0}, {536873952, 47, 0, 0}, {973090768, 47, 0, 0}, {800259904, 47, 0, 0}, {469755904, 47, 0, 0}, {402948096, 47, 0, 0}, {402653184, 47, 0, 0}, {402653184, 47, 0, 0}, {402653184, 47, 0, 0}, {402653184, 47, 0, 0}, {134217728, 10, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {97847112, 0, 0, 0}, {100641736, 0, 0, 0}, {19332552, 0, 0, 0}, {24520, 0, 0, 0}, {8136, 0, 0, 0}, {8136, 0, 0, 0}, {4040, 0, 0, 0}, {4040, 0, 0, 0}, {4040, 0, 0, 0}, {4040, 0, 0, 0}, {4040, 0, 0, 0}, {3528, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {196864128, 0, 0, 0}, {268103632, 0, 0, 0}, {35653616, 0, 0, 0}, {1520, 0, 0, 0}, {48608, 0, 0, 0}, {5504832, 0, 0, 0}, {83870720, 0, 0, 0}, {535855104, 0, 0, 0}, {662700032, 0, 0, 0}, {662700048, 0, 0, 0}, {267799480, 0, 0, 0}, {46137248, 0, 0, 0}, {299520, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {5696, 0, 0, 0}, {11968, 0, 0, 0}, {8000, 0, 0, 0}, {7794657, 0, 0, 0}, {10452988, 0, 0, 0}, {12160, 0, 0, 0}, {8064, 0, 0, 0}, {12160, 0, 0, 0}, {8064, 0, 0, 0}, {8064, 0, 0, 0}, {12160, 0, 0, 0}, {8064, 0, 0, 0}, {16256, 0, 0, 0}, {9600768, 0, 0, 0}, {12581376, 0, 0, 0}, {299008, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {134220104, 37, 0, 0}, {268438992, 55, 0, 0}, {268438992, 55, 0, 0}, {268438992, 55, 0, 0}, {268438992, 55, 0, 0}, {268438992, 55, 0, 0}, {268438992, 55, 0, 0}, {268438992, 55, 0, 0}, {536874448, 55, 0, 0}, {973094856, 55, 0, 0}, {800259904, 55, 0, 0}, {83884032, 54, 0, 0}, {299008, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {687866029, 13, 0, 0}, {989856124, 6, 0, 0}, {1023411193, 3, 0, 0}, {1059063784, 1, 0, 0}, {794824144, 0, 0, 0}, {396369792, 0, 0, 0}, {115625728, 0, 0, 0}, {82603648, 0, 0, 0}, {32832512, 0, 0, 0}, {14611968, 0, 0, 0}, {8385024, 0, 0, 0}, {3919872, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {761266412, 3571713, 0, 0}, {1067450747, 1810434, 0, 0}, {1055130617, 1294340, 0, 0}, {871106032, 774150, 0, 0}, {569641440, 520727, 0, 0}, {417074640, 193575, 0, 0}, {144510912, 129079, 0, 0}, {6172480, 64126, 0, 0}, {2019008, 28412, 0, 0}, {1568320, 24506, 0, 0}, {1047552, 16368, 0, 0}, {489472, 7648, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {704643945, 5, 0, 0}, {1042288096, 3, 0, 0}, {799035264, 0, 0, 0}, {250150464, 0, 0, 0}, {50034176, 0, 0, 0}, {10473472, 0, 0, 0}, {10473472, 0, 0, 0}, {50034176, 0, 0, 0}, {250150528, 0, 0, 0}, {799031168, 0, 0, 0}, {1042287584, 3, 0, 0}, {838861754, 14, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {687866028, 13, 0, 0}, {989856188, 6, 0, 0}, {1023411193, 4, 0, 0}, {1059064296, 1, 0, 0}, {794824144, 0, 0, 0}, {530591616, 0, 0, 0}, {266624704, 0, 0, 0}, {82607680, 0, 0, 0}, {49641984, 0, 0, 0}, {14611456, 0, 0, 0}, {8380416, 0, 0, 0}, {4173824, 0, 0, 0}, {1552384, 0, 0, 0}, {778240, 0, 0, 0}, {226816, 0, 0, 0}, {98147, 0, 0, 0}, {15869, 0, 0, 0}, {145, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {364305248, 0, 0, 0}, {536608232, 0, 0, 0}, {250347520, 0, 0, 0}, {50102272, 0, 0, 0}, {8290304, 0, 0, 0}, {1556480, 0, 0, 0}, {521216, 0, 0, 0}, {97344, 0, 0, 0}, {20288, 0, 0, 0}, {3032, 0, 0, 0}, {498523641, 0, 0, 0}, {671088634, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {7704576, 0, 0, 0}, {10478080, 0, 0, 0}, {456704, 0, 0, 0}, {96768, 0, 0, 0}, {96768, 0, 0, 0}, {96768, 0, 0, 0}, {96768, 0, 0, 0}, {97280, 0, 0, 0}, {28424, 0, 0, 0}, {7163, 0, 0, 0}, {11763, 0, 0, 0}, {65152, 0, 0, 0}, {96768, 0, 0, 0}, {96768, 0, 0, 0}, {96768, 0, 0, 0}, {96768, 0, 0, 0}, {96768, 0, 0, 0}, {3110912, 0, 0, 0}, {12571136, 0, 0, 0}, {5046272, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {1441792, 0, 0, 0}, {2031616, 0, 0, 0}, {1769472, 0, 0, 0}, {1769472, 0, 0, 0}, {1769472, 0, 0, 0}, {1769472, 0, 0, 0}, {1769472, 0, 0, 0}, {1769472, 0, 0, 0}, {1769472, 0, 0, 0}, {1769472, 0, 0, 0}, {1769472, 0, 0, 0}, {1769472, 0, 0, 0}, {1769472, 0, 0, 0}, {1769472, 0, 0, 0}, {1769472, 0, 0, 0}, {1769472, 0, 0, 0}, {1769472, 0, 0, 0}, {1769472, 0, 0, 0}, {1769472, 0, 0, 0}, {1769472, 0, 0, 0}, {1769472, 0, 0, 0}, {2031616, 0, 0, 0}, {557056, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {1321, 0, 0, 0}, {16378, 0, 0, 0}, {32456, 0, 0, 0}, {64512, 0, 0, 0}, {64512, 0, 0, 0}, {64512, 0, 0, 0}, {64512, 0, 0, 0}, {64512, 0, 0, 0}, {456704, 0, 0, 0}, {14659584, 0, 0, 0}, {10211840, 0, 0, 0}, {162304, 0, 0, 0}, {64512, 0, 0, 0}, {64512, 0, 0, 0}, {64512, 0, 0, 0}, {64512, 0, 0, 0}, {64512, 0, 0, 0}, {28496, 0, 0, 0}, {11770, 0, 0, 0}, {153, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+    {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {5184, 0, 0, 0}, {5504984, 28, 0, 0}, {1073694584, 31, 0, 0}, {763887632, 2, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+};
 
 // Define structures for text rendering
  typedef struct {
@@ -1210,9 +1537,10 @@ __CONSTANT__ int font[FONT_LENGTH][FONT_HEIGHT] = {{0, 0, 0, 0, 0, 0, 0, 0, 0, 0
      float scale; // Height of the character relative to the image height
  } char_trans_t;
  
- typedef struct {
-     float x, y; // Current pixel position in normalized coordinates
- } curr_pos_t;
+typedef struct {
+    float x, y; // Current pixel position in normalized coordinates
+    float aspect; // Display aspect ratio of the normalized drawing area
+} curr_pos_t;
  
 // Helper functions
  __DEVICE__ char_trans_t make_char_trans(float x, float y, float scale) {
@@ -1223,64 +1551,221 @@ __CONSTANT__ int font[FONT_LENGTH][FONT_HEIGHT] = {{0, 0, 0, 0, 0, 0, 0, 0, 0, 0
     return result;
  }
  
- __DEVICE__ curr_pos_t make_curr_pos(float x, float y) {
+ __DEVICE__ curr_pos_t make_curr_pos(float x, float y, float aspect) {
     curr_pos_t result = {};
     result.x = x;
     result.y = y;
+    result.aspect = aspect;
     return result;
  }
  
- __DEVICE__ void draw_char(
+__DEVICE__ float font_kerning_at(int left_glyph, int right_glyph) {
+    int pair_index = left_glyph * FONT_LENGTH + right_glyph;
+    int packed = font_kerning_packed[pair_index / FONT_KERNINGS_PER_INT];
+    int shift = (pair_index % FONT_KERNINGS_PER_INT) * FONT_KERNING_BITS;
+    int adjustment = (packed >> shift) & 63;
+    if (adjustment >= 32) adjustment -= 64;
+    return (float)adjustment / FONT_KERNING_SCALE;
+}
+
+__DEVICE__ float font_coverage_at(int glyph_index, int row, int col) {
+    __CONSTANTREF__ int* packed_row = &font_bitmap[glyph_index][row][0];
+    int packed = packed_row[col / FONT_PIXELS_PER_INT];
+    int shift = (col % FONT_PIXELS_PER_INT) * FONT_COVERAGE_BITS;
+    int coverage = (packed >> shift) & 7;
+    return (float)coverage * (1.0f / 7.0f);
+}
+
+__DEVICE__ void draw_char(
     char c, float3 char_color, __PRIVATE__ char_trans_t* char_trans, __PRIVATE__ curr_pos_t* curr_pos, __PRIVATE__ float3* curr_color) {
+    int char_code = (int)c;
+    if (char_code < FONT_FIRST_CHAR || char_code >= FONT_FIRST_CHAR + FONT_LENGTH) char_code = 63;
+    int glyph_index = char_code - FONT_FIRST_CHAR;
     float char_height = char_trans->scale;
-    float char_width = char_trans->scale * FONT_WIDTH / FONT_HEIGHT;
+    float char_width = char_trans->scale * FONT_WIDTH / FONT_HEIGHT / curr_pos->aspect;
 
-    // Check if current position is within the character bounds
-    if (char_trans->x <= curr_pos->x && curr_pos->x <= char_trans->x + char_width && char_trans->y <= curr_pos->y &&
-        curr_pos->y <= char_trans->y + char_height) {
+    if (curr_pos->x < char_trans->x || curr_pos->x >= char_trans->x + char_width ||
+        curr_pos->y < char_trans->y || curr_pos->y >= char_trans->y + char_height) return;
 
-        // Get the character symbol from the font data
-        __CONSTANTREF__ int* char_symbol = &font[c][0];
+    float sample_x = (curr_pos->x - char_trans->x) / char_width * FONT_WIDTH;
+    float sample_y = (curr_pos->y - char_trans->y) / char_height * FONT_HEIGHT;
+    if (sample_x < 0.0f) sample_x = 0.0f;
+    if (sample_y < 0.0f) sample_y = 0.0f;
+    if (sample_x > (float)(FONT_WIDTH - 1)) sample_x = (float)(FONT_WIDTH - 1);
+    if (sample_y > (float)(FONT_HEIGHT - 1)) sample_y = (float)(FONT_HEIGHT - 1);
 
-        // Compute the row and column in the character grid
-        int row = (int)_round((curr_pos->y - char_trans->y) / char_height * FONT_HEIGHT);
-        int col = (int)_round((curr_pos->x - char_trans->x) / char_width * FONT_WIDTH);
+    int x0 = (int)sample_x;
+    int y0 = (int)sample_y;
+    int x1 = x0 + 1;
+    int y1 = y0 + 1;
+    if (x1 >= FONT_WIDTH) x1 = FONT_WIDTH - 1;
+    if (y1 >= FONT_HEIGHT) y1 = FONT_HEIGHT - 1;
+    float tx = sample_x - (float)x0;
+    float ty = sample_y - (float)y0;
 
-        if (char_symbol[row] & (1 << col)) {
-            *curr_color = char_color;
-        }
-    }
- }
- 
- __DEVICE__ void draw_string(
+    float top = font_coverage_at(glyph_index, y0, x0) * (1.0f - tx) + font_coverage_at(glyph_index, y0, x1) * tx;
+    float bottom = font_coverage_at(glyph_index, y1, x0) * (1.0f - tx) + font_coverage_at(glyph_index, y1, x1) * tx;
+    float alpha = top * (1.0f - ty) + bottom * ty;
+    if (alpha <= 0.0f) return;
+
+    float inverse_alpha = 1.0f - alpha;
+    float3 background = *curr_color;
+    *curr_color = make_float3(
+        background.x * inverse_alpha + char_color.x * alpha,
+        background.y * inverse_alpha + char_color.y * alpha,
+        background.z * inverse_alpha + char_color.z * alpha);
+}
+
+__DEVICE__ void draw_string(
     char str[], float3 str_color, __PRIVATE__ char_trans_t* char_trans, __PRIVATE__ curr_pos_t* curr_pos, __PRIVATE__ float3* curr_color) {
     int i = 0;
     char c = str[0];
-    float c_width;
+    float pen_x = char_trans->x;
     char_trans_t c_trans = *char_trans;
     while (c != '\0' && c != 0) {
-        draw_char(c, str_color, &c_trans, curr_pos, curr_color);
-
-        c_width = font_widths[c];
-        i += 1;
+        int char_code = (int)c;
+        if (char_code < FONT_FIRST_CHAR || char_code >= FONT_FIRST_CHAR + FONT_LENGTH) char_code = 63;
+        int glyph_index = char_code - FONT_FIRST_CHAR;
+        c_trans.x = pen_x + c_trans.scale * font_left_bearings[glyph_index] / FONT_HEIGHT / curr_pos->aspect;
+        draw_char((char)char_code, str_color, &c_trans, curr_pos, curr_color);
+        pen_x += c_trans.scale * font_widths[glyph_index] / FONT_HEIGHT / curr_pos->aspect;
+        i++;
         c = str[i];
-        // Move to the next character position
-        c_trans.x += c_trans.scale * c_width / FONT_HEIGHT;
+        if (c != '\0' && c != 0) {
+            int next_code = (int)c;
+            if (next_code < FONT_FIRST_CHAR || next_code >= FONT_FIRST_CHAR + FONT_LENGTH) next_code = 63;
+            int next_glyph_index = next_code - FONT_FIRST_CHAR;
+            pen_x += c_trans.scale * font_kerning_at(glyph_index, next_glyph_index) / FONT_HEIGHT / curr_pos->aspect;
+        }
     }
- }
- 
- __DEVICE__ float string_width_in_units(char str[], float scale) {
+}
+
+__DEVICE__ float string_width_in_units(char str[], float scale, float aspect);
+
+__DEVICE__ float3 draw_quantization_plot(float x, float y, int width, int height, int num_steps, int bit_depth, float mid_gray_value, int TF, char curve_info[], float text_aspect) {
+    const float plot_left = 0.08f;
+    const float plot_right = 0.92f;
+    const float code_top = 0.12f;
+    const float code_bottom = 0.56f;
+    const float error_top = 0.70f;
+    const float error_bottom = 0.91f;
+    const float3 background = make_float3(0.025f, 0.03f, 0.04f);
+    const float3 grid_color = make_float3(0.13f, 0.15f, 0.17f);
+    const float3 ideal_color = make_float3(0.9f, 0.9f, 0.9f);
+    const float3 quantized_color = make_float3(1.0f, 0.55f, 0.12f);
+    const float3 error_color = make_float3(0.25f, 1.0f, 0.3f);
+    const float3 clipped_color = make_float3(1.0f, 0.1f, 0.65f);
+    const float3 mid_gray_color = make_float3(0.12f, 0.78f, 0.95f);
+    float middle_step = (float)(num_steps / 2);
+    float mid_gray_axis_x = plot_left + ((middle_step + 0.5f) / (float)num_steps) * (plot_right - plot_left);
+    float mid_gray_x_tolerance = 1.5f / (float)width;
+    float3 output = background;
+
+    if (x >= plot_left && x <= plot_right) {
+        float stops = (x - plot_left) / (plot_right - plot_left) * (float)num_steps - 0.5f - middle_step;
+        float linear_value = _fmaxf(mid_gray_value, 0.000001f) * _exp2f(stops);
+        float encoded = LinToTF(make_float3(linear_value, linear_value, linear_value), TF).x;
+        float quantized = quantize(make_float3(encoded, encoded, encoded), 0, bit_depth).x;
+        float reconstructed = Linearize(make_float3(quantized, quantized, quantized), TF).x;
+        float error_stops = reconstructed > 0.00000001f ? _log2f(reconstructed / linear_value) : -1.0f;
+        float code_height = code_bottom - code_top;
+        float ideal_y = code_bottom - _saturatef(encoded) * code_height;
+        float quantized_y = code_bottom - quantized * code_height;
+        float zero_y = (error_top + error_bottom) * 0.5f;
+        float error_half_height = (error_bottom - error_top) * 0.5f;
+        float error_y = zero_y - _fmaxf(-1.0f, _fminf(error_stops, 1.0f)) * error_half_height;
+        float line_tolerance = _fmaxf(1.5f / (float)height, 0.0015f);
+        float stop_grid = _fabs(stops - _round(stops));
+        float code_grid = _fabs((code_bottom - y) / code_height * 4.0f - _round((code_bottom - y) / code_height * 4.0f));
+        float error_grid = _fabs(y - zero_y);
+        float error_half_grid = _fabs(_fabs(y - zero_y) - error_half_height * 0.5f);
+
+        if (y >= code_top && y <= code_bottom) {
+            if (stop_grid < 0.025f || code_grid < 0.035f) output = grid_color;
+            if (_fabs(x - mid_gray_axis_x) < mid_gray_x_tolerance) output = mid_gray_color;
+            if (_fabs(y - ideal_y) < line_tolerance) output = ideal_color;
+            if (_fabs(y - quantized_y) < line_tolerance) output = quantized_color;
+            if ((encoded < 0.0f || encoded > 1.0f) && _fabs(y - (code_top + 0.008f)) < line_tolerance) output = clipped_color;
+        } else if (y >= error_top && y <= error_bottom) {
+            if (error_grid < line_tolerance || error_half_grid < line_tolerance || stop_grid < 0.025f) output = grid_color;
+            if (_fabs(x - mid_gray_axis_x) < mid_gray_x_tolerance) output = mid_gray_color;
+            if (_fabs(y - error_y) < line_tolerance) output = error_color;
+            if ((encoded < 0.0f || encoded > 1.0f || reconstructed <= 0.0f) && _fabs(y - error_y) < line_tolerance) output = clipped_color;
+        }
+    }
+
+    if (y >= code_top - 0.007f && y < code_top) {
+        float marker_half_width = (code_top - y);
+        if (_fabs(x - mid_gray_axis_x) < marker_half_width) output = mid_gray_color;
+    }
+
+    curr_pos_t curr_pos = make_curr_pos(x, y, text_aspect);
+    char header[] = "REFERENCE AND QUANTIZED CODE VALUES";
+    char mid_gray_label[] = "0 STOPS";
+    char error_header[] = "RECONSTRUCTION ERROR (STOPS)";
+    char unquantized_legend[] = "UNQUANTIZED";
+    char quantized_legend[] = "QUANTIZED";
+    char clipped_legend[] = "CLIPPED";
+    char positive_one[] = "+1";
+    char zero[] = "0";
+    char negative_one[] = "-1";
+    char x_axis[] = "EXPOSURE (STOPS FROM MID-GRAY)";
+    float mid_gray_label_scale = 0.015f;
+    float mid_gray_label_width = string_width_in_units(mid_gray_label, mid_gray_label_scale, text_aspect);
+    char_trans_t header_trans = make_char_trans(plot_left, 0.035f, 0.032f);
+    char_trans_t curve_info_trans = make_char_trans(plot_left, 0.082f, 0.022f);
+    char_trans_t mid_gray_label_trans = make_char_trans(mid_gray_axis_x - mid_gray_label_width * 0.5f, 0.100f, mid_gray_label_scale);
+    char_trans_t error_trans = make_char_trans(plot_left, 0.625f, 0.028f);
+    float legend_scale = 0.023f;
+    float legend_gap = 0.018f;
+    float unquantized_width = string_width_in_units(unquantized_legend, legend_scale, text_aspect);
+    float quantized_width = string_width_in_units(quantized_legend, legend_scale, text_aspect);
+    float clipped_width = string_width_in_units(clipped_legend, legend_scale, text_aspect);
+    float legend_group_width = unquantized_width + quantized_width + clipped_width + 2.0f * legend_gap;
+    float legend_left = plot_right - legend_group_width;
+    char_trans_t unquantized_trans = make_char_trans(legend_left, 0.055f, legend_scale);
+    char_trans_t quantized_trans = make_char_trans(legend_left + unquantized_width + legend_gap, 0.055f, legend_scale);
+    char_trans_t clipped_trans = make_char_trans(legend_left + unquantized_width + legend_gap + quantized_width + legend_gap, 0.055f, legend_scale);
+    char_trans_t positive_one_trans = make_char_trans(0.04f, error_top, 0.022f);
+    char_trans_t zero_trans = make_char_trans(0.04f, (error_top + error_bottom) * 0.5f, 0.022f);
+    char_trans_t negative_one_trans = make_char_trans(0.04f, error_bottom - 0.022f, 0.022f);
+    float x_axis_scale = 0.023f;
+    float x_axis_width = string_width_in_units(x_axis, x_axis_scale, text_aspect);
+    char_trans_t x_axis_trans = make_char_trans(0.5f - x_axis_width * 0.5f, 0.945f, x_axis_scale);
+    draw_string(header, make_float3(0.9f, 0.9f, 0.9f), &header_trans, &curr_pos, &output);
+    draw_string(curve_info, make_float3(0.75f, 0.82f, 0.9f), &curve_info_trans, &curr_pos, &output);
+    draw_string(mid_gray_label, mid_gray_color, &mid_gray_label_trans, &curr_pos, &output);
+    draw_string(error_header, make_float3(0.9f, 0.9f, 0.9f), &error_trans, &curr_pos, &output);
+    draw_string(unquantized_legend, ideal_color, &unquantized_trans, &curr_pos, &output);
+    draw_string(quantized_legend, quantized_color, &quantized_trans, &curr_pos, &output);
+    draw_string(clipped_legend, clipped_color, &clipped_trans, &curr_pos, &output);
+    draw_string(positive_one, make_float3(0.75f, 0.75f, 0.75f), &positive_one_trans, &curr_pos, &output);
+    draw_string(zero, make_float3(0.75f, 0.75f, 0.75f), &zero_trans, &curr_pos, &output);
+    draw_string(negative_one, make_float3(0.75f, 0.75f, 0.75f), &negative_one_trans, &curr_pos, &output);
+    draw_string(x_axis, make_float3(0.75f, 0.75f, 0.75f), &x_axis_trans, &curr_pos, &output);
+    return output;
+}
+
+ __DEVICE__ float string_width_in_units(char str[], float scale, float aspect) {
     float width = 0.0f;
     int i = 0;
     char c = str[i];
     while (c != '\0' && c != 0) {
-        int c_width = font_widths[c];
-        width += scale * c_width / FONT_HEIGHT;
+        int char_code = (int)c;
+        if (char_code < FONT_FIRST_CHAR || char_code >= FONT_FIRST_CHAR + FONT_LENGTH) char_code = 63;
+        int glyph_index = char_code - FONT_FIRST_CHAR;
+        width += scale * font_widths[glyph_index] / FONT_HEIGHT / aspect;
         i++;
         c = str[i];
+        if (c != '\0' && c != 0) {
+            int next_code = (int)c;
+            if (next_code < FONT_FIRST_CHAR || next_code >= FONT_FIRST_CHAR + FONT_LENGTH) next_code = 63;
+            int next_glyph_index = next_code - FONT_FIRST_CHAR;
+            width += scale * font_kerning_at(glyph_index, next_glyph_index) / FONT_HEIGHT / aspect;
+        }
     }
     return width;
- }
+}
 
  __DEVICE__ int strlen(char a[]) {
     int i = 0;
@@ -1383,27 +1868,27 @@ __CONSTANT__ int font[FONT_LENGTH][FONT_HEIGHT] = {{0, 0, 0, 0, 0, 0, 0, 0, 0, 0
  __DEVICE__ void get_tf_name(int index, char output[]) {
            if (index == 0) {
         {
-            char name[] = "ARRI LogC3";
+            char name[] = "DaVinci Intermediate";
             strcpy(output, name);
         }
     } else if (index == 1) {
         {
-            char name[] = "ARRI LogC4";
+            char name[] = "ACEScct";
             strcpy(output, name);
         }
     } else if (index == 2) {
         {
-            char name[] = "DaVinci Intermediate";
+            char name[] = "ARRI LogC3";
             strcpy(output, name);
         }
     } else if (index == 3) {
         {
-            char name[] = "ACEScct";
+            char name[] = "ARRI LogC4";
             strcpy(output, name);
         }
     } else if (index == 4) {
         {
-            char name[] = "RED Log3G10";
+            char name[] = "Sony S-Log1";
             strcpy(output, name);
         }
     } else if (index == 5) {
@@ -1418,7 +1903,7 @@ __CONSTANT__ int font[FONT_LENGTH][FONT_HEIGHT] = {{0, 0, 0, 0, 0, 0, 0, 0, 0, 0
         }
     } else if (index == 7) {
         {
-            char name[] = "BMD Film Gen 5";
+            char name[] = "Canon Log";
             strcpy(output, name);
         }
     } else if (index == 8) {
@@ -1433,72 +1918,110 @@ __CONSTANT__ int font[FONT_LENGTH][FONT_HEIGHT] = {{0, 0, 0, 0, 0, 0, 0, 0, 0, 0
         }
     } else if (index == 10) {
         {
-            char name[] = "DJI D-Log";
+            char name[] = "RED Log3G10";
             strcpy(output, name);
         }
     } else if (index == 11) {
         {
-            char name[] = "FujiFilm F-Log";
+            char name[] = "Blackmagic Film Gen 4";
             strcpy(output, name);
         }
     } else if (index == 12) {
         {
-            char name[] = "FujiFilm F-Log2";
+            char name[] = "Blackmagic Film Gen 5";
             strcpy(output, name);
         }
     } else if (index == 13) {
         {
-            char name[] = "Panasonic V-Log";
+            char name[] = "DJI D-Log";
             strcpy(output, name);
         }
     } else if (index == 14) {
         {
-            char name[] = "GoPro Protune";
+            char name[] = "FujiFilm F-Log";
             strcpy(output, name);
         }
     } else if (index == 15) {
         {
-            char name[] = "Leica L-Log";
+            char name[] = "FujiFilm F-Log2";
             strcpy(output, name);
         }
     } else if (index == 16) {
         {
-            char name[] = "Nikon N-Log";
+            char name[] = "Panasonic V-Log";
             strcpy(output, name);
         }
     } else if (index == 17) {
         {
-            char name[] = "Filmlight T-Log";
+            char name[] = "GoPro Protune Flat";
             strcpy(output, name);
         }
     } else if (index == 18) {
         {
-            char name[] = "Kodak Cineon";
+            char name[] = "GoPro GP-Log2";
             strcpy(output, name);
         }
     } else if (index == 19) {
         {
-            char name[] = "Gamma 2.2";
+            char name[] = "GoPro GP-Log (LOGB base 400)";
             strcpy(output, name);
         }
     } else if (index == 20) {
         {
-            char name[] = "Gamma 2.4";
+            char name[] = "Kinefinity KineLOG3";
             strcpy(output, name);
         }
     } else if (index == 21) {
         {
-            char name[] = "Gamma 2.6";
+            char name[] = "Leica L-Log";
             strcpy(output, name);
         }
     } else if (index == 22) {
         {
+            char name[] = "Nikon N-Log";
+            strcpy(output, name);
+        }
+    } else if (index == 23) {
+        {
+            char name[] = "Filmlight T-Log";
+            strcpy(output, name);
+        }
+    } else if (index == 24) {
+        {
+            char name[] = "Kodak Cineon";
+            strcpy(output, name);
+        }
+    } else if (index == 25) {
+        {
+            char name[] = "Apple Log";
+            strcpy(output, name);
+        }
+    } else if (index == 26) {
+        {
+            char name[] = "Apple Log 2";
+            strcpy(output, name);
+        }
+    } else if (index == 27) {
+        {
+            char name[] = "Gamma 2.2";
+            strcpy(output, name);
+        }
+    } else if (index == 28) {
+        {
+            char name[] = "Gamma 2.4";
+            strcpy(output, name);
+        }
+    } else if (index == 29) {
+        {
+            char name[] = "Gamma 2.6";
+            strcpy(output, name);
+        }
+    } else if (index == 30) {
+        {
             char name[] = "Linear";
             strcpy(output, name);
         }
-    }
-    // Add other cases similarly
-    else {
+    } else {
         {
             char name[] = "Unknown";
             strcpy(output, name);
@@ -1587,9 +2110,45 @@ __CONSTANT__ int font[FONT_LENGTH][FONT_HEIGHT] = {{0, 0, 0, 0, 0, 0, 0, 0, 0, 0
     output[runner] = '\0';
  }
 
+__DEVICE__ float3 draw_quantization_axis_labels(float3 output, float x, float y, int num_steps, float aspect) {
+    const float plot_left = 0.08f;
+    const float plot_right = 0.92f;
+    float middle_step = (float)(num_steps / 2);
+    float first_stop = -0.5f - middle_step;
+    float last_stop = (float)num_steps - 0.5f - middle_step;
+    char first_stop_text[16];
+    char last_stop_text[16];
+    char signed_last_stop_text[20];
+    char total_stops_text[8];
+    char span_text[48];
+    char plus[] = "+";
+    char span_prefix[] = " STOPS TOTAL | GRID = 1 STOP";
+    float3 label_color = make_float3(0.75f, 0.75f, 0.75f);
+    curr_pos_t curr_pos = make_curr_pos(x, y, aspect);
+
+    float2str(first_stop, first_stop_text, 1);
+    float2str(last_stop, last_stop_text, 1);
+    strcpy(signed_last_stop_text, plus);
+    strcat(signed_last_stop_text, last_stop_text, signed_last_stop_text);
+    int2str(num_steps, total_stops_text);
+    strcpy(span_text, total_stops_text);
+    strcat(span_text, span_prefix, span_text);
+
+    float stop_label_scale = 0.022f;
+    float span_width = string_width_in_units(span_text, stop_label_scale, aspect);
+    float last_stop_width = string_width_in_units(signed_last_stop_text, stop_label_scale, aspect);
+    char_trans_t first_stop_trans = make_char_trans(plot_left, 0.915f, stop_label_scale);
+    char_trans_t span_trans = make_char_trans(0.5f - span_width * 0.5f, 0.915f, stop_label_scale);
+    char_trans_t last_stop_trans = make_char_trans(plot_right - last_stop_width, 0.915f, stop_label_scale);
+    draw_string(first_stop_text, label_color, &first_stop_trans, &curr_pos, &output);
+    draw_string(span_text, label_color, &span_trans, &curr_pos, &output);
+    draw_string(signed_last_stop_text, label_color, &last_stop_trans, &curr_pos, &output);
+    return output;
+}
 
 
-// Main Transform function
+
+// Main function
 __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p_R, float p_G, float p_B) {
 
     // Frame dimensions
@@ -1646,11 +2205,30 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
     if (opt_mid == 1) {
         // Custom Mid-Gray is enabled; use linear transfer function
         mid_gray_value = mid_gray;
-        slct_p_TF = 22; // Linear
+        slct_p_TF = 30; // Linear
     } else {
         // Custom Mid-Gray is disabled; use predefined mid-gray and selected transfer function
         mid_gray_value = 0.18f;
         slct_p_TF = p_TF;
+    }
+
+    if (opt_quant_plot == 1) {
+        char curve_name[64];
+        char bit_depth_text[4];
+        char curve_info[96];
+        char curve_info_separator[] = " | ";
+        char bit_suffix[] = "-BIT";
+        char custom_midgray_suffix[] = " | CUSTOM MID-GRAY";
+        get_tf_name(slct_p_TF, curve_name);
+        int2str(bit_depth, bit_depth_text, 4);
+        strcpy(curve_info, curve_name);
+        strcat(curve_info, curve_info_separator, curve_info);
+        strcat(curve_info, bit_depth_text, curve_info);
+        strcat(curve_info, bit_suffix, curve_info);
+        if (opt_mid == 1) strcat(curve_info, custom_midgray_suffix, curve_info);
+        float text_aspect = opt_scope ? 2.5f : (float)p_Width / (float)p_Height;
+        float3 plot = draw_quantization_plot(x, y, p_Width, p_Height, num_steps, bit_depth, mid_gray_value, slct_p_TF, curve_info, text_aspect);
+        return draw_quantization_axis_labels(plot, x, y, num_steps, text_aspect);
     }
 
     // Compute mid-gray in the transfer function space
@@ -1669,6 +2247,8 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
 
     // Variables for annotations
     int curr_step = (int)(x / step_width);
+    if (curr_step < 0) curr_step = 0;
+    if (curr_step >= num_steps) curr_step = num_steps - 1;
     float val;
 
     // Draw chart
@@ -1700,13 +2280,14 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
     float3 curr_color = Output;
 
   // Current pixel position in normalized coordinates
-    curr_pos_t curr_pos = make_curr_pos(x, y);
+    float text_aspect = opt_scope ? 2.5f : frame_width / frame_height;
+    curr_pos_t curr_pos = make_curr_pos(x, y, text_aspect);
 
 // Annotation for Top Gradation Steps
     if (y <= 0.2f && y >= 0.09f && annotation_mode != ANNOTATE_NONE) {
         // Annotation area just below the steps
         float annotation_y = 0.15f; // Adjust as needed
-        float annotation_scale = 0.035f; // Adjust text size
+        float annotation_scale = 0.042f; // Adjust text size
 
         // Determine if current pixel is within the annotation area for this step
         float annotation_height = annotation_scale; // Height of the annotation area
@@ -1725,7 +2306,7 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
             }
 
             // Calculate annotation position
-            float string_width = string_width_in_units(annotation_str, annotation_scale);
+            float string_width = string_width_in_units(annotation_str, annotation_scale, text_aspect);
             float label_x = (curr_step + 0.5f) * step_width - string_width / 2.0f;
 
             // Ensure label is within bounds
@@ -1755,7 +2336,7 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
 
         // Determine whether evaluation mode is active
 
-        int eval_mode_active = (evaluation_p == 1) && (opt_mid == 0) && (slct_p_TF != 22); //conditions when T-log can be used
+        int eval_mode_active = (evaluation_p == 1) && (opt_mid == 0) && (slct_p_TF != 30); //conditions when T-log can be used
          
          if (evaluation_p == 0) {
              // Show "Evaluation mode"
@@ -1765,11 +2346,11 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
              // Show "Evaluation mode"
              char eval_mode_str[] = "Evaluation in Thatcher T-log";
              strcpy(second_line, eval_mode_str);
-         }else if ((evaluation_p == 1 && opt_mid == 1 && opt_card != 0 ) || (evaluation_p == 1 && slct_p_TF == 22 && opt_card != 0)) {
+         }else if ((evaluation_p == 1 && opt_mid == 1 && opt_card != 0 ) || (evaluation_p == 1 && slct_p_TF == 30 && opt_card != 0)) {
              // Evaluation is off for linear
              char eval_off_str[] = "T-log is off for linear";
              strcpy(second_line, eval_off_str);
-         } else if ((evaluation_p == 1 && opt_mid == 1 && opt_card == 0 ) || (evaluation_p == 1 && slct_p_TF == 22 && opt_card == 0)) {
+         } else if ((evaluation_p == 1 && opt_mid == 1 && opt_card == 0 ) || (evaluation_p == 1 && slct_p_TF == 30 && opt_card == 0)) {
              // Evaluation off for linear/full card
              char eval_off_fullcard_str[] = "T-log off for linear/full card";
              strcpy(second_line, eval_off_fullcard_str);
@@ -1789,24 +2370,24 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
 
 
         // Character scales
-        float scale_line1 = 0.054f; // Scale for the first line
-        float scale_line2 = 0.035f; // Smaller scale for the second line
+        float scale_line1 = 0.063f; // Scale for the first line
+        float scale_line2 = 0.041f; // Smaller scale for the second line
 
         // Compute string widths
-        float width_line1 = string_width_in_units(tf_name, scale_line1);
-        float width_line2 = string_width_in_units(second_line, scale_line2);
-        float max_width = width_line1 > width_line2 ? width_line1 : width_line2;
+        float width_line1 = string_width_in_units(tf_name, scale_line1, text_aspect);
+        float width_line2 = string_width_in_units(second_line, scale_line2, text_aspect);
+        // Center both label lines independently within the middle box.
+        float label_x_line1 = 0.5f - width_line1 * 0.5f;
+        float label_x_line2 = 0.5f - width_line2 * 0.5f;
 
-        // Position the label within the middle box
-        float label_x = 0.5f - max_width / 2.0f;
-
-        // Ensure label is within the middle box bounds
-        if (label_x < middle_box_left) label_x = middle_box_left;
-        if (label_x + max_width > middle_box_right) label_x = middle_box_right - max_width;
+        if (label_x_line1 < middle_box_left) label_x_line1 = middle_box_left;
+        if (label_x_line1 + width_line1 > middle_box_right) label_x_line1 = middle_box_right - width_line1;
+        if (label_x_line2 < middle_box_left) label_x_line2 = middle_box_left;
+        if (label_x_line2 + width_line2 > middle_box_right) label_x_line2 = middle_box_right - width_line2;
 
         // Vertical positions for the two lines
         float label_y_line1 = 0.48f - scale_line1 / 2.0f; // Slightly above center
-        float label_y_line2 = label_y_line1 + scale_line1 + 0.005f; // Slight gap between lines
+        float label_y_line2 = label_y_line1 + scale_line1 + 0.007f; // Slight gap between lines
 
         // Ensure labels are within the middle box bounds vertically
         if (label_y_line2 + scale_line2 > middle_box_bottom) {
@@ -1821,11 +2402,11 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
         float3 label_color = lum > 0.5f ? make_float3(0.0f, 0.0f, 0.0f) : make_float3(1.0f, 1.0f, 1.0f);
 
         // Draw the first line (Transfer Function Name)
-        char_trans_t char_trans_line1 = make_char_trans(label_x, label_y_line1, scale_line1);
+        char_trans_t char_trans_line1 = make_char_trans(label_x_line1, label_y_line1, scale_line1);
         draw_string(tf_name, label_color, &char_trans_line1, &curr_pos, &curr_color);
 
         // Draw the second line
-        char_trans_t char_trans_line2 = make_char_trans(label_x, label_y_line2, scale_line2);
+        char_trans_t char_trans_line2 = make_char_trans(label_x_line2, label_y_line2, scale_line2);
         draw_string(second_line, label_color, &char_trans_line2, &curr_pos, &curr_color);
     }
 
@@ -1835,7 +2416,7 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
             curr_color = quantize(curr_color, 0, bit_depth);
           } else if (evaluation_p == 1) {//evaluation mode in T-log
             curr_color = quantize(curr_color, 0, bit_depth);
-            if ( !(opt_card== 0) && !(opt_mid == 1 || slct_p_TF == 22)){
+            if ( !(opt_card== 0) && !(opt_mid == 1 || slct_p_TF == 30)){
             curr_color = Linearize(curr_color, slct_p_TF);
             curr_color = tlog_curve(curr_color, 0, num_steps);
                }

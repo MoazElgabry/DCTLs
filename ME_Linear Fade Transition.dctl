@@ -1,0 +1,288 @@
+#line 2
+/*
+
+ME Linear Fade Transition
+by Moaz Elgabry
+
+Cross-dissolves two clips after decoding the selected transfer function to
+scene-linear, then encodes the result back to the same transfer function.
+
+Use through:
+Edit page > Effects Library > OpenFX > Transition > ResolveFX Color > DCTL
+
+*/
+
+__DEVICE__ float clamp01(float v)
+{
+    if (v < 0.0f) return 0.0f;
+    if (v > 1.0f) return 1.0f;
+    return v;
+}
+
+__DEVICE__ float3 mix_f3(float3 a, float3 b, float t)
+{
+    return make_float3(a.x + (b.x - a.x) * t,
+                       a.y + (b.y - a.y) * t,
+                       a.z + (b.z - a.z) * t);
+}
+
+__DEVICE__ float fade_curve(float t, int curve)
+{
+    t = clamp01(t);
+
+    if (curve == 1) {
+        return t * t * (3.0f - 2.0f * t);
+    }
+
+    if (curve == 2) {
+        return t * t;
+    }
+
+    if (curve == 3) {
+        return 1.0f - (1.0f - t) * (1.0f - t);
+    }
+
+    return t;
+}
+
+// Transfer function helpers adapted from ME_Exposure Chart.dctl.
+__DEVICE__ float3 inline oetf_acescct(float3 x, int inv)
+{
+    const float cut1 = 0.0078125f;
+    const float cut2 = 0.155251141552511f;
+    const float A = 10.5402377416545f;
+    const float B = 0.0729055341958355f;
+    const float C = 9.72f;
+    const float D = 17.52f;
+
+    float3 result;
+
+    if (inv == 1) {
+        result.x = (x.x <= cut2) ? ((x.x - B) / A) : _exp2f(x.x * D - C);
+        result.y = (x.y <= cut2) ? ((x.y - B) / A) : _exp2f(x.y * D - C);
+        result.z = (x.z <= cut2) ? ((x.z - B) / A) : _exp2f(x.z * D - C);
+    } else {
+        result.x = (x.x <= cut1) ? (A * x.x + B) : ((_log2f(x.x) + C) / D);
+        result.y = (x.y <= cut1) ? (A * x.y + B) : ((_log2f(x.y) + C) / D);
+        result.z = (x.z <= cut1) ? (A * x.z + B) : ((_log2f(x.z) + C) / D);
+    }
+
+    return result;
+}
+
+__DEVICE__ float3 inline oetf_arri_logc3(float3 x, int inv)
+{
+    const float cut = 0.010591f;
+    const float a = 5.555556f;
+    const float b = 0.052272f;
+    const float c = 0.247190f;
+    const float d = 0.385537f;
+    const float e = 5.367655f;
+    const float f = 0.092809f;
+
+    float3 result;
+
+    if (inv == 1) {
+        result.x = (x.x < e * cut + f) ? ((x.x - f) / e) : ((_exp10f((x.x - d) / c) - b) / a);
+        result.y = (x.y < e * cut + f) ? ((x.y - f) / e) : ((_exp10f((x.y - d) / c) - b) / a);
+        result.z = (x.z < e * cut + f) ? ((x.z - f) / e) : ((_exp10f((x.z - d) / c) - b) / a);
+    } else {
+        result.x = (x.x < cut) ? (e * x.x + f) : (c * _log10f(a * x.x + b) + d);
+        result.y = (x.y < cut) ? (e * x.y + f) : (c * _log10f(a * x.y + b) + d);
+        result.z = (x.z < cut) ? (e * x.z + f) : (c * _log10f(a * x.z + b) + d);
+    }
+
+    return result;
+}
+
+__DEVICE__ float3 inline oetf_arri_logc4(float3 x, int inv)
+{
+    const float a = (_exp2f(18.0f) - 16.0f) / 117.45f;
+    const float b = (1023.0f - 95.0f) / 1023.0f;
+    const float c = 95.0f / 1023.0f;
+    const float s = (7.0f * _logf(2.0f) * _exp2f(7.0f - 14.0f * c / b)) / (a * b);
+    const float t = (_exp2f(14.0f * (-c / b) + 6.0f) - 64.0f) / a;
+
+    float3 result;
+
+    if (inv == 1) {
+        result.x = (x.x < t) ? (x.x * s + t) : ((_exp2f(14.0f * (x.x - c) / b + 6.0f) - 64.0f) / a);
+        result.y = (x.y < t) ? (x.y * s + t) : ((_exp2f(14.0f * (x.y - c) / b + 6.0f) - 64.0f) / a);
+        result.z = (x.z < t) ? (x.z * s + t) : ((_exp2f(14.0f * (x.z - c) / b + 6.0f) - 64.0f) / a);
+    } else {
+        result.x = (x.x < t) ? ((x.x - t) / s) : ((_log2f(a * x.x + 64.0f) - 6.0f) / 14.0f * b + c);
+        result.y = (x.y < t) ? ((x.y - t) / s) : ((_log2f(a * x.y + 64.0f) - 6.0f) / 14.0f * b + c);
+        result.z = (x.z < t) ? ((x.z - t) / s) : ((_log2f(a * x.z + 64.0f) - 6.0f) / 14.0f * b + c);
+    }
+
+    return result;
+}
+
+__DEVICE__ float3 inline oetf_blackmagic_filmgen5(float3 x, int inv)
+{
+    const float A = 0.08692876065491224f;
+    const float B = 0.005494072432257808f;
+    const float C = 0.5300133392291939f;
+    const float D = 8.283605932402494f;
+    const float E = 0.09246575342465753f;
+    const float LIN_CUT = 0.005f;
+    const float LOG_CUT = D * LIN_CUT + E;
+
+    float3 result;
+
+    if (inv == 1) {
+        result.x = (x.x < LOG_CUT) ? ((x.x - E) / D) : (_expf((x.x - C) / A) - B);
+        result.y = (x.y < LOG_CUT) ? ((x.y - E) / D) : (_expf((x.y - C) / A) - B);
+        result.z = (x.z < LOG_CUT) ? ((x.z - E) / D) : (_expf((x.z - C) / A) - B);
+    } else {
+        result.x = (x.x < LIN_CUT) ? (D * x.x + E) : (A * _logf(x.x + B) + C);
+        result.y = (x.y < LIN_CUT) ? (D * x.y + E) : (A * _logf(x.y + B) + C);
+        result.z = (x.z < LIN_CUT) ? (D * x.z + E) : (A * _logf(x.z + B) + C);
+    }
+
+    return result;
+}
+
+__DEVICE__ float3 inline oetf_red_log3g10(float3 x, int inv)
+{
+    const float a = 0.224282f;
+    const float b = 155.975327f;
+    const float c = 0.01f;
+    const float g = 15.1927f;
+
+    float3 result;
+
+    if (inv == 1) {
+        result.x = (x.x < 0.0f) ? ((x.x / g) - c) : ((_exp10f(x.x / a) - 1.0f) / b - c);
+        result.y = (x.y < 0.0f) ? ((x.y / g) - c) : ((_exp10f(x.y / a) - 1.0f) / b - c);
+        result.z = (x.z < 0.0f) ? ((x.z / g) - c) : ((_exp10f(x.z / a) - 1.0f) / b - c);
+    } else {
+        result.x = (x.x < -c) ? ((x.x + c) * g) : (a * _log10f((x.x + c) * b + 1.0f));
+        result.y = (x.y < -c) ? ((x.y + c) * g) : (a * _log10f((x.y + c) * b + 1.0f));
+        result.z = (x.z < -c) ? ((x.z + c) * g) : (a * _log10f((x.z + c) * b + 1.0f));
+    }
+
+    return result;
+}
+
+__DEVICE__ float3 inline oetf_sony_slog3(float3 x, int inv)
+{
+    const float a = 0.01125f;
+    const float b = 420.0f;
+    const float c = 261.5f;
+    const float d = 171.2102946929f;
+    const float e = 95.0f;
+    const float f = 0.18f;
+    const float o = 0.01f;
+
+    float3 result;
+
+    if (inv == 1) {
+        result.x = (x.x < d / 1023.0f) ? ((x.x * 1023.0f - e) * a / (d - e)) : ((_exp10f(((x.x * 1023.0f - b) / c)) * (f + o)) - o);
+        result.y = (x.y < d / 1023.0f) ? ((x.y * 1023.0f - e) * a / (d - e)) : ((_exp10f(((x.y * 1023.0f - b) / c)) * (f + o)) - o);
+        result.z = (x.z < d / 1023.0f) ? ((x.z * 1023.0f - e) * a / (d - e)) : ((_exp10f(((x.z * 1023.0f - b) / c)) * (f + o)) - o);
+    } else {
+        result.x = (x.x < a) ? ((x.x * (d - e) / a + e) / 1023.0f) : ((b + _log10f((x.x + o) / (f + o)) * c) / 1023.0f);
+        result.y = (x.y < a) ? ((x.y * (d - e) / a + e) / 1023.0f) : ((b + _log10f((x.y + o) / (f + o)) * c) / 1023.0f);
+        result.z = (x.z < a) ? ((x.z * (d - e) / a + e) / 1023.0f) : ((b + _log10f((x.z + o) / (f + o)) * c) / 1023.0f);
+    }
+
+    return result;
+}
+
+__DEVICE__ float3 inline oetf_davinci_intermediate(float3 x, int inv)
+{
+    const float A = 0.0075f;
+    const float B = 7.0f;
+    const float C = 0.07329248f;
+    const float M = 10.44426855f;
+    const float LIN_CUT = 0.00262409f;
+    const float LOG_CUT = 0.02740668f;
+
+    float3 result;
+
+    if (inv == 1) {
+        result.x = (x.x <= LOG_CUT) ? (x.x / M) : (_exp2f(x.x / C - B) - A);
+        result.y = (x.y <= LOG_CUT) ? (x.y / M) : (_exp2f(x.y / C - B) - A);
+        result.z = (x.z <= LOG_CUT) ? (x.z / M) : (_exp2f(x.z / C - B) - A);
+    } else {
+        result.x = (x.x <= LIN_CUT) ? (x.x * M) : ((_log2f(x.x + A) + B) * C);
+        result.y = (x.y <= LIN_CUT) ? (x.y * M) : ((_log2f(x.y + A) + B) * C);
+        result.z = (x.z <= LIN_CUT) ? (x.z * M) : ((_log2f(x.z + A) + B) * C);
+    }
+
+    return result;
+}
+
+__DEVICE__ float3 inline LinToGammaCurve(float3 v, float gamma)
+{
+    return make_float3(_powf(_fmaxf(v.x, 0.0f), 1.0f / gamma),
+                       _powf(_fmaxf(v.y, 0.0f), 1.0f / gamma),
+                       _powf(_fmaxf(v.z, 0.0f), 1.0f / gamma));
+}
+
+__DEVICE__ float3 inline GammaCurveToLin(float3 v, float gamma)
+{
+    return make_float3(_powf(_fmaxf(v.x, 0.0f), gamma),
+                       _powf(_fmaxf(v.y, 0.0f), gamma),
+                       _powf(_fmaxf(v.z, 0.0f), gamma));
+}
+
+__DEVICE__ float3 inline LinToTF(float3 v, int TF)
+{
+    if (TF == 0) return oetf_davinci_intermediate(v, 0);
+    if (TF == 1) return v;
+    if (TF == 2) return oetf_acescct(v, 0);
+    if (TF == 3) return oetf_arri_logc3(v, 0);
+    if (TF == 4) return oetf_arri_logc4(v, 0);
+    if (TF == 5) return oetf_blackmagic_filmgen5(v, 0);
+    if (TF == 6) return oetf_red_log3g10(v, 0);
+    if (TF == 7) return oetf_sony_slog3(v, 0);
+    if (TF == 8) return LinToGammaCurve(v, 2.2f);
+    if (TF == 9) return LinToGammaCurve(v, 2.4f);
+    if (TF == 10) return LinToGammaCurve(v, 2.6f);
+
+    return v;
+}
+
+__DEVICE__ float3 inline Linearize(float3 v, int TF)
+{
+    if (TF == 0) return oetf_davinci_intermediate(v, 1);
+    if (TF == 1) return v;
+    if (TF == 2) return oetf_acescct(v, 1);
+    if (TF == 3) return oetf_arri_logc3(v, 1);
+    if (TF == 4) return oetf_arri_logc4(v, 1);
+    if (TF == 5) return oetf_blackmagic_filmgen5(v, 1);
+    if (TF == 6) return oetf_red_log3g10(v, 1);
+    if (TF == 7) return oetf_sony_slog3(v, 1);
+    if (TF == 8) return GammaCurveToLin(v, 2.2f);
+    if (TF == 9) return GammaCurveToLin(v, 2.4f);
+    if (TF == 10) return GammaCurveToLin(v, 2.6f);
+
+    return v;
+}
+
+DEFINE_UI_PARAMS(p_TF, Transfer Function, DCTLUI_COMBO_BOX, 0, {di, linear, aces_cct, logc3, logc4, bmd_f5, log3g10, slog3, g22, g24, g26}, {DaVinci Intermediate, Linear, ACEScct, ARRI LogC3, ARRI LogC4, BMD Film Gen 5, RED Log3G10, Sony S-Log3, Gamma 2.2, Gamma 2.4, Gamma 2.6})
+DEFINE_UI_PARAMS(blend_curve, Blend Curve, DCTLUI_COMBO_BOX, 0, {curve_linear, curve_smooth, curve_ease_in, curve_ease_out}, {Linear, Smoothstep, Ease In, Ease Out})
+
+__DEVICE__ float4 transition(int p_Width, int p_Height, int p_X, int p_Y, __TEXTURE__ p_FromTexR, __TEXTURE__ p_FromTexG, __TEXTURE__ p_FromTexB, __TEXTURE__ p_FromTexA, __TEXTURE__ p_ToTexR, __TEXTURE__ p_ToTexG, __TEXTURE__ p_ToTexB, __TEXTURE__ p_ToTexA) {
+    float from_r = _tex2D(p_FromTexR, p_X, p_Y);
+    float from_g = _tex2D(p_FromTexG, p_X, p_Y);
+    float from_b = _tex2D(p_FromTexB, p_X, p_Y);
+    float from_a = _tex2D(p_FromTexA, p_X, p_Y);
+
+    float to_r = _tex2D(p_ToTexR, p_X, p_Y);
+    float to_g = _tex2D(p_ToTexG, p_X, p_Y);
+    float to_b = _tex2D(p_ToTexB, p_X, p_Y);
+    float to_a = _tex2D(p_ToTexA, p_X, p_Y);
+
+    float t = fade_curve(TRANSITION_PROGRESS, blend_curve);
+
+    float3 from_lin = Linearize(make_float3(from_r, from_g, from_b), p_TF);
+    float3 to_lin = Linearize(make_float3(to_r, to_g, to_b), p_TF);
+    float3 out_lin = mix_f3(from_lin, to_lin, t);
+    float3 out_rgb = LinToTF(out_lin, p_TF);
+    float out_a = from_a + (to_a - from_a) * t;
+
+    return make_float4(out_rgb.x, out_rgb.y, out_rgb.z, out_a);
+}

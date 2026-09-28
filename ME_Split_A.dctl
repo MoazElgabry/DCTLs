@@ -1,0 +1,282 @@
+#line 2
+/*
+    ME_Split_A_v1.0
+    Split toning using a main strength slider and another to distribute 
+    that strength amount over either highlight or shadow sides. for controlling the split.
+*/
+
+
+DEFINE_UI_PARAMS(Strength, Overall Strength, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 1.5, 0.001)
+DEFINE_UI_PARAMS(StrengthBal, High vs Low, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
+DEFINE_UI_PARAMS(p_sep1, ========= , DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 0.001, 0.001)
+DEFINE_UI_PARAMS(HiHue, Highlights Hue, DCTLUI_SLIDER_FLOAT, 60.0, -180.0, 180.0, 0.1)
+DEFINE_UI_PARAMS(AngleDistance, Angle Distance, DCTLUI_SLIDER_FLOAT, 180.0, 0.0, 360.0, 0.1)
+DEFINE_UI_PARAMS(ShHue, Shadows Hue, DCTLUI_SLIDER_FLOAT, -120.0, -180.0, 180.0, 0.1)
+DEFINE_UI_PARAMS(AngleMode, Angle-Distance Highlight, DCTLUI_CHECK_BOX, 1)
+DEFINE_UI_PARAMS(p_sep2, ========= , DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 0.001, 0.001)
+DEFINE_UI_PARAMS(HiSubtract, Highlights Subtractive, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 1.0, 0.001)
+DEFINE_UI_PARAMS(ShSubtract, Shadows Subtractive, DCTLUI_SLIDER_FLOAT, 0.85, 0.0, 1.0, 0.001)
+DEFINE_UI_PARAMS(p_sep3, ========= , DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 0.001, 0.001)
+DEFINE_UI_PARAMS(HiConv_v2, Highlights Converge, DCTLUI_SLIDER_FLOAT, 0.8, 0.0, 1.0, 0.001)
+DEFINE_UI_PARAMS(ShConv_v2, Shadows Converge, DCTLUI_SLIDER_FLOAT, 0.8, 0.0, 1.0, 0.001)
+DEFINE_UI_PARAMS(p_sep4, ========= , DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 0.001, 0.001)
+DEFINE_UI_PARAMS(PivotStops, Shift Pivot Stops, DCTLUI_SLIDER_FLOAT, 1.0, -2.0, 4.0, 0.001)
+DEFINE_UI_PARAMS(CleanMid, Clean Mid Section, DCTLUI_SLIDER_FLOAT, 3.5, 0.0, 8.0, 0.001)
+DEFINE_UI_PARAMS(Bypass, Bypass, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_PARAMS(ShowCurve, Show Curve, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_PARAMS(ShowPatches, Show Patches, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_PARAMS(InputTF, Input Transfer Function, DCTLUI_COMBO_BOX, 1, {TF_LINEAR, TF_DI}, {Linear, DaVinci Intermediate})
+DEFINE_UI_PARAMS(MaskCoverage, Saturation Mask, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 100.0, 0.1)
+DEFINE_UI_PARAMS(MaskInvert, Sat Mask - Invert Matte, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_PARAMS(MaskPreview, Sat Mask - Preview Matte, DCTLUI_CHECK_BOX, 0)
+
+#if ((__RESOLVE_VER_MAJOR__ > 19) || ((__RESOLVE_VER_MAJOR__ == 19) && (__RESOLVE_VER_MINOR__ >= 1)))
+DEFINE_UI_TOOLTIP(Overall Strength, "Sets the total Split strength, shared between highlights and shadows by High vs Low.")
+DEFINE_UI_TOOLTIP(High vs Low, "-1 applies strength to shadows, 0 splits it evenly, and +1 applies it to highlights.")
+DEFINE_UI_TOOLTIP(Highlights Hue, "Sets the highlight tint hue when Angle-Distance Highlight is off.")
+DEFINE_UI_TOOLTIP(Angle Distance, "Sets the hue offset from Shadows Hue for the highlight tint when angle mode is on.")
+DEFINE_UI_TOOLTIP(Shadows Hue, "Sets the shadow tint hue and the reference hue for angle mode.")
+DEFINE_UI_TOOLTIP(Angle-Distance Highlight, "Derives highlight hue from Shadows Hue plus Angle Distance. Turn off to use Highlights Hue directly.")
+DEFINE_UI_TOOLTIP(Highlights Subtractive, "Adjusts the subtractive neutral anchor for the highlight tint.")
+DEFINE_UI_TOOLTIP(Shadows Subtractive, "Adjusts the subtractive neutral anchor for the shadow tint.")
+DEFINE_UI_TOOLTIP(Highlights Converge, "Shapes how the highlight tint response converges across its tonal range.")
+DEFINE_UI_TOOLTIP(Shadows Converge, "Shapes how the shadow tint response converges across its tonal range.")
+DEFINE_UI_TOOLTIP(Shift Pivot Stops, "Moves the Split pivot in stops relative to 18 percent linear gray.")
+DEFINE_UI_TOOLTIP(Clean Mid Section, "Adjusts midtone protection and remapping around the Split pivot.")
+DEFINE_UI_TOOLTIP(Bypass, "Returns the input image without Split grading or overlays.")
+DEFINE_UI_TOOLTIP(Show Curve, "Displays the Split response curve at the bottom of the image. Saturation Matte Preview takes priority.")
+DEFINE_UI_TOOLTIP(Show Patches, "Displays the highlight and shadow hue swatches at the bottom of the image.")
+DEFINE_UI_TOOLTIP(Input Transfer Function, "Select the input encoding.")
+DEFINE_UI_TOOLTIP(Saturation Mask, "Controls how much saturation-qualified matte blends in the Split effect. Higher values include more colorful pixels.")
+DEFINE_UI_TOOLTIP(Sat Mask - Invert Matte, "Reverses the saturation matte polarity.")
+DEFINE_UI_TOOLTIP(Sat Mask - Preview Matte, "Previews the saturation matte over a checkerboard. This preview takes priority over the curve and swatches.")
+#endif
+
+#define ME_SPLIT_PI 3.14159265358979323846f
+#define TF_LINEAR 0
+#define TF_DI 1
+#define SMOOTH_ARCH_MAX_DERIV 3.07920144f
+
+__DEVICE__ float clampf(float x, float a, float b) { return _fminf(_fmaxf(x, a), b); }
+__DEVICE__ float sat01(float x) { return clampf(x, 0.0f, 1.0f); }
+__DEVICE__ float mixf(float a, float b, float t) { return a + (b - a) * t; }
+__DEVICE__ float3 clamp3(float3 v, float a, float b) { return make_float3(clampf(v.x,a,b),clampf(v.y,a,b),clampf(v.z,a,b)); }
+__DEVICE__ float3 mix3(float3 a, float3 b, float t) { return make_float3(mixf(a.x,b.x,t),mixf(a.y,b.y,t),mixf(a.z,b.z,t)); }
+__DEVICE__ float min3(float3 v) { return _fminf(v.x, _fminf(v.y, v.z)); }
+__DEVICE__ float max3(float3 v) { return _fmaxf(v.x, _fmaxf(v.y, v.z)); }
+__DEVICE__ float3 add3(float3 a, float3 b) { return make_float3(a.x+b.x,a.y+b.y,a.z+b.z); }
+
+__DEVICE__ float di_to_linear(float x)
+{
+    return x > 0.02740668f ? _exp2f((x / 0.07329248f) - 7.0f) - 0.0075f : x / 10.44426855f;
+}
+__DEVICE__ float linear_to_di(float x)
+{
+    return x > 0.00262409f ? (_log2f(x + 0.0075f) + 7.0f) * 0.07329248f : x * 10.44426855f;
+}
+__DEVICE__ float3 di_to_linear3(float3 v) { return make_float3(di_to_linear(v.x),di_to_linear(v.y),di_to_linear(v.z)); }
+__DEVICE__ float3 linear_to_di3(float3 v) { return make_float3(linear_to_di(v.x),linear_to_di(v.y),linear_to_di(v.z)); }
+__DEVICE__ float smootherstep01(float x) { float t=sat01(x); return t*t*t*(t*(t*6.0f-15.0f)+10.0f); }
+__DEVICE__ float wrap_deg_180(float deg) { float w=_fmod(deg+180.0f,360.0f); if(w<0.0f) w+=360.0f; return w-180.0f; }
+
+__DEVICE__ float split_luma(float3 v) { return max3(v); }
+
+__DEVICE__ float3 hue_opponent_dir(float hue)
+{
+    float h=wrap_deg_180(hue)*ME_SPLIT_PI/180.0f, c=_cosf(h), s=_sinf(h);
+    return make_float3(0.70710678f*c+0.40824829f*s,
+                      -0.70710678f*c+0.40824829f*s,
+                      -0.81649658f*s);
+}
+__DEVICE__ float3 tint_delta(float hue, float sat, float subtractive)
+{
+    float3 d=hue_opponent_dir(hue);
+    d=make_float3(d.x*(0.28f*clampf(sat,0.0f,1.10f)),d.y*(0.28f*clampf(sat,0.0f,1.10f)),d.z*(0.28f*clampf(sat,0.0f,1.10f)));
+    float anchor=mixf(min3(d),max3(d),sat01(subtractive));
+    return make_float3(d.x-anchor,d.y-anchor,d.z-anchor);
+}
+__DEVICE__ float split_pivot(float stops)
+{
+    float linearPivot=0.18f*_exp2f(clampf(stops,-2.0f,4.0f));
+    return clampf(linear_to_di(linearPivot),0.050f,0.950f);
+}
+__DEVICE__ float mid_protect_halfwidth(float pivot,float clean)
+{
+    float u=smootherstep01(sat01(clean/8.0f));
+    float base=_fminf(pivot,1.0f-pivot), maxWidth=0.18f*base+0.008f;
+    return clampf(maxWidth*u,0.0f,0.08f);
+}
+__DEVICE__ float smooth_arch(float x) { float u=sat01(x); return u*u*u*(10.0f+u*(-15.0f+6.0f*u)); }
+__DEVICE__ float mid_remap(float x,float clean)
+{
+    float u=sat01(x), c=smootherstep01(sat01(clean/8.0f)), k=mixf(0.24f,1.0f,c);
+    return u/_fmaxf(u+k*(1.0f-u),1e-6f);
+}
+__DEVICE__ float mid_weight(float x,float clean) { return smooth_arch(mid_remap(x,clean)); }
+__DEVICE__ float convergence_amount(float slider) { return sat01((slider-0.5f)*2.0f); }
+__DEVICE__ float divergence_release(float slider) { return sat01((0.5f-slider)*2.0f); }
+__DEVICE__ float convergence_envelope(float weight,float extent,float slider)
+{
+    float conv=convergence_amount(slider); if(conv<=1e-6f) return weight;
+    float u=sat01(extent), collapse=smootherstep01(conv/0.45f), expansion=smootherstep01((conv-0.32f)/0.68f);
+    float width=mixf(0.44f,0.90f,expansion), taper=smooth_arch((1.0f-u)/_fmaxf(width,1e-6f));
+    return weight*mixf(1.0f,taper,collapse);
+}
+__DEVICE__ float safe_amp_limit(float span) { return 0.98f*span/3.07920144f; }
+__DEVICE__ float soft_limit(float x,float limit) { float l=_fmaxf(limit,1e-6f); return l*_tanhf(x/l); }
+__DEVICE__ float safe_amp_hi(float a,float pivot,float clean)
+{
+    float start=clampf(pivot+mid_protect_halfwidth(pivot,clean),0.0f,0.9999f);
+    return soft_limit(a,safe_amp_limit(_fmaxf(1.0f-start,1e-5f)));
+}
+__DEVICE__ float safe_amp_sh(float a,float pivot,float clean)
+{
+    float end=clampf(pivot-mid_protect_halfwidth(pivot,clean),0.0001f,1.0f);
+    return soft_limit(a,safe_amp_limit(_fmaxf(end,1e-5f)));
+}
+__DEVICE__ float diverged_hi_add(float luma,float pivot,float clean,float baseAmp,float slider)
+{
+    float div=divergence_release(slider), amp=safe_amp_hi(baseAmp,pivot,clean);
+    float start=clampf(pivot+mid_protect_halfwidth(pivot,clean),0.0f,0.9999f);
+    float span=_fmaxf(1.0f-start,1e-5f), u=sat01((luma-start)/span);
+    float w=convergence_envelope(mid_weight(u,clean),u,slider);
+    return amp*w*(1.0f+0.70f*div*smooth_arch(u));
+}
+__DEVICE__ float diverged_sh_add(float luma,float pivot,float clean,float baseAmp,float slider)
+{
+    float div=divergence_release(slider), amp=safe_amp_sh(baseAmp,pivot,clean);
+    float end=clampf(pivot-mid_protect_halfwidth(pivot,clean),0.0001f,1.0f);
+    float span=_fmaxf(end,1e-5f), u=sat01((end-luma)/span);
+    float w=convergence_envelope(mid_weight(u,clean),u,slider);
+    return amp*w*(1.0f+0.70f*div*smooth_arch(u));
+}
+__DEVICE__ float3 split_grade(float3 linearRgb,float strengthHi,float strengthSh,float hiHue,float shHue,float pivotStops,float hiSubtract,float shSubtract,float cleanMid,float hiConv,float shConv)
+{
+    if(strengthHi+strengthSh<=1e-6f) return linearRgb;
+    float3 di=linear_to_di3(linearRgb);
+    float pivot=split_pivot(pivotStops), l=sat01(split_luma(di));
+    // Hyogen currently keeps the main tint saturation fixed at 0.5; convergence affects its envelope.
+    float3 dh=tint_delta(hiHue,0.5f,hiSubtract), ds=tint_delta(shHue,0.5f,shSubtract);
+    float3 outDi=make_float3(
+      di.x+diverged_hi_add(l,pivot,cleanMid,dh.x*strengthHi,hiConv)+diverged_sh_add(l,pivot,cleanMid,ds.x*strengthSh,shConv),
+      di.y+diverged_hi_add(l,pivot,cleanMid,dh.y*strengthHi,hiConv)+diverged_sh_add(l,pivot,cleanMid,ds.y*strengthSh,shConv),
+      di.z+diverged_hi_add(l,pivot,cleanMid,dh.z*strengthHi,hiConv)+diverged_sh_add(l,pivot,cleanMid,ds.z*strengthSh,shConv));
+    float3 outLinear=di_to_linear3(outDi);
+    return clamp3(outLinear,0.0f,65504.0f);
+}
+
+__DEVICE__ float stable_root(float v) { return v/_powf(v*v+0.000001f,1.0f/3.0f); }
+__DEVICE__ float sat_score(float3 rgb)
+{
+    const float finiteMax=3.402823466e+38f;
+    if(!(_fabs(rgb.x)<=finiteMax)||!(_fabs(rgb.y)<=finiteMax)||!(_fabs(rgb.z)<=finiteMax)) return 1.0f;
+    float rg=rgb.x-rgb.y, bg=rgb.z-rgb.y, base=rgb.y+0.02f;
+    float l=base+0.5872198589f*rg-0.0075927843f*bg;
+    float m=base+0.2827499676f*rg+0.0334949664f*bg;
+    float s=base+0.1120041085f*rg+0.6933883919f*bg;
+    float lm=stable_root(m), dl=stable_root(l)-lm, ds=stable_root(s)-lm;
+    float light=lm+0.2104542553f*dl-0.0040720468f*ds;
+    float a=1.9779984951f*dl+0.4505937099f*ds;
+    float b=0.0259040371f*dl-0.808675766f*ds;
+    float c2=a*a+b*b, den=c2+0.0625f*(light*light+0.01f);
+    if(!(_fabs(c2)<=finiteMax)) return 1.0f;
+    if(!(_fabs(den)<=finiteMax)) return 0.0f;
+    float score=c2/den;
+    return _fabs(score)<=finiteMax ? score : 1.0f;
+}
+__DEVICE__ float sat_quintic(float t)
+{
+    t=sat01(t); float u=_fminf(t,1.0f-t), q=u*u*u*(10.0f+u*(-15.0f+6.0f*u));
+    return t<=0.5f?q:1.0f-q;
+}
+__DEVICE__ float sat_matte(float3 linearRgb,float coverage,float invert)
+{
+    float covLinear=sat01(coverage*0.01f), cov=covLinear*covLinear;
+    float score=sat01(sat_score(linearRgb));
+    float matte=sat_quintic((cov-0.6f*score)/0.4f);
+    return invert>0.5f?matte:1.0f-matte;
+}
+__DEVICE__ int floor_div(int a,int b) { int q=a/b,r=a%b; return (r!=0&&r<0)?q-1:q; }
+__DEVICE__ float checker_grey(int x,int y,int cell)
+{
+    int parity=(floor_div(x,cell)+floor_div(y,cell))%2; if(parity<0) parity+=2;
+    return parity==0?0.35f:0.30f;
+}
+
+__DEVICE__ float line_alpha(float p,float line,float thickness) { return sat01(1.0f-_fabs(p-line)/_fmaxf(thickness,1e-4f)); }
+__DEVICE__ float cosine_bell(float x) { if(x<=0.0f)return 1.0f; if(x>=1.0f)return 0.0f; return 0.5f*(1.0f+_cosf(ME_SPLIT_PI*x)); }
+__DEVICE__ float3 patch_rgb(float hue,float subtractive,float sat)
+{
+    float3 d=tint_delta(hue,sat,subtractive), raw=make_float3(0.4f+d.x,0.4f+d.y,0.4f+d.z);
+    float mn=min3(raw),mx=max3(raw);
+    float sHi=mx>0.4f?0.5f/_fmaxf(mx-0.4f,1e-5f):1.0f;
+    float sLo=mn<0.4f?0.3f/_fmaxf(0.4f-mn,1e-5f):1.0f;
+    float s=_fminf(1.0f,_fminf(sHi,sLo));
+    float3 patchDi=clamp3(make_float3(0.4f+d.x*s,0.4f+d.y*s,0.4f+d.z*s),0.0f,1.0f);
+    return clamp3(di_to_linear3(patchDi),0.0f,65504.0f);
+}
+__DEVICE__ float3 curve_overlay(float3 base,int W,int H,int X,int Y,float pivot,float sHi,float sSh,float hiHue,float shHue,int inputTF,float hiSubtract,float shSubtract,float cleanMid,float hiConv,float shConv)
+{
+    float fw=(float)W,fh=(float)H,unit=_fminf(fw,fh),scale=unit/1080.0f;
+    float pw=fw*0.65f,ph=fh*0.54f,pad=unit*0.02f,x0=fw-pad-pw,y0=fh-pad-ph;
+    if(!((float)X>=x0&&(float)X<x0+pw&&(float)Y>=y0&&(float)Y<y0+ph)) return base;
+    float lx=(float)X-x0,ly=(float)Y-y0,gx=lx/_fmaxf(pw-1.0f,1.0f),gy=ly/_fmaxf(ph-1.0f,1.0f);
+    float ramp=inputTF==TF_LINEAR?linear_to_di(gx):gx, l=sat01(ramp);
+    float3 dh=tint_delta(hiHue,0.5f,hiSubtract),ds=tint_delta(shHue,0.5f,shSubtract);
+    float3 outDi=make_float3(ramp+diverged_hi_add(l,pivot,cleanMid,dh.x*sHi,hiConv)+diverged_sh_add(l,pivot,cleanMid,ds.x*sSh,shConv),
+                             ramp+diverged_hi_add(l,pivot,cleanMid,dh.y*sHi,hiConv)+diverged_sh_add(l,pivot,cleanMid,ds.y*sSh,shConv),
+                             ramp+diverged_hi_add(l,pivot,cleanMid,dh.z*sHi,hiConv)+diverged_sh_add(l,pivot,cleanMid,ds.z*sSh,shConv));
+    float3 out=inputTF==TF_LINEAR?clamp3(di_to_linear3(outDi),0.0f,65504.0f):outDi;
+    float line0=(ph-1.0f)*(1.0f-gx),lr=(ph-1.0f)*(1.0f-out.x),lg=(ph-1.0f)*(1.0f-out.y),lb=(ph-1.0f)*(1.0f-out.z);
+    float pivotX=(inputTF==TF_LINEAR?di_to_linear(pivot):pivot)*(pw-1.0f),bg=0.16f+0.04f*cosine_bell(_fabs(gy-0.5f)*2.0f);
+    float3 c=make_float3(bg,bg,bg); float grid=line_alpha(lx,pivotX,1.2f*scale)*0.45f+line_alpha(ly,line0,0.9f*scale)*0.16f;
+    c=add3(c,make_float3(grid,grid,grid)); float edge=0.0f;
+    edge=_fmaxf(edge,line_alpha(lx,0.0f,1.1f*scale));edge=_fmaxf(edge,line_alpha(lx,pw-1.0f,1.1f*scale));
+    edge=_fmaxf(edge,line_alpha(ly,0.0f,1.1f*scale));edge=_fmaxf(edge,line_alpha(ly,ph-1.0f,1.1f*scale));
+    c=mix3(c,make_float3(0.92f,0.92f,0.92f),edge);c=mix3(c,make_float3(0.78f,0.78f,0.78f),line_alpha(ly,line0,1.55f*scale));
+    c=mix3(c,make_float3(0.65f,0.22f,0.22f),line_alpha(ly,lr,2.15f*scale));c=mix3(c,make_float3(0.22f,0.65f,0.22f),line_alpha(ly,lg,2.15f*scale));
+    c=mix3(c,make_float3(0.22f,0.42f,0.80f),line_alpha(ly,lb,2.15f*scale)); return c;
+}
+__DEVICE__ float3 patch_overlay(float3 base,int W,int H,int X,int Y,float hiHue,float shHue,float sHi,float sSh,float hiSubtract,float shSubtract)
+{
+    float fw=(float)W,fh=(float)H,unit=_fminf(fw,fh),patch=0.060f*unit,pad=0.25f*patch,gap=2.0f*unit/1080.0f;
+    float y0=fh-pad-patch,xHi=fw-pad-patch,xSh=fw-pad-2.0f*patch-gap;
+    if((float)X>=xHi&&(float)X<xHi+patch&&(float)Y>=y0&&(float)Y<y0+patch) return patch_rgb(hiHue,hiSubtract,0.5f*sHi);
+    if((float)X>=xSh&&(float)X<xSh+patch&&(float)Y>=y0&&(float)Y<y0+patch) return patch_rgb(shHue,shSubtract,0.5f*sSh);
+    return base;
+}
+
+__DEVICE__ float3 transform(int p_Width,int p_Height,int p_X,int p_Y,float p_R,float p_G,float p_B)
+{
+    int W=p_Width,H=p_Height,X=p_X,Y=p_Y; float R=p_R,G=p_G,B=p_B;
+    float3 original=make_float3(R,G,B);
+    if(Bypass>0.5f) return original;
+    float3 linearIn=InputTF==TF_LINEAR?original:di_to_linear3(original);
+    float hiHue=AngleMode>0.5f?wrap_deg_180(ShHue+AngleDistance):HiHue;
+    float sHi,sSh;
+        float strength=clampf(Strength,0.0f,1.5f), balance=clampf(StrengthBal,-1.0f,1.0f);
+    sHi=strength*0.5f*(1.0f+balance); sSh=strength*0.5f*(1.0f-balance);
+    if(sHi+sSh<=1e-6f&&MaskPreview<=0.5f&&ShowCurve<=0.5f&&ShowPatches<=0.5f) return original;
+    float3 raw=split_grade(linearIn,sHi,sSh,hiHue,ShHue,PivotStops,HiSubtract,ShSubtract,CleanMid,HiConv_v2,ShConv_v2);
+    float matte=sat_matte(linearIn,MaskCoverage,MaskInvert);
+    if(MaskPreview>0.5f)
+    {
+        int cell=H/64; if(cell<1)cell=1;
+        float checker=checker_grey(X,Y,cell);
+        float3 preview=make_float3(mixf(checker,raw.x,matte),mixf(checker,raw.y,matte),mixf(checker,raw.z,matte));
+        return InputTF==TF_LINEAR?preview:linear_to_di3(preview);
+    }
+    float3 out=make_float3(linearIn.x+(raw.x-linearIn.x)*matte,
+                           linearIn.y+(raw.y-linearIn.y)*matte,
+                           linearIn.z+(raw.z-linearIn.z)*matte);
+    if(ShowCurve>0.5f||ShowPatches>0.5f)
+    {
+        float pivot=split_pivot(PivotStops);
+        float3 display=out;
+        if(ShowCurve>0.5f) display=curve_overlay(display,W,H,X,Y,pivot,sHi,sSh,hiHue,ShHue,InputTF,HiSubtract,ShSubtract,CleanMid,HiConv_v2,ShConv_v2);
+        if(ShowPatches>0.5f) display=patch_overlay(display,W,H,X,Y,hiHue,ShHue,sHi,sSh,HiSubtract,ShSubtract);
+        out=display;
+    }
+    return InputTF==TF_LINEAR?out:linear_to_di3(out);
+}
+
