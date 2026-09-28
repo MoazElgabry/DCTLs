@@ -1,0 +1,859 @@
+// ME_Diffraction_Glow.dctl
+// Deterministic diffraction-ish bloom + starburst spikes
+// Assumption: INPUT IS LINEAR (scene-linear or linear-encoded).
+//
+// SAFE7:
+// - SpikeKernel switch: Rays (current) vs Diffraction Lobes (angularly modulated spiral kernel)
+
+
+// clang-format off
+DEFINE_UI_PARAMS(strength, Strength, DCTLUI_SLIDER_FLOAT, 0.00, 0.0, 6.0, 0.01)
+
+// Highlight selection (remapped to linear internally)
+DEFINE_UI_PARAMS(threshold, Threshold, DCTLUI_SLIDER_FLOAT, 0.85, 0.0, 1.0, 0.001)
+// Softness expressed in STOPS (log2 domain)
+DEFINE_UI_PARAMS(mask_softness_stops, MaskSoftnessStops, DCTLUI_SLIDER_FLOAT, 8.0, 5.0, 12.0, 0.1)
+DEFINE_UI_PARAMS(mask_blur, MaskBlur, DCTLUI_CHECK_BOX, 1)
+DEFINE_UI_PARAMS(mask_noise_gate, MaskNoiseGate, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_PARAMS(mask_noise_gate_level, MaskNoiseGateLevel, DCTLUI_SLIDER_FLOAT, 0.02, 0.0, 0.25, 0.001)
+DEFINE_UI_PARAMS(mask_floor, MaskFloor, DCTLUI_SLIDER_FLOAT, 0.20, 0.0, 0.6, 0.01)
+DEFINE_UI_PARAMS(mask_select_power, MaskSelectPower, DCTLUI_SLIDER_FLOAT, 1.40, 0.4, 3.0, 0.05)
+DEFINE_UI_PARAMS(mask_energy_power, MaskEnergyPower, DCTLUI_SLIDER_FLOAT, 0.80, 0.4, 2.0, 0.05)
+
+
+// Blend point-source bias in without killing broad highlights
+DEFINE_UI_PARAMS(point_bias, PointBias, DCTLUI_SLIDER_FLOAT, 0.35, 0.0, 1.0, 0.01)
+
+DEFINE_UI_PARAMS(Spacer1, ++++++Bloom========, DCTLUI_SLIDER_FLOAT, 0.000, 0.0, 0.0001, 0.01)
+DEFINE_UI_PARAMS(bloom_shoulder, BloomShoulder, DCTLUI_SLIDER_FLOAT, 0.50, 0.0, 1.0, 0.01)
+DEFINE_UI_PARAMS(bloom_radius_px, BloomRadiusPx, DCTLUI_SLIDER_FLOAT, 22.0, 0.5, 220.0, 0.5)
+DEFINE_UI_PARAMS(bloom_gain, BloomGain, DCTLUI_SLIDER_FLOAT, 1.00, 0.0, 5.0, 0.01)
+DEFINE_UI_PARAMS(bloom_samples, BloomSamples, DCTLUI_SLIDER_FLOAT, 96.0, 8.0, 256.0, 1.0)
+DEFINE_UI_PARAMS(ring_strength, RingStrength, DCTLUI_SLIDER_FLOAT, 0.40, 0.0, 1.0, 0.01)
+
+DEFINE_UI_PARAMS(Spacer2, ++++++Spike========, DCTLUI_SLIDER_FLOAT, 0.000, 0.0, 0.0001, 0.01)
+// Separate shoulders for added energy
+DEFINE_UI_PARAMS(spike_shoulder, SpikeShoulder, DCTLUI_SLIDER_FLOAT, 0.20, 0.0, 1.0, 0.01)
+DEFINE_UI_PARAMS(spike_gain, SpikeGain, DCTLUI_SLIDER_FLOAT, 1.00, 0.0, 5.0, 0.01)
+DEFINE_UI_PARAMS(spike_strength, SpikeStrength, DCTLUI_SLIDER_FLOAT, 1.25, 0.0, 6.0, 0.01)
+DEFINE_UI_PARAMS(spike_length_px, SpikeLengthPx, DCTLUI_SLIDER_FLOAT, 160.0, 0.0, 900.0, 1.0)
+DEFINE_UI_PARAMS(spike_steps, SpikeSteps, DCTLUI_SLIDER_FLOAT, 96.0, 4.0, 300.0, 1.0)
+DEFINE_UI_PARAMS(spike_width, SpikeWidth, DCTLUI_SLIDER_FLOAT, 0.9, 0.2, 12.0, 0.05)
+DEFINE_UI_PARAMS(spike_rotation_deg, SpikeRotation, DCTLUI_SLIDER_FLOAT, 0.0, -180.0, 180.0, 0.1)
+DEFINE_UI_PARAMS(spike_irregularity, SpikeIrregularity, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 1.0, 0.01)
+DEFINE_UI_PARAMS(spike_single_index, SpikeSingleIndex, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 7.0, 1.0)
+DEFINE_UI_PARAMS(spike_single_offset_deg, SpikeSingleOffset, DCTLUI_SLIDER_FLOAT, 0.0, -90.0, 90.0, 0.5)
+
+DEFINE_UI_PARAMS(preset_mode, PRESET, DCTLUI_COMBO_BOX, 0, {PRESET_CLEAN, PRESET_1, PRESET_2}, {Clean, SubtleStar, StrongStar})
+
+DEFINE_UI_PARAMS(spike_count_mode, SpikeCount, DCTLUI_COMBO_BOX, 1, {SPIKES_4, SPIKES_6, SPIKES_8}, {Spikes4, Spikes6, Spikes8})
+
+// Kernel switch
+DEFINE_UI_PARAMS(spike_kernel, SpikeKernel, DCTLUI_COMBO_BOX, 0, {KERNEL_RAYS, KERNEL_LOBES}, {Rays, DiffractionLobes})
+
+// Lobe controls (used only in KERNEL_LOBES)
+DEFINE_UI_PARAMS(lobe_sharpness, LobeSharpness, DCTLUI_SLIDER_FLOAT, 3.0, 0.5, 12.0, 0.1)
+// radial falloff curve
+DEFINE_UI_PARAMS(lobe_radial_profile, LobeRadialProfile, DCTLUI_SLIDER_FLOAT, 1.3, 0.2, 4.0, 0.05) 
+DEFINE_UI_PARAMS(Spacer3, ++++++Chroma========, DCTLUI_SLIDER_FLOAT, 0.000, 0.0, 0.0001, 0.01)
+// Geometric dispersion amount
+DEFINE_UI_PARAMS(chromatic, Chromatic, DCTLUI_SLIDER_FLOAT, 1.00, 0.0, 3.0, 0.01)
+
+// Option 2: control how much chromatic affects luma (0 = mostly chroma-only, 1 = allow luma coupling)
+DEFINE_UI_PARAMS(chromatic_affects_luma, ChromaticAffectsLuma, DCTLUI_SLIDER_FLOAT, 0.20, 0.0, 1.0, 0.01)
+
+// Creative spectrum palette steering + forcing control
+DEFINE_UI_PARAMS(spectrum_style, SpectrumStyle, DCTLUI_COMBO_BOX, 1, {SPEC_NATURAL, SPEC_CYANMAGENTA, SPEC_WARMCOOL}, {Natural, CyanMagenta, WarmCool})
+DEFINE_UI_PARAMS(spectrum_balance, SpectrumBalance, DCTLUI_SLIDER_FLOAT, 0.00, -1.0, 1.0, 0.01)
+DEFINE_UI_PARAMS(spectrum_sat, SpectrumSat, DCTLUI_SLIDER_FLOAT, 1.00, 0.0, 2.0, 0.01)
+DEFINE_UI_PARAMS(spectrum_force, SpectrumForce, DCTLUI_SLIDER_FLOAT, 0.65, 0.0, 1.0, 0.01)
+
+
+
+DEFINE_UI_PARAMS(P_TF, Transfer Function, DCTLUI_COMBO_BOX, 1, {TF_LINEAR, TF_DI}, {Linear, DI})
+DEFINE_UI_PARAMS(debug_mode, Debug, DCTLUI_COMBO_BOX, 0, {DEBUG_OFF, DEBUG_MASK, DEBUG_EFFECT_BLOOM, DEBUG_EFFECT_SPIKES, DEBUG_EFFECT_TOTAL}, {Off, Mask, Bloom, Spikes, Total})
+
+//DEFINE_UI_PARAMS(clamp_out, ClampOut, DCTLUI_CHECK_BOX, 0)
+
+// clang-format on
+
+#define PI (3.14159265358979323846f)
+#define DEF_THRESHOLD 0.9925f
+#define THRESH_MIN_LIN 0.001f
+#define THRESH_MAX_LIN 16.0f
+#define DEF_MASK_SOFTNESS_STOPS 8.0f
+#define DEF_BLOOM_SHOULDER 0.50f
+#define DEF_SPIKE_SHOULDER 0.20f
+#define DEF_BLOOM_GAIN 1.00f
+#define DEF_SPIKE_GAIN 1.00f
+#define DEF_BLOOM_RADIUS_PX 22.0f
+#define DEF_RING_STRENGTH 0.40f
+#define DEF_BLOOM_SAMPLES 96
+#define DEF_SPIKE_STRENGTH 1.25f
+#define DEF_SPIKE_LENGTH_PX 160.0f
+#define DEF_SPIKE_STEPS 96
+#define DEF_SPIKE_WIDTH 0.9f
+#define DEF_SPIKE_ROTATION_DEG 0.0f
+#define DEF_SPIKE_IRREGULARITY 0.0f
+#define DEF_SPIKE_SINGLE_INDEX 0
+#define DEF_SPIKE_SINGLE_OFFSET_DEG 0.0f
+#define DEF_SPIKE_COUNT_MODE 1
+#define DEF_SPIKE_KERNEL 0
+#define DEF_LOBE_SHARPNESS 3.0f
+#define DEF_LOBE_RADIAL_PROFILE 1.3f
+#define DEF_CHROMATIC 1.00f
+#define DEF_CHROMATIC_AFFECTS_LUMA 0.20f
+#define DEF_SPECTRUM_STYLE 1
+#define DEF_SPECTRUM_BALANCE 0.00f
+#define DEF_SPECTRUM_SAT 1.00f
+#define DEF_SPECTRUM_FORCE 0.65f
+#define DEF_POINT_BIAS 0.35f
+
+// ---------- utilities ----------
+__DEVICE__ float satf(float x) { return _clampf(x, 0.0f, 1.0f); }
+__DEVICE__ float safe_div(float a, float b) { return a / _fmaxf(b, 1e-6f); }
+__DEVICE__ float3 f3(float x, float y, float z) { return make_float3(x,y,z); }
+__DEVICE__ float3 clamp_min0(float3 c) { return f3(_fmaxf(c.x,0.0f), _fmaxf(c.y,0.0f), _fmaxf(c.z,0.0f)); }
+__DEVICE__ float3 clamp01_3(float3 c) { return f3(satf(c.x), satf(c.y), satf(c.z)); }
+__DEVICE__ float luma709(float3 c) { return c.x*0.2126f + c.y*0.7152f + c.z*0.0722f; }
+__DEVICE__ float lerpf(float a, float b, float t) { return a + (b - a) * t; }
+__DEVICE__ float3 lerp3(float3 a, float3 b, float t) { return f3(lerpf(a.x,b.x,t), lerpf(a.y,b.y,t), lerpf(a.z,b.z,t)); }
+__DEVICE__ float absf(float x) { return _fabs(x); }
+__DEVICE__ int clampi(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
+__DEVICE__ float fractf(float x) { return x - _floorf(x); }
+__DEVICE__ float hash11(float x) { return fractf(_sinf(x * 127.1f + 311.7f) * 43758.5453f); }
+__DEVICE__ float deg2rad(float d) { return d * (PI / 180.0f); }
+
+__DEVICE__ float smootherstep(float x)
+{
+    x = _clampf(x, 0.0f, 1.0f);
+    return x * x * (3.0f - 2.0f * x);
+}
+
+typedef struct ImgCtx
+{
+    int W;
+    int H;
+    int px;
+    int py;
+    __TEXTURE__ r;
+    __TEXTURE__ g;
+    __TEXTURE__ b;
+    int p_TF;
+} ImgCtx;
+
+// transfer functions for handling nonlinear encodings
+__DEVICE__ float3 LinToDI(float3 in)
+{
+    const float a = 0.0075f;
+    const float b = 7.0f;
+    const float c = 0.07329248f;
+    const float m = 10.44426855f;
+    const float lin_cut = 0.00262409f;
+
+    float3 out;
+    out.x = (in.x > lin_cut) ? ((_log2f(in.x + a) + b) * c) : (in.x * m);
+    out.y = (in.y > lin_cut) ? ((_log2f(in.y + a) + b) * c) : (in.y * m);
+    out.z = (in.z > lin_cut) ? ((_log2f(in.z + a) + b) * c) : (in.z * m);
+    return out;
+}
+
+
+__DEVICE__ float3 DItoLin(float3 in)
+{
+    const float a = 0.0075f;
+    const float b = 7.0f;
+    const float c = 0.07329248f;
+    const float m = 10.44426855f;
+    const float log_cut = 0.02740668f;
+
+    float3 out;
+    out.x = (in.x > log_cut) ? (_powf(2.f, (in.x / c) - b) - a) : (in.x / m);
+    out.y = (in.y > log_cut) ? (_powf(2.f, (in.y / c) - b) - a) : (in.y / m);
+    out.z = (in.z > log_cut) ? (_powf(2.f, (in.z / c) - b) - a) : (in.z / m);
+    return out;
+}
+
+
+__DEVICE__ float3 DecodeToLin(float3 v, int p_TF)
+{
+    // p_TF comes directly from the combobox index: 0,1,2...
+    switch (p_TF)
+    {
+        case 1:  return DItoLin(v);   // 1 = DI
+        case 0:  return v;            // 0 = Linear
+        default: return v;            // safe fallback
+    }
+}
+
+__DEVICE__ float3 EncodeFromLin(float3 v, int p_TF)
+{
+    switch (p_TF)
+    {
+        case 1:  return LinToDI(v);   // 1 = DI
+        case 0:  return v;            // 0 = Linear
+        default: return v;
+    }
+}
+
+
+// Stop-domain highlight mask (linear input, stop-domain ramp)
+__DEVICE__ float highlight_mask_stops(float x_lin, float thresh_lin, float softness_stops)
+{
+    x_lin = _fmaxf(x_lin, 1e-10f);
+    thresh_lin = _fmaxf(thresh_lin, 1e-10f);
+
+    float x_log = _log2f(x_lin);
+    float t_log = _log2f(thresh_lin);
+
+    float w = _fmaxf(softness_stops, 1e-6f);
+    float a = (x_log - t_log) / w;
+    return smootherstep(a);
+}
+
+// Shoulder weight for the added effect
+__DEVICE__ float shoulder_weight(float Y_lin, float thresh_lin, float shoulder_amt)
+{
+    if (shoulder_amt <= 1e-6f) return 1.0f;
+    float m = highlight_mask_stops(Y_lin, thresh_lin, 2.0f);
+    return 1.0f - shoulder_amt * m;
+}
+
+
+// Integer fetch (Resolve reliable)
+__DEVICE__ float3 fetch(ImgCtx ctx, int x, int y)
+{
+    x = clampi(x, 0, ctx.W - 1);
+    y = clampi(y, 0, ctx.H - 1);
+    float3 rgb = f3(_tex2D(ctx.r, x, y), _tex2D(ctx.g, x, y), _tex2D(ctx.b, x, y));
+    return DecodeToLin(rgb, ctx.p_TF);
+}
+
+// Manual bilinear sampling at pixel coordinates
+__DEVICE__ float3 sample_bilinear(ImgCtx ctx, float x, float y)
+{
+    x = _fmaxf(0.0f, _fminf(x, (float)(ctx.W - 1)));
+    y = _fmaxf(0.0f, _fminf(y, (float)(ctx.H - 1)));
+
+    int x0 = (int)_floorf(x);
+    int y0 = (int)_floorf(y);
+    int x1 = x0 + 1;
+    int y1 = y0 + 1;
+
+    float tx = x - (float)x0;
+    float ty = y - (float)y0;
+
+    float3 c00 = fetch(ctx, x0, y0);
+    float3 c10 = fetch(ctx, x1, y0);
+    float3 c01 = fetch(ctx, x0, y1);
+    float3 c11 = fetch(ctx, x1, y1);
+
+    float3 cx0 = lerp3(c00, c10, tx);
+    float3 cx1 = lerp3(c01, c11, tx);
+    return lerp3(cx0, cx1, ty);
+}
+
+// Airy-ish profile
+__DEVICE__ float airyish(float r_px, float radius_px, float ring_amt)
+{
+    float x = PI * r_px / _fmaxf(radius_px, 1e-6f);
+    float s = (r_px < 1e-4f) ? 1.0f : safe_div(_sinf(x), x);
+    float core = s * s;
+
+    float ring = 0.5f + 0.5f * _cosf(2.5f * x);
+    ring = ring * ring;
+
+    return core * (1.0f + ring_amt * (ring - 0.5f));
+}
+
+__DEVICE__ float gauss1d(float x, float sigma)
+{
+    float s2 = _fmaxf(sigma*sigma, 1e-6f);
+    return _expf(-(x*x) / (2.0f*s2));
+}
+
+__DEVICE__ float3 normalize3(float3 v)
+{
+    float m2 = v.x*v.x + v.y*v.y + v.z*v.z;
+    float inv = 1.0f / _sqrtf(_fmaxf(m2, 1e-12f));
+    return f3(v.x*inv, v.y*inv, v.z*inv);
+}
+
+__DEVICE__ float spike_angle_for_index(int i, int spikes, float rot_rad, float jitter_amt_rad,
+                                       int single_index, float single_offset_rad)
+{
+    float step = (2.0f * PI) / _fmaxf((float)spikes, 1.0f);
+    float jitter = (hash11((float)i + 1.0f) * 2.0f - 1.0f) * jitter_amt_rad;
+    float single = (i == single_index) ? single_offset_rad : 0.0f;
+    return rot_rad + step * (float)i + jitter + single;
+}
+
+// ---- palette steering/forcing ----
+__DEVICE__ void get_palette(int style, float polarity01, float balance, float3* outHue, float3* outTintMul)
+{
+    float p = satf(polarity01 + 0.5f * balance);
+
+    float3 hueCool = f3(0.0f, 0.0f, 0.0f);
+    float3 hueWarm = f3(0.0f, 0.0f, 0.0f);
+    float3 mulCool = f3(1.0f, 1.0f, 1.0f);
+    float3 mulWarm = f3(1.0f, 1.0f, 1.0f);
+
+    if (style == SPEC_CYANMAGENTA) {
+        hueCool = f3(0.0f, 1.0f, 1.0f); // cyan
+        hueWarm = f3(1.0f, 0.0f, 1.0f); // magenta
+        mulCool = f3(0.85f, 1.00f, 1.25f);
+        mulWarm = f3(1.25f, 0.85f, 1.15f);
+    } else if (style == SPEC_WARMCOOL) {
+        hueCool = f3(0.0f, 0.6f, 1.0f);
+        hueWarm = f3(1.0f, 0.55f, 0.0f);
+        mulCool = f3(0.85f, 0.95f, 1.30f);
+        mulWarm = f3(1.30f, 0.95f, 0.80f);
+    }
+
+    *outHue = lerp3(hueCool, hueWarm, p);
+    *outTintMul = lerp3(mulCool, mulWarm, p);
+}
+
+__DEVICE__ float3 apply_chromatic_palette(float3 c, float3 cR, float3 cG, float3 cB,
+                                         int style, float balance, float sat_amt, float force_amt,
+                                         float chroma_affects_luma_amt)
+{
+    if (style == SPEC_NATURAL || (sat_amt <= 1e-6f && force_amt <= 1e-6f)) return c;
+
+    float d = (cR.x - cB.z);
+    float pol = 0.5f + 0.5f * _tanhf(d * 2.0f);
+
+    float3 hue, mul;
+    get_palette(style, pol, balance, &hue, &mul);
+
+    float Yc = luma709(c);
+    float3 Yg = f3(Yc, Yc, Yc);
+    float3 chroma_vec = c - Yg;
+
+    float chroma_mag = _sqrtf(_fmaxf(chroma_vec.x*chroma_vec.x + chroma_vec.y*chroma_vec.y + chroma_vec.z*chroma_vec.z, 0.0f));
+
+    // Steer
+    float3 steered = f3(chroma_vec.x * mul.x, chroma_vec.y * mul.y, chroma_vec.z * mul.z);
+
+    // Force
+    float3 hue_dir = normalize3(f3(hue.x - 0.3333f, hue.y - 0.3333f, hue.z - 0.3333f));
+    float3 forced = f3(hue_dir.x * chroma_mag, hue_dir.y * chroma_mag, hue_dir.z * chroma_mag);
+
+    float3 mixed = lerp3(steered, forced, satf(force_amt));
+    mixed = f3(mixed.x * sat_amt, mixed.y * sat_amt, mixed.z * sat_amt);
+
+    float3 c_chroma_only = Yg + mixed;
+    return lerp3(c_chroma_only, c, satf(chroma_affects_luma_amt));
+}
+
+typedef struct BloomParams
+{
+    float radius_px;
+    float ring_amt;
+    int samples;
+    float thresh_lin;
+    float softness_stops;
+} BloomParams;
+
+typedef struct SpikeParams
+{
+    int spikes;
+    float length_px;
+    int steps;
+    float width;
+    float rotation_deg;
+    float irregularity;
+    int single_index;
+    float single_offset_deg;
+    float thresh_lin;
+    float softness_stops;
+    float chroma_geom;
+    int spec_style;
+    float spec_balance;
+    float spec_sat;
+    float spec_force;
+    float chroma_affects_luma;
+    float lobe_sharpness;
+    float lobe_radial_profile;
+} SpikeParams;
+
+// ---------- bloom: energy-style Vogel spiral ----------
+__DEVICE__ float3 bloom_vogel_energy(ImgCtx ctx, BloomParams bp)
+{
+    const float golden = 2.399963229728653f;
+
+    float3 acc = f3(0.0f, 0.0f, 0.0f);
+
+    for (int i = 0; i < 256; ++i) {
+        if (i >= bp.samples) break;
+
+        float fi = (float)i + 0.5f;
+        float ang = fi * golden;
+        float rr = _sqrtf(fi / _fmaxf((float)bp.samples, 1.0f)) * bp.radius_px;
+
+        float sx = (float)ctx.px + _cosf(ang) * rr;
+        float sy = (float)ctx.py + _sinf(ang) * rr;
+
+        float3 c = clamp_min0(sample_bilinear(ctx, sx, sy));
+
+        float Y = luma709(c);
+        float m = highlight_mask_stops(Y, bp.thresh_lin, bp.softness_stops);
+        if (m < 1e-6f) continue;
+
+        float w = airyish(rr, bp.radius_px, bp.ring_amt);
+        acc += c * (m * w);
+    }
+
+    float inv = 1.0f / _fmaxf((float)bp.samples, 1.0f);
+    return acc * inv;
+}
+
+// ---------- spikes: kernel 1 (Rays) ----------
+__DEVICE__ float3 spikes_rays_energy(ImgCtx ctx, SpikeParams sp)
+{
+    if (sp.steps < 1 || sp.spikes < 2 || sp.length_px <= 0.0f) return f3(0.0f, 0.0f, 0.0f);
+
+    float3 acc = f3(0.0f, 0.0f, 0.0f);
+
+    float sR = 1.0f + 0.10f * sp.chroma_geom;
+    float sG = 1.0f;
+    float sB = 1.0f - 0.10f * sp.chroma_geom;
+
+    float rot_rad = deg2rad(sp.rotation_deg);
+    float single_offset_rad = deg2rad(sp.single_offset_deg);
+    float step = (2.0f * PI) / _fmaxf((float)sp.spikes, 1.0f);
+    float jitter_amt_rad = sp.irregularity * (step * 0.35f);
+
+    for (int i = 0; i < 8; ++i) {
+        if (i >= sp.spikes) break;
+
+        float ang = spike_angle_for_index(i, sp.spikes, rot_rad, jitter_amt_rad,
+                                          sp.single_index, single_offset_rad);
+        float dx = _cosf(ang);
+        float dy = _sinf(ang);
+
+        for (int s = 1; s <= 300; ++s) {
+            if (s > sp.steps) break;
+
+            float u = (float)s / _fmaxf((float)sp.steps, 1.0f);
+            float dist = u * sp.length_px;
+
+            float wlong = 1.0f / (1.0f + dist * 0.05f);
+            float w = wlong;
+
+            float xR = (float)ctx.px + dx * dist * sR;
+            float yR = (float)ctx.py + dy * dist * sR;
+            float xG = (float)ctx.px + dx * dist * sG;
+            float yG = (float)ctx.py + dy * dist * sG;
+            float xB = (float)ctx.px + dx * dist * sB;
+            float yB = (float)ctx.py + dy * dist * sB;
+
+            float3 cR = f3(0.0f, 0.0f, 0.0f);
+            float3 cG = f3(0.0f, 0.0f, 0.0f);
+            float3 cB = f3(0.0f, 0.0f, 0.0f);
+
+            if (sp.width <= 0.25f) {
+                cR = clamp_min0(sample_bilinear(ctx, xR, yR));
+                cG = clamp_min0(sample_bilinear(ctx, xG, yG));
+                cB = clamp_min0(sample_bilinear(ctx, xB, yB));
+            } else {
+                float ox = -dy * sp.width;
+                float oy =  dx * sp.width;
+
+                float3 cR0 = clamp_min0(sample_bilinear(ctx, xR, yR));
+                float3 cG0 = clamp_min0(sample_bilinear(ctx, xG, yG));
+                float3 cB0 = clamp_min0(sample_bilinear(ctx, xB, yB));
+
+                float3 cR1 = clamp_min0(sample_bilinear(ctx, xR + ox, yR + oy));
+                float3 cG1 = clamp_min0(sample_bilinear(ctx, xG + ox, yG + oy));
+                float3 cB1 = clamp_min0(sample_bilinear(ctx, xB + ox, yB + oy));
+
+                float3 cR2 = clamp_min0(sample_bilinear(ctx, xR - ox, yR - oy));
+                float3 cG2 = clamp_min0(sample_bilinear(ctx, xG - ox, yG - oy));
+                float3 cB2 = clamp_min0(sample_bilinear(ctx, xB - ox, yB - oy));
+
+                cR = cR0 * 0.5f + (cR1 + cR2) * 0.25f;
+                cG = cG0 * 0.5f + (cG1 + cG2) * 0.25f;
+                cB = cB0 * 0.5f + (cB1 + cB2) * 0.25f;
+            }
+
+            float3 c = f3(cR.x, cG.y, cB.z);
+            c = apply_chromatic_palette(c, cR, cG, cB,
+                                        sp.spec_style, sp.spec_balance, sp.spec_sat, sp.spec_force,
+                                        sp.chroma_affects_luma);
+
+            float Y = luma709(c);
+            float m = highlight_mask_stops(Y, sp.thresh_lin, sp.softness_stops);
+            if (m < 1e-6f) continue;
+
+            acc += c * (m * w);
+        }
+    }
+
+    float inv = 1.0f / _fmaxf((float)sp.steps, 1.0f);
+    return acc * inv;
+}
+
+// ---------- spikes: kernel 2 (Diffraction lobes) ----------
+// Uses Vogel spiral over a disk, angularly modulated by |cos(N*theta)|^p.
+// This yields broad, optical lobes rather than discrete rays.
+__DEVICE__ float lobe_weight(float theta, int lobes, float sharpness)
+{
+    // lobes correspond to spike count selection (4/6/8). Using cos(lobes*theta) gives 2*lobes maxima around the circle.
+    // This still reads as a lobe/star structure; adjust sharpness to taste.
+    float v = _fabs(_cosf((float)lobes * theta));
+    return _powf(_fmaxf(v, 1e-6f), sharpness);
+}
+
+__DEVICE__ float3 spikes_lobes_energy(ImgCtx ctx, SpikeParams sp)
+{
+    if (sp.steps < 1 || sp.length_px <= 0.0f) return f3(0.0f, 0.0f, 0.0f);
+
+    const float golden = 2.399963229728653f;
+    float3 acc = f3(0.0f, 0.0f, 0.0f);
+
+    float sR = 1.0f + 0.10f * sp.chroma_geom;
+    float sG = 1.0f;
+    float sB = 1.0f - 0.10f * sp.chroma_geom;
+
+    float rot_rad = deg2rad(sp.rotation_deg);
+    float single_offset_rad = deg2rad(sp.single_offset_deg);
+    float step = (2.0f * PI) / _fmaxf((float)sp.spikes, 1.0f);
+    float jitter_amt_rad = sp.irregularity * (step * 0.35f);
+
+    for (int i = 0; i < 300; ++i) {
+        if (i >= sp.steps) break;
+
+        float fi = (float)i + 0.5f;
+        float ang = fi * golden;
+
+        // rr distributed over disk, max radius = radius_px
+        float rr = _sqrtf(fi / _fmaxf((float)sp.steps, 1.0f)) * sp.length_px;
+
+        float dx = _cosf(ang);
+        float dy = _sinf(ang);
+
+        // direction angle for lobe modulation
+        float theta = _atan2f(dy, dx) + rot_rad;
+        float theta_norm = theta + PI;
+        int idx = clampi((int)_floorf(theta_norm / _fmaxf(step, 1e-6f)), 0, sp.spikes - 1);
+        float jitter = (hash11((float)idx + 1.0f) * 2.0f - 1.0f) * jitter_amt_rad;
+        float single = (idx == sp.single_index) ? single_offset_rad : 0.0f;
+        float theta_w = theta - jitter - single;
+
+        // Angular lobe shaping (width softens the angular sharpness)
+        float width_norm = satf(sp.width / 6.0f);
+        float sharp = lerpf(sp.lobe_sharpness, 0.8f, width_norm);
+        float wa = lobe_weight(theta_w, sp.spikes, sharp);
+
+        // Radial shaping: stronger near centre, decays outward; radial_profile controls curve
+        float u = rr / _fmaxf(sp.length_px, 1e-6f);
+        float wr = _powf(_fmaxf(1.0f - u, 0.0f), sp.lobe_radial_profile);
+
+        // Width shaping: keeps lobes from becoming too noisy
+        // A mild Airy-ish core profile for optical feel
+        float wairy = airyish(rr, _fmaxf(sp.length_px * 0.33f, 1e-6f), 0.0f);
+
+        float w = wa * (0.35f + 0.65f * wr) * (0.50f + 0.50f * wairy);
+
+        // Sample with dispersion by scaling radius for each channel (radial dispersion feels more "diffractive")
+        float xR = (float)ctx.px + dx * rr * sR;
+        float yR = (float)ctx.py + dy * rr * sR;
+        float xG = (float)ctx.px + dx * rr * sG;
+        float yG = (float)ctx.py + dy * rr * sG;
+        float xB = (float)ctx.px + dx * rr * sB;
+        float yB = (float)ctx.py + dy * rr * sB;
+
+        float3 cR = clamp_min0(sample_bilinear(ctx, xR, yR));
+        float3 cG = clamp_min0(sample_bilinear(ctx, xG, yG));
+        float3 cB = clamp_min0(sample_bilinear(ctx, xB, yB));
+
+        float3 c = f3(cR.x, cG.y, cB.z);
+
+        c = apply_chromatic_palette(c, cR, cG, cB,
+                                    sp.spec_style, sp.spec_balance, sp.spec_sat, sp.spec_force,
+                                    sp.chroma_affects_luma);
+
+        float Y = luma709(c);
+        float m = highlight_mask_stops(Y, sp.thresh_lin, sp.softness_stops);
+        if (m < 1e-6f) continue;
+
+        acc += c * (m * w);
+    }
+
+    float inv = 1.0f / _fmaxf((float)sp.steps, 1.0f);
+    return acc * inv;
+}
+
+typedef struct Preset
+{
+    float bloom_shoulder;
+    float spike_shoulder;
+    float bloom_gain;
+    float spike_gain;
+    float bloom_radius_px;
+    float ring_strength;
+    int bloom_samples;
+    float spike_strength;
+    float spike_length_px;
+    int spike_steps;
+    float spike_width;
+    float spike_rotation_deg;
+    float spike_irregularity;
+    int spike_single_index;
+    float spike_single_offset_deg;
+    int spike_count_mode;
+    int spike_kernel;
+    float lobe_sharpness;
+    float lobe_radial_profile;
+    float chromatic;
+    float chromatic_affects_luma;
+    int spectrum_style;
+    float spectrum_balance;
+    float spectrum_sat;
+    float spectrum_force;
+    float point_bias;
+} Preset;
+
+__DEVICE__ Preset get_preset(int id)
+{
+    Preset p;
+
+    p.bloom_shoulder = DEF_BLOOM_SHOULDER;
+    p.spike_shoulder = DEF_SPIKE_SHOULDER;
+    p.bloom_gain = DEF_BLOOM_GAIN;
+    p.spike_gain = DEF_SPIKE_GAIN;
+    p.bloom_radius_px = DEF_BLOOM_RADIUS_PX;
+    p.ring_strength = DEF_RING_STRENGTH;
+    p.bloom_samples = DEF_BLOOM_SAMPLES;
+    p.spike_strength = DEF_SPIKE_STRENGTH;
+    p.spike_length_px = DEF_SPIKE_LENGTH_PX;
+    p.spike_steps = DEF_SPIKE_STEPS;
+    p.spike_width = DEF_SPIKE_WIDTH;
+    p.spike_rotation_deg = DEF_SPIKE_ROTATION_DEG;
+    p.spike_irregularity = DEF_SPIKE_IRREGULARITY;
+    p.spike_single_index = DEF_SPIKE_SINGLE_INDEX;
+    p.spike_single_offset_deg = DEF_SPIKE_SINGLE_OFFSET_DEG;
+    p.spike_count_mode = DEF_SPIKE_COUNT_MODE;
+    p.spike_kernel = DEF_SPIKE_KERNEL;
+    p.lobe_sharpness = DEF_LOBE_SHARPNESS;
+    p.lobe_radial_profile = DEF_LOBE_RADIAL_PROFILE;
+    p.chromatic = DEF_CHROMATIC;
+    p.chromatic_affects_luma = DEF_CHROMATIC_AFFECTS_LUMA;
+    p.spectrum_style = DEF_SPECTRUM_STYLE;
+    p.spectrum_balance = DEF_SPECTRUM_BALANCE;
+    p.spectrum_sat = DEF_SPECTRUM_SAT;
+    p.spectrum_force = DEF_SPECTRUM_FORCE;
+    p.point_bias = DEF_POINT_BIAS;
+
+    if (id == PRESET_1) {
+        p.bloom_shoulder = 0.500f;
+        p.spike_shoulder = 0.667f;
+        p.bloom_gain = 2.519f;
+        p.spike_gain = 2.171f;
+        p.bloom_radius_px = 22.0f;
+        p.ring_strength = 0.400f;
+        p.spike_strength = 1.610f;
+        p.spike_length_px = 146.0f;
+        p.spike_steps = 142;
+        p.spike_width = 4.50f;
+        p.spike_rotation_deg = 0.0f;
+        p.spike_irregularity = 0.620f;
+        p.spike_single_index = 3;
+        p.spike_single_offset_deg = -13.3f;
+        p.spike_count_mode = SPIKES_6;
+        p.spike_kernel = KERNEL_RAYS;
+        p.lobe_sharpness = 3.0f;
+        p.lobe_radial_profile = 1.300f;
+        p.chromatic = 2.140f;
+        p.chromatic_affects_luma = 0.200f;
+        p.spectrum_style = SPEC_CYANMAGENTA;
+        p.spectrum_balance = 0.008f;
+        p.spectrum_sat = 1.287f;
+        p.spectrum_force = 0.636f;
+        p.point_bias = 0.248f;
+        p.bloom_samples = 139;
+    } else if (id == PRESET_2) {
+        p.bloom_gain = 3.605f;
+        p.spike_gain = 4.574f;
+        p.bloom_radius_px = 148.5f;
+        p.ring_strength = 0.465f;
+        p.spike_strength = 1.070f;
+        p.spike_length_px = 83.7f;
+        p.spike_steps = 96;
+        p.spike_width = 2.67f;
+        p.spike_rotation_deg = -154.9f;
+        p.spike_irregularity = 0.763f;
+        p.spike_single_index = 2;
+        p.spike_single_offset_deg = 20.0f;
+        p.spike_count_mode = SPIKES_6;
+        p.spike_kernel = KERNEL_RAYS;
+        p.lobe_sharpness = 3.0f;
+        p.lobe_radial_profile = 1.3f;
+        p.chromatic = 1.907f;
+        p.chromatic_affects_luma = 0.20f;
+        p.spectrum_style = SPEC_CYANMAGENTA;
+        p.spectrum_balance = 0.00f;
+        p.spectrum_sat = 1.00f;
+        p.spectrum_force = 0.650f;
+        p.point_bias = 0.91f;
+        p.bloom_samples = 95;
+    }
+
+    return p;
+}
+
+__DEVICE__ float resolve_float(float ui_val, float def_val, float preset_val, float lo, float hi)
+{
+    float v = preset_val + (ui_val - def_val);
+    return _clampf(v, lo, hi);
+}
+
+__DEVICE__ int resolve_int(int ui_val, int def_val, int preset_val, int lo, int hi)
+{
+    int v = preset_val + (ui_val - def_val);
+    return clampi(v, lo, hi);
+}
+
+__DEVICE__ int resolve_int_from_float(float ui_val, float def_val, int preset_val, int lo, int hi)
+{
+    int ui_i = (int)_floorf(ui_val + 0.5f);
+    int def_i = (int)_floorf(def_val + 0.5f);
+    int v = preset_val + (ui_i - def_i);
+    return clampi(v, lo, hi);
+}
+
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, __TEXTURE__ p_TexR, __TEXTURE__ p_TexG, __TEXTURE__ p_TexB) {
+
+    ImgCtx ctx;
+    ctx.W = p_Width;
+    ctx.H = p_Height;
+    ctx.px = p_X;
+    ctx.py = p_Y;
+    ctx.r = p_TexR;
+    ctx.g = p_TexG;
+    ctx.b = p_TexB;
+    ctx.p_TF = P_TF;
+
+    float3 base = clamp_min0(fetch(ctx, ctx.px, ctx.py));
+    Preset preset = get_preset(preset_mode);
+
+    float t_thresh = satf(threshold);
+    // Piecewise remap: lower 75% of range compressed into first 25% of slider,
+    // remaining 25% mapped across the top 75% for finer highlight control.
+    if (t_thresh < 0.25f) {
+        t_thresh = (t_thresh / 0.25f) * 0.75f;
+    } else {
+        t_thresh = 0.75f + (t_thresh - 0.25f) * (0.25f / 0.75f);
+    }
+    float threshold_lin = lerpf(THRESH_MAX_LIN, THRESH_MIN_LIN, t_thresh);
+    float mask_softness_v = _clampf(mask_softness_stops, 5.0f, 12.0f);
+    float bloom_shoulder_v = resolve_float(bloom_shoulder, DEF_BLOOM_SHOULDER, preset.bloom_shoulder, 0.0f, 1.0f);
+    float spike_shoulder_v = resolve_float(spike_shoulder, DEF_SPIKE_SHOULDER, preset.spike_shoulder, 0.0f, 1.0f);
+    float bloom_gain_v = resolve_float(bloom_gain, DEF_BLOOM_GAIN, preset.bloom_gain, 0.0f, 5.0f);
+    float spike_gain_v = resolve_float(spike_gain, DEF_SPIKE_GAIN, preset.spike_gain, 0.0f, 5.0f);
+    float bloom_radius_v = resolve_float(bloom_radius_px, DEF_BLOOM_RADIUS_PX, preset.bloom_radius_px, 0.5f, 220.0f);
+    float ring_strength_v = resolve_float(ring_strength, DEF_RING_STRENGTH, preset.ring_strength, 0.0f, 1.0f);
+    int bloom_samples_v = resolve_int_from_float(bloom_samples, (float)DEF_BLOOM_SAMPLES, preset.bloom_samples, 8, 256);
+    float spike_strength_v = resolve_float(spike_strength, DEF_SPIKE_STRENGTH, preset.spike_strength, 0.0f, 6.0f);
+    float spike_length_v = resolve_float(spike_length_px, DEF_SPIKE_LENGTH_PX, preset.spike_length_px, 0.0f, 900.0f);
+    int spike_steps_v = resolve_int_from_float(spike_steps, (float)DEF_SPIKE_STEPS, preset.spike_steps, 4, 300);
+    float spike_width_v = resolve_float(spike_width, DEF_SPIKE_WIDTH, preset.spike_width, 0.2f, 12.0f);
+    float spike_rotation_v = resolve_float(spike_rotation_deg, DEF_SPIKE_ROTATION_DEG, preset.spike_rotation_deg, -180.0f, 180.0f);
+    float spike_irregularity_v = resolve_float(spike_irregularity, DEF_SPIKE_IRREGULARITY, preset.spike_irregularity, 0.0f, 1.0f);
+    int spike_single_index_v = resolve_int_from_float(spike_single_index, (float)DEF_SPIKE_SINGLE_INDEX, preset.spike_single_index, 0, 7);
+    float spike_single_offset_v = resolve_float(spike_single_offset_deg, DEF_SPIKE_SINGLE_OFFSET_DEG, preset.spike_single_offset_deg, -90.0f, 90.0f);
+    int spike_count_v = resolve_int(spike_count_mode, DEF_SPIKE_COUNT_MODE, preset.spike_count_mode, 0, 2);
+    int spike_kernel_v = resolve_int(spike_kernel, DEF_SPIKE_KERNEL, preset.spike_kernel, 0, 1);
+    float lobe_sharpness_v = resolve_float(lobe_sharpness, DEF_LOBE_SHARPNESS, preset.lobe_sharpness, 0.5f, 12.0f);
+    float lobe_radial_v = resolve_float(lobe_radial_profile, DEF_LOBE_RADIAL_PROFILE, preset.lobe_radial_profile, 0.2f, 4.0f);
+    float chromatic_v = resolve_float(chromatic, DEF_CHROMATIC, preset.chromatic, 0.0f, 3.0f);
+    float chroma_luma_v = resolve_float(chromatic_affects_luma, DEF_CHROMATIC_AFFECTS_LUMA, preset.chromatic_affects_luma, 0.0f, 1.0f);
+    int spectrum_style_v = resolve_int(spectrum_style, DEF_SPECTRUM_STYLE, preset.spectrum_style, 0, 2);
+    float spectrum_balance_v = resolve_float(spectrum_balance, DEF_SPECTRUM_BALANCE, preset.spectrum_balance, -1.0f, 1.0f);
+    float spectrum_sat_v = resolve_float(spectrum_sat, DEF_SPECTRUM_SAT, preset.spectrum_sat, 0.0f, 2.0f);
+    float spectrum_force_v = resolve_float(spectrum_force, DEF_SPECTRUM_FORCE, preset.spectrum_force, 0.0f, 1.0f);
+    float point_bias_v = resolve_float(point_bias, DEF_POINT_BIAS, preset.point_bias, 0.0f, 1.0f);
+
+    // Point bias
+    float3 n1 = clamp_min0(fetch(ctx, ctx.px + 1, ctx.py));
+    float3 n2 = clamp_min0(fetch(ctx, ctx.px - 1, ctx.py));
+    float3 n3 = clamp_min0(fetch(ctx, ctx.px, ctx.py + 1));
+    float3 n4 = clamp_min0(fetch(ctx, ctx.px, ctx.py - 1));
+
+    float Y = luma709(base);
+    float Yblur = 0.2f * (luma709(n1) + luma709(n2) + luma709(n3) + luma709(n4) + Y);
+    float Ymask = (mask_blur ? Yblur : Y);
+
+    float mBright = highlight_mask_stops(Ymask, threshold_lin, mask_softness_v);
+    if (mask_noise_gate) {
+        float g = _clampf(mask_noise_gate_level, 0.0f, 0.99f);
+        float knee = 0.08f; // Soft knee width for noise gate (adjust here if needed)
+        float t = _clampf(safe_div(mBright - g, _fmaxf(knee, 1e-6f)), 0.0f, 1.0f);
+        mBright = mBright * smootherstep(t);
+    }
+    float hf = _fmaxf(0.0f, Y - Yblur);
+    float mPoint = satf(hf * 30.0f);
+    float m = mBright * ((1.0f - point_bias) + point_bias * mPoint);
+    float m_sel = _powf(_fmaxf(m, 0.0f), _fmaxf(mask_select_power, 1e-6f));
+    float m_energy = _powf(_fmaxf(m_sel, 0.0f), _fmaxf(mask_energy_power, 1e-6f));
+    float m_base = _clampf(mask_floor, 0.0f, 0.6f);
+
+    int spikes = 6;
+    if (spike_count_v == SPIKES_4) spikes = 4;
+    else if (spike_count_v == SPIKES_6) spikes = 6;
+    else if (spike_count_v == SPIKES_8) spikes = 8;
+
+    BloomParams bp;
+    bp.radius_px = bloom_radius_v;
+    bp.ring_amt = ring_strength_v;
+    bp.samples = bloom_samples_v;
+    bp.thresh_lin = threshold_lin;
+    bp.softness_stops = mask_softness_v;
+
+    SpikeParams sp;
+    sp.spikes = spikes;
+    sp.length_px = spike_length_v;
+    sp.steps = spike_steps_v;
+    sp.width = spike_width_v;
+    sp.rotation_deg = spike_rotation_v;
+    sp.irregularity = spike_irregularity_v;
+    sp.single_index = spike_single_index_v;
+    sp.single_offset_deg = spike_single_offset_v;
+    sp.thresh_lin = threshold_lin;
+    sp.softness_stops = mask_softness_v;
+    sp.chroma_geom = chromatic_v;
+    sp.spec_style = spectrum_style_v;
+    sp.spec_balance = spectrum_balance_v;
+    sp.spec_sat = spectrum_sat_v;
+    sp.spec_force = spectrum_force_v;
+    sp.chroma_affects_luma = chroma_luma_v;
+    sp.lobe_sharpness = lobe_sharpness_v;
+    sp.lobe_radial_profile = lobe_radial_v;
+
+    float3 bloom = bloom_vogel_energy(ctx, bp);
+
+    float3 star = f3(0.0f, 0.0f, 0.0f);
+    if (spike_kernel_v == KERNEL_RAYS) {
+        star = spikes_rays_energy(ctx, sp);
+    } else { // KERNEL_LOBES
+        // Use spike_steps as the sample count for lobe kernel for intuitive control
+        star = spikes_lobes_energy(ctx, sp);
+    }
+
+    float sh_b = shoulder_weight(Y, threshold_lin, bloom_shoulder_v);
+    float sh_s = shoulder_weight(Y, threshold_lin, spike_shoulder_v);
+
+    float3 eff_bloom  = bloom * bloom_gain_v * sh_b;
+    float3 eff_spikes = star  * spike_strength_v * spike_gain_v * sh_s;
+    float3 eff_total  = (eff_bloom + eff_spikes) * (m_base + m_energy);
+
+    float3 outlin = base + eff_total * strength;
+    if (debug_mode == DEBUG_MASK) {outlin = f3(m, m, m);}
+    else if (debug_mode == DEBUG_EFFECT_BLOOM) {outlin = eff_bloom * m * strength;}
+    else if (debug_mode == DEBUG_EFFECT_SPIKES) {outlin = eff_spikes * m * strength;}
+    else if (debug_mode == DEBUG_EFFECT_TOTAL) {outlin = eff_total * strength;}
+
+    float3 outc = EncodeFromLin(outlin, ctx.p_TF);
+    return outc;
+}
